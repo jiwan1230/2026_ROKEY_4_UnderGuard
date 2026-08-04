@@ -30,3 +30,13 @@ def test_obstacle_mask_from_occupancy():
     grid.set_obstacle_mask_from_occupancy(occ, threshold=50)
     assert grid.is_obstacle(5, 5) is True
     assert grid.is_obstacle(0, 0) is False
+
+
+def test_world_to_cell_negative_near_origin_raises():
+    """Regression test: small negative offsets from origin should raise ValueError."""
+    grid = make_grid()
+    # With resolution_m=0.25, origin=(0,0), coordinates like -0.1 have
+    # offset -0.1 from origin, which floors to cell -1 (out-of-bounds).
+    # Previously, int(-0.1/0.25) = int(-0.4) = 0 (wrong truncation direction).
+    with pytest.raises(ValueError):
+        grid.world_to_cell(-0.1, -0.1)

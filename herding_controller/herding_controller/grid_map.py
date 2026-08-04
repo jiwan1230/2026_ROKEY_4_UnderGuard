@@ -1,4 +1,5 @@
 """Grid <-> map coordinate conversion and obstacle/wall masking."""
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -23,8 +24,8 @@ class GridMap:
 
     def world_to_cell(self, x: float, y: float) -> tuple[int, int]:
         """Convert a map-frame (x, y) in meters to a (row, col) cell index."""
-        col = int((x - self.config.origin_x_m) / self.config.resolution_m)
-        row = int((y - self.config.origin_y_m) / self.config.resolution_m)
+        col = math.floor((x - self.config.origin_x_m) / self.config.resolution_m)
+        row = math.floor((y - self.config.origin_y_m) / self.config.resolution_m)
         if not self.in_bounds(row, col):
             raise ValueError(f"world coordinate ({x}, {y}) is outside the grid bounds")
         return row, col
