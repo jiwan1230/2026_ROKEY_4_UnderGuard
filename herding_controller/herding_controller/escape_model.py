@@ -54,8 +54,15 @@ class EscapeModel:
         total = base.sum()
         if total <= 1e-9:
             valid = self._valid_mask(target_pos)
-            base = valid.astype(float)
-            total = base.sum() if base.sum() > 0 else 1.0
+            if valid.any():
+                base = valid.astype(float)
+            else:
+                # Fully boxed in: no valid direction exists at all. Fall back
+                # to a uniform distribution so probabilities still sum to 1,
+                # signaling "no good options, all equally bad" rather than
+                # producing an invalid all-zero degenerate vector.
+                base = np.full(8, 1.0 / 8.0)
+            total = base.sum()
         probabilities = base / total
 
         routes = self._top_k_routes(target_pos, probabilities)
@@ -124,7 +131,21 @@ class EscapeModel:
         return np.where(valid, weights, 0.0)
 
     def _top_k_routes(self, target_pos: np.ndarray, probabilities: np.ndarray) -> list[np.ndarray]:
-        k = min(self.config.escape_route_top_k, len(probabilities))
-        top_indices = np.argsort(probabilities)[::-1][:k]
+        valid = self._valid_mask(target_pos)
+        if valid.any():
+            # Only pick among directions that don't step into an obstacle.
+            # If fewer than escape_route_top_k directions are valid, return
+            # fewer routes rather than one that lands in an obstacle cell.
+            candidate_indices = np.nonzero(valid)[0]
+        else:
+            # Fully boxed in: no valid direction exists at all, so there is
+            # genuinely no good choice. Fall back to ranking all 8 directions
+            # (the uniform-fallback probabilities from compute()) — routes may
+            # legitimately point into an obstacle cell here, signaling "no
+            # good options."
+            candidate_indices = np.arange(len(probabilities))
+        order = candidate_indices[np.argsort(probabilities[candidate_indices])[::-1]]
+        k = min(self.config.escape_route_top_k, len(order))
+        top_indices = order[:k]
         lookahead_m = self.grid_map.config.resolution_m * 3
         return [target_pos + _DIRECTIONS[i] * lookahead_m for i in top_indices]

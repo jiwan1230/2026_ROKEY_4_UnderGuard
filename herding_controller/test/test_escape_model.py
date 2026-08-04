@@ -36,3 +36,33 @@ def test_top_k_routes_length_matches_config():
     model, _ = make_model()
     estimate = model.compute(np.array([5.0, 5.0]), np.array([0.0, 0.0]), [np.array([4.0, 5.0])])
     assert len(estimate.top_k_routes) == 3
+
+
+def test_fully_boxed_in_falls_back_to_uniform_distribution():
+    grid = GridMap(GridConfig(resolution_m=0.25, width_cells=40, height_cells=40))
+    model, grid = make_model(grid)
+    target_pos = np.array([5.0, 5.0])
+    row, col = grid.world_to_cell(*target_pos)
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr == 0 and dc == 0:
+                continue
+            grid.obstacle_mask[row + dr, col + dc] = True
+    estimate = model.compute(target_pos, np.array([0.0, 0.0]), [np.array([2.0, 2.0])])
+    assert np.isclose(estimate.probabilities.sum(), 1.0, atol=1e-6)
+
+
+def test_top_k_routes_excludes_obstacle_cells_when_some_directions_invalid():
+    grid = GridMap(GridConfig(resolution_m=0.25, width_cells=40, height_cells=40))
+    model, grid = make_model(grid)
+    target_pos = np.array([5.0, 5.0])
+    row, col = grid.world_to_cell(*target_pos)
+    # Block N, NE, E, SE, SW (5 of 8 neighbors); only S, W, NW stay valid.
+    blocked_dirs = [(0, 1), (1, 1), (1, 0), (1, -1), (-1, -1)]
+    for dx, dy in blocked_dirs:
+        grid.obstacle_mask[row + dy, col + dx] = True
+    estimate = model.compute(target_pos, np.array([0.0, 0.0]), [np.array([2.0, 2.0])])
+    assert len(estimate.top_k_routes) == 3
+    for route in estimate.top_k_routes:
+        r, c = grid.world_to_cell(*route)
+        assert not grid.is_obstacle(r, c)
