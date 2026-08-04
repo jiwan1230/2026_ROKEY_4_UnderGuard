@@ -29,7 +29,14 @@ class OcclusionGrid:
 
     def step(self, dt: float) -> None:
         """Diffuse belief to 4-neighbors, mask obstacles, and decay total mass."""
-        weight = self.config.diffusion_rate * dt
+        # Clamp the diffusion weight itself, not just the result: 0.25 is the
+        # standard stability bound for this explicit finite-difference
+        # 4-neighbor stencil on a uniform grid. It guarantees
+        # (1 - 4*weight) >= 0 unconditionally, so the diffusion step below is
+        # mass-conserving (never inflates total belief) regardless of how
+        # large diffusion_rate * dt gets -- e.g. from a stalled/delayed ROS2
+        # timer callback producing an unusually large dt.
+        weight = min(self.config.diffusion_rate * dt, 0.25)
         # Mass-conserving diffusion: each cell keeps (1 - 4*weight) of its own
         # belief and gains weight * neighbor for each of its 4-neighbors. Cells
         # on the grid boundary still lose the full 4*weight outflow but have
@@ -47,7 +54,7 @@ class OcclusionGrid:
         # would erase every previous step's decay and pin the total mass at
         # exactly decay_factor forever instead of letting it fall off
         # geometrically (decay_factor ** n) as more steps elapse unobserved.
-        self.belief = np.clip(diffused, 0.0, None) * self.config.decay_factor
+        self.belief = diffused * self.config.decay_factor
 
     def best_guess_cell(self) -> tuple[int, int]:
         """Return the (row, col) of the highest-belief cell as the re-search target."""

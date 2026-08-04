@@ -55,3 +55,25 @@ def test_repeated_steps_decay_mass_geometrically_not_plateau():
     # implementation would instead sit at exactly 0.9 forever.
     assert belief.belief.sum() < 0.9 ** 10
     assert belief.belief.sum() >= 0.0
+
+
+def test_large_dt_does_not_inflate_belief_mass():
+    # Regression test: with diffusion_rate=0.2 and dt=5.0, the unclamped
+    # diffusion weight would be 1.0 (4*weight=4.0 >> 1), which makes the
+    # "keep" term (1 - 4*weight) go deeply negative. A naive implementation
+    # that clips negative results to zero AFTER diffusing (instead of
+    # clamping the weight itself before diffusing) inflates total belief
+    # mass above what it was pre-step: e.g. at weight=0.3, a point mass of
+    # 1.0 pre-clip nets to center=-0.2, 4 neighbors=+0.3 each (conserved
+    # total=1.0), but clipping the center's -0.2 to 0 leaves a total of 1.2
+    # -- more mass than existed before the step, even before decay_factor is
+    # applied. Diffusion must never increase total mass; assert it doesn't.
+    _, belief = make_grid_and_belief()
+    belief.seed(20, 20)
+    total_before = belief.belief.sum()
+    belief.step(dt=5.0)
+    # Compare against the pre-decay diffused total (>= post-decay total,
+    # since decay_factor < 1), so this isolates diffusion mass-conservation
+    # from the (expected, separately-tested) decay shrinkage.
+    total_after_predecay = belief.belief.sum() / belief.config.decay_factor
+    assert total_after_predecay <= total_before + 1e-9
