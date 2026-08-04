@@ -32,16 +32,19 @@ class RoleAssigner:
         current_time_sec: float,
     ) -> tuple[int, int]:
         """Return (driver_id, blocker_id), swapping only past margin+cooldown thresholds."""
-        if self._last_swap_time is None:
-            # Anchor the cooldown clock to the first assignment call so an
-            # initial candidate flip can't bypass the cooldown via `-inf`.
-            self._last_swap_time = current_time_sec
-
         cost1 = self._cost(robot1_pos, robot1_heading, driving_point_candidate)
         cost2 = self._cost(robot2_pos, robot2_heading, driving_point_candidate)
         candidate_driver = 1 if cost1 <= cost2 else 2
 
-        if candidate_driver != self._driver_id:
+        if self._last_swap_time is None:
+            # First-ever call: there is no prior "swap" to protect with
+            # margin/cooldown gating, and no real prior assignment to
+            # hysterese against -- self._driver_id == 1 so far is just an
+            # arbitrary bootstrap default, not a decision that was ever
+            # actually computed. Adopt the cost-optimal candidate outright.
+            self._driver_id = candidate_driver
+            self._last_swap_time = current_time_sec
+        elif candidate_driver != self._driver_id:
             cost_diff = abs(cost1 - cost2)
             time_since_swap = current_time_sec - self._last_swap_time
             if cost_diff >= self.config.role_swap_margin and time_since_swap >= self.config.role_swap_cooldown_sec:

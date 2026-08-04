@@ -23,6 +23,26 @@ def test_closer_robot_is_assigned_driver_initially():
     assert blocker == 2
 
 
+def test_farther_robot1_is_not_bootstrapped_as_driver_on_first_call():
+    # Regression test: the very first assign() call must bootstrap the
+    # driver directly from the cost-optimal candidate, with NO margin or
+    # cooldown gating -- there is no prior "swap" to protect against yet.
+    # robot1 is hardcoded as the default self._driver_id, so this scenario
+    # (robot2 obviously cost-optimal on the very first call, with a
+    # nonzero cooldown) is the only one that can distinguish "correctly
+    # computed" from "coincidentally matches the hardcoded default."
+    assigner = RoleAssigner(make_config(margin=0.5, cooldown=2.0))
+    driving_point = np.array([5.0, 5.0])
+    heading = np.array([1.0, 0.0])
+    driver, blocker = assigner.assign(
+        robot1_pos=np.array([100.0, 100.0]), robot2_pos=np.array([5.0, 5.0]),
+        robot1_heading=heading, robot2_heading=heading,
+        driving_point_candidate=driving_point, current_time_sec=0.0,
+    )
+    assert driver == 2  # must not be stuck on the t=0 bootstrap default
+    assert blocker == 1
+
+
 def test_role_does_not_swap_within_cooldown():
     assigner = RoleAssigner(make_config(margin=0.01, cooldown=2.0))
     driving_point = np.array([5.0, 5.0])
