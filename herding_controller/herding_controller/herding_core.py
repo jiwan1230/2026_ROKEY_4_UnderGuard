@@ -24,8 +24,6 @@ from herding_controller.target_estimator import EstimatorConfig, TargetEstimator
 
 logger = logging.getLogger(__name__)
 
-_ESCAPE_CONCENTRATION_THRESHOLD = 0.5
-
 
 @dataclass
 class HerdingConfig:
@@ -49,6 +47,7 @@ class HerdingConfig:
     robot_repulsion_weight: float
     wall_detect_radius_cells: int
     escape_route_top_k: int
+    escape_concentration_threshold: float
     drive_distance_m: float
     flee_reaction_distance_m: float
     panic_distance_m: float
@@ -248,7 +247,7 @@ class HerdingCore:
             if self._first_observation_seen else float("inf")
         escape_concentrated = bool(
             escape_estimate is not None
-            and escape_estimate.probabilities.max() >= _ESCAPE_CONCENTRATION_THRESHOLD
+            and escape_estimate.probabilities.max() >= self.config.escape_concentration_threshold
         )
 
         fsm_state = self.fsm.step(FSMInputs(

@@ -27,6 +27,9 @@ herding_controller:
     robot_repulsion_weight: 1.5
     wall_detect_radius_cells: 1
     escape_route_top_k: 3
+    # Max escape-direction probability at or above which the distribution counts as
+    # "concentrated", gating the HERD->CORNER transition (and the CORNER->HERD fallback).
+    escape_concentration_threshold: 0.5
 
     # --- Herding Control ---
     drive_distance_m: 0.8

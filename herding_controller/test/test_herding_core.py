@@ -13,6 +13,7 @@ def make_config():
         kf_process_noise=0.1, kf_measurement_noise=0.05, occlusion_timeout_sec=3.0,
         markov_wall_follow_p=0.70, markov_wall_hug_p=0.20, markov_center_p=0.10,
         momentum_weight=0.4, robot_repulsion_weight=1.5, wall_detect_radius_cells=1, escape_route_top_k=3,
+        escape_concentration_threshold=0.5,
         drive_distance_m=0.8, flee_reaction_distance_m=1.0, panic_distance_m=0.35,
         alignment_threshold=0.7, drive_distance_ease_factor=1.3, block_lookahead_m=1.2,
         role_swap_margin=0.5, role_swap_cooldown_sec=2.0, min_robot_separation_m=0.6,
@@ -22,8 +23,6 @@ def make_config():
 
 def test_no_rclpy_import_anywhere_in_core_chain():
     import herding_controller.herding_core as core_module
-    import sys
-    assert "rclpy" not in sys.modules or True  # presence elsewhere is fine
     with open(core_module.__file__) as f:
         assert "import rclpy" not in f.read()
 
@@ -107,6 +106,19 @@ def test_config_wires_every_subconfig_without_type_error():
     # The escape model and the occlusion grid must share the core's single GridMap.
     assert core.escape_model.grid_map is core.grid_map
     assert core.occlusion_grid.grid_map is core.grid_map
+
+
+def test_escape_concentration_threshold_gates_the_corner_transition():
+    """The threshold must come from config, not a hardcoded literal, and must actually gate."""
+    import dataclasses
+    # Target parked inside the capture zone, with a hold long enough that CORNER is observable.
+    base = dataclasses.replace(make_config(), capture_hold_sec=1e6)
+
+    never = Runner(dataclasses.replace(base, escape_concentration_threshold=1.1))
+    assert never.run(10, (3.1, 3.0)).fsm_state == FSMState.HERD
+
+    always = Runner(dataclasses.replace(base, escape_concentration_threshold=0.0))
+    assert always.run(10, (3.1, 3.0)).fsm_state == FSMState.CORNER
 
 
 def test_search_state_skips_escape_planner_and_role_logic():
@@ -261,6 +273,11 @@ def test_no_module_in_the_core_import_chain_imports_rclpy():
     import sys
     for name, module in list(sys.modules.items()):
         if not name.startswith("herding_controller."):
+            continue
+        if name.endswith(".herding_node"):
+            # herding_node.py is the single ROS2 boundary of the package: it is
+            # required to import rclpy. Every other module must stay ROS-free so
+            # the algorithm can be exercised offline.
             continue
         path = getattr(module, "__file__", None)
         if not path or not path.endswith(".py"):
