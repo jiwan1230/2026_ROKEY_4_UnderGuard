@@ -18,6 +18,7 @@ class NoisyHuman(EvasionModel):
         noise_std: float = 0.1,
         rng: np.random.Generator | None = None,
     ) -> None:
+        """Wrap a WallHugger with a randomized reaction delay and noise on its commands."""
         self.max_speed_mps = max_speed_mps
         self._wall_hugger = WallHugger(max_speed_mps, flee_reaction_distance_m, grid_map)
         self.reaction_delay_range = reaction_delay_range
@@ -28,6 +29,7 @@ class NoisyHuman(EvasionModel):
         self._held_command = np.zeros(2)
 
     def step(self, target_state: np.ndarray, robot_positions: list, obstacle_map, dt: float) -> np.ndarray:
+        """Hold the last noisy command until the randomized reaction delay elapses, then resample."""
         self._elapsed_since_command_sec += dt
         if self._elapsed_since_command_sec >= self._pending_delay_sec:
             base_command = self._wall_hugger.step(target_state, robot_positions, obstacle_map, dt)

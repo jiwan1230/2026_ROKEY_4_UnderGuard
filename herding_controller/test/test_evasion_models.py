@@ -84,3 +84,24 @@ def test_log_replay_reads_csv_and_returns_velocity_to_next_point(tmp_path):
     target_state = np.array([0.0, 0.0, 0.0, 0.0])
     velocity = model.step(target_state, [], obstacle_map=None, dt=0.1)
     assert velocity[0] > 0
+
+
+def test_log_replay_clips_velocity_spike_when_dt_misaligns_with_sample_boundary(tmp_path):
+    # Regression test: when the fixed simulator dt doesn't land exactly on a CSV sample
+    # boundary, `remaining = next_t - elapsed` can shrink to nearly zero right after a step
+    # advances past a sample, making (next_pos - target_pos) / remaining spike far above any
+    # sane speed. CSV timestamps 0.00/0.05/0.11 replayed at dt=0.1 reproduce this: after one
+    # step elapsed=0.10, the model advances past the t=0.05 sample and remaining=0.11-0.10=0.01.
+    csv_path = tmp_path / "trace.csv"
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["t", "x", "y"])
+        writer.writerow([0.00, 0.0, 0.0])
+        writer.writerow([0.05, 1.0, 0.0])
+        writer.writerow([0.11, 2.0, 0.0])
+    model = LogReplay(str(csv_path), max_speed_mps=0.4)
+    # Target's actual position is far from the next logged sample, so the naive
+    # (next_pos - target_pos) / remaining division spikes without a cap.
+    target_state = np.array([0.0, 0.0, 0.0, 0.0])
+    velocity = model.step(target_state, [], obstacle_map=None, dt=0.1)
+    assert np.linalg.norm(velocity) <= 0.4 + 1e-9

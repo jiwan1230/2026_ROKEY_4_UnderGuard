@@ -9,10 +9,12 @@ class ReactiveFlee(EvasionModel):
     """Flees straight away from whichever robot is within flee_reaction_distance_m."""
 
     def __init__(self, max_speed_mps: float, flee_reaction_distance_m: float) -> None:
+        """Store the speed cap and the distance within which a robot triggers fleeing."""
         self.max_speed_mps = max_speed_mps
         self.flee_reaction_distance_m = flee_reaction_distance_m
 
     def step(self, target_state: np.ndarray, robot_positions: list, obstacle_map, dt: float) -> np.ndarray:
+        """Sum weighted away-from-robot vectors for every nearby robot and cap the result."""
         target_pos = target_state[:2]
         flee_dir = np.zeros(2)
         for robot_pos in robot_positions:

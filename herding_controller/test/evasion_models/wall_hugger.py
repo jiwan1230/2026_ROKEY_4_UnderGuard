@@ -10,12 +10,14 @@ class WallHugger(EvasionModel):
     """Hugs the nearest wall when unthreatened, flees directly when a robot is close."""
 
     def __init__(self, max_speed_mps: float, flee_reaction_distance_m: float, grid_map) -> None:
+        """Store the speed cap, flee-trigger distance, and grid map used for wall lookups."""
         self.max_speed_mps = max_speed_mps
         self.flee_reaction_distance_m = flee_reaction_distance_m
         self.grid_map = grid_map
         self._flee = ReactiveFlee(max_speed_mps, flee_reaction_distance_m)
 
     def step(self, target_state: np.ndarray, robot_positions: list, obstacle_map, dt: float) -> np.ndarray:
+        """Flee a nearby robot if any, else hug the tangent of the nearest wall cell."""
         flee_velocity = self._flee.step(target_state, robot_positions, obstacle_map, dt)
         if np.linalg.norm(flee_velocity) > 1e-9:
             return flee_velocity
@@ -27,6 +29,7 @@ class WallHugger(EvasionModel):
         return wall_dir * self.max_speed_mps * 0.5
 
     def _nearest_wall_tangent(self, target_pos: np.ndarray) -> np.ndarray | None:
+        """Return the unit tangent along the nearest obstacle cell, or None if none is nearby."""
         try:
             row, col = self.grid_map.world_to_cell(*target_pos)
         except ValueError:
