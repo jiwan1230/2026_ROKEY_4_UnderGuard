@@ -83,6 +83,21 @@ def compute_blocking_point(
             continue  # path already naturally blocked, try next-best route (2-4 step 4)
         return point
 
-    # every candidate was blocked or in the goal hemisphere: fall back to the least-bad direction
-    fallback_index = candidate_order[np.argmin(dots[candidate_order])]
-    return target_pos + escape_estimate.directions[fallback_index] * config.block_lookahead_m
+    # Every non-hemisphere candidate was blocked or off-grid: relax the goal-hemisphere
+    # preference and take the highest-probability direction (from ALL 8) that is still
+    # obstacle-clear and in-bounds, rather than returning a point known to be invalid.
+    for index in candidate_order:
+        direction = escape_estimate.directions[index]
+        point = target_pos + direction * config.block_lookahead_m
+        try:
+            row, col = grid_map.world_to_cell(*point)
+        except ValueError:
+            continue
+        if grid_map.is_obstacle(row, col):
+            continue
+        return point
+
+    # Every direction (all 8) is obstacle-blocked or off-grid: the target is fully
+    # boxed in and there is no valid blocking point nearby. Stay in place rather than
+    # send the Blocker into a wall or off the grid.
+    return target_pos.copy()
