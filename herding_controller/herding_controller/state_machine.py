@@ -57,6 +57,10 @@ class HerdingStateMachine:
             in_capture_zone = inputs.distance_to_goal_m <= inputs.capture_radius_m
             if in_capture_zone and inputs.escape_prob_concentrated:
                 state = FSMState.CORNER
+        elif state == FSMState.CORNER:
+            in_capture_zone = inputs.distance_to_goal_m <= inputs.capture_radius_m
+            if not (in_capture_zone and inputs.escape_prob_concentrated):
+                state = FSMState.HERD
         elif state == FSMState.LOST:
             if inputs.target_observed:
                 state = FSMState.TRACK
