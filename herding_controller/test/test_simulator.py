@@ -2,13 +2,16 @@
 import numpy as np
 import pytest
 
-from herding_controller.herding_core import HerdingConfig
+from herding_controller.herding_core import HerdingConfig, HerdingCore
 from test.evasion_models.base import EvasionModel
+from test.evasion_models.noisy_human import NoisyHuman
 from test.evasion_models.random_walk import RandomWalk
+from test.evasion_models.wall_hugger import WallHugger
 from test.simulator import SimulatorConfig, _update_heading, run_trial
 
 
 def make_herding_config(**overrides):
+    """Build a HerdingConfig mirroring herding_params.yaml, with per-test overrides."""
     defaults = dict(
         frame_id="map", control_rate_hz=5.0,
         capture_zone_x_m=3.0, capture_zone_y_m=3.0, capture_radius_m=0.5, capture_hold_sec=1.0,
@@ -138,6 +141,75 @@ def test_target_is_stopped_by_an_obstacle_cell():
                        sim_config=SimulatorConfig(max_sim_time_sec=30.0),
                        obstacle_mask=mask, control_mode="idle")
     assert result.target_trajectory[:, 0].max() < 6.0
+
+
+def make_probe_grid_map(config):
+    """The grid map a caller hands to WallHugger/NoisyHuman, exactly as Task 12 builds it."""
+    return HerdingCore(config).grid_map
+
+
+def target_path_length(result) -> float:
+    """Total distance the target actually travelled over a trial."""
+    return float(np.linalg.norm(np.diff(result.target_trajectory, axis=0), axis=1).sum())
+
+
+# Seeds whose target spends time inside WallHugger's 3-cell wall-detection window.
+# Measured total target path over 30 s: 0.16 / 0.56 / 1.72 m with an all-False mask,
+# 6.76 / 6.84 / 5.98 m once the arena walls exist as obstacle cells.
+@pytest.mark.parametrize("seed", [1, 8, 10])
+def test_default_arena_walls_are_visible_to_a_wall_following_target(seed):
+    # With an all-False obstacle mask WallHugger._nearest_wall_tangent() finds nothing
+    # to hug and returns None, so the target stands still whenever no robot is inside
+    # flee_reaction_distance_m -- a near-frozen target that would inflate every capture
+    # rate, noisy_human's above all (it wraps WallHugger and is Task 12's real-world
+    # predictor). The walls must exist as obstacle cells, not only as a clamp in the
+    # physics, and the model must be reading THIS trial's arena.
+    config = make_herding_config()
+    model = WallHugger(0.4, config.flee_reaction_distance_m, make_probe_grid_map(config))
+    result = run_trial(config, model, seed=seed, sim_config=SimulatorConfig(max_sim_time_sec=30.0))
+    assert target_path_length(result) > 4.0
+
+
+def test_noisy_human_inherits_the_walled_arena():
+    # 4.38 m of target path before the fix, 8.31 m after.
+    config = make_herding_config()
+    model = NoisyHuman(0.4, config.flee_reaction_distance_m, make_probe_grid_map(config),
+                       rng=np.random.default_rng(8))
+    result = run_trial(config, model, seed=8, sim_config=SimulatorConfig(max_sim_time_sec=30.0))
+    assert model._wall_hugger.grid_map.obstacle_mask[0, :].all()
+    assert target_path_length(result) > 6.0
+
+
+def test_default_obstacle_mask_is_a_boundary_ring():
+    config = make_herding_config()
+    model = WallHugger(0.4, config.flee_reaction_distance_m, make_probe_grid_map(config))
+    run_trial(config, model, seed=2, sim_config=SimulatorConfig(max_sim_time_sec=1.0))
+    mask = model.grid_map.obstacle_mask  # rebound to the trial's own arena
+    assert mask.shape == (config.grid_height_cells, config.grid_width_cells)
+    assert mask[0, :].all() and mask[-1, :].all() and mask[:, 0].all() and mask[:, -1].all()
+    assert not mask[1:-1, 1:-1].any()
+
+
+def test_explicit_obstacle_mask_is_used_verbatim():
+    config = make_herding_config()
+    supplied = np.zeros((config.grid_height_cells, config.grid_width_cells), dtype=bool)
+    supplied[10, 10] = True
+    model = WallHugger(0.4, config.flee_reaction_distance_m, make_probe_grid_map(config))
+    run_trial(config, model, seed=2, sim_config=SimulatorConfig(max_sim_time_sec=1.0),
+              obstacle_mask=supplied)
+    assert np.array_equal(model.grid_map.obstacle_mask, supplied)
+
+
+def test_robots_do_not_walk_into_obstacle_cells():
+    # Robots and the target obey the same collision rule; a robot chasing a goal that
+    # sits inside the wall ring must stop at the wall rather than tunnel into it.
+    config = make_herding_config()
+    result = run_trial(config, RandomWalk(0.4, np.random.default_rng(5)), seed=5,
+                       sim_config=SimulatorConfig(max_sim_time_sec=60.0))
+    ring = config.grid_resolution_m  # outermost cell ring is solid wall
+    for trajectory in (result.robot1_trajectory, result.robot2_trajectory,
+                       result.target_trajectory):
+        assert (trajectory >= ring).all() and (trajectory <= 10.0 - ring).all()
 
 
 def test_obstacle_mask_shape_is_validated():

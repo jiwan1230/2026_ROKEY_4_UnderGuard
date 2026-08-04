@@ -87,6 +87,48 @@ def _is_obstacle_at(core: HerdingCore, position: np.ndarray) -> bool:
     return bool(core.grid_map.obstacle_mask[row, col])
 
 
+def _boundary_ring_mask(config: HerdingConfig) -> np.ndarray:
+    """Occupancy of a bare walled room: the outermost cell ring is solid wall.
+
+    The arena walls have to be *visible* as obstacle cells, not merely enforced by
+    clamping. WallHugger (and NoisyHuman, which wraps it) look for occupied cells to
+    hug and stand still when they find none, and EscapeModel's thigmotaxis term needs
+    a wall to follow. An all-False mask leaves both of them modelling an infinite open
+    plane inside a room that the physics says is closed.
+    """
+    mask = np.zeros((config.grid_height_cells, config.grid_width_cells), dtype=bool)
+    mask[0, :] = mask[-1, :] = True
+    mask[:, 0] = mask[:, -1] = True
+    return mask
+
+
+def _bind_model_to_arena(evasion_model: EvasionModel, grid_map) -> None:
+    """Re-point every grid-consulting evasion model at the arena this trial simulates.
+
+    WallHugger (and NoisyHuman, which wraps one) resolves walls through the GridMap it
+    was constructed with, not through the `obstacle_map` argument of step(). Callers
+    build their models from a separate probe core's grid map -- a different GridMap
+    object from the one run_trial creates -- so without rebinding, the model reads an
+    empty world while the physics runs in a walled arena, and it never hugs anything.
+    """
+    for candidate in (evasion_model, getattr(evasion_model, "_wall_hugger", None)):
+        if candidate is not None and hasattr(candidate, "grid_map"):
+            candidate.grid_map = grid_map
+
+
+def _step_body(core: HerdingCore, position: np.ndarray, proposed: np.ndarray,
+               low: np.ndarray, high: np.ndarray) -> np.ndarray:
+    """Move a body to `proposed`, clamped into the arena and blocked by obstacle cells.
+
+    Robots and the target obey the same rule: a body that walks into a wall stops dead
+    rather than tunnelling through it.
+    """
+    moved = _clamp_to_arena(proposed, low, high)
+    if _is_obstacle_at(core, moved):
+        return np.asarray(position, dtype=float).copy()
+    return moved
+
+
 def run_trial(
     herding_config: HerdingConfig,
     evasion_model: EvasionModel,
@@ -102,10 +144,14 @@ def run_trial(
     rng = np.random.default_rng(seed)
     core = HerdingCore(herding_config)
     if obstacle_mask is not None:
+        # A caller-supplied layout is used verbatim; it is not silently walled in.
         expected = (herding_config.grid_height_cells, herding_config.grid_width_cells)
         if tuple(np.shape(obstacle_mask)) != expected:
             raise ValueError(f"obstacle_mask shape {np.shape(obstacle_mask)} != expected {expected}")
         core.grid_map.obstacle_mask = np.asarray(obstacle_mask, dtype=bool)
+    else:
+        core.grid_map.obstacle_mask = _boundary_ring_mask(herding_config)
+    _bind_model_to_arena(evasion_model, core.grid_map)
 
     low, high = _arena_bounds(herding_config)
     margin = herding_config.grid_resolution_m * 2
@@ -173,8 +219,8 @@ def run_trial(
             new_r2 = robot2_pos + np.array([np.cos(angle2), np.sin(angle2)]) * travel
         else:  # idle
             new_r1, new_r2 = robot1_pos.copy(), robot2_pos.copy()
-        new_r1 = _clamp_to_arena(new_r1, low, high)
-        new_r2 = _clamp_to_arena(new_r2, low, high)
+        new_r1 = _step_body(core, robot1_pos, new_r1, low, high)
+        new_r2 = _step_body(core, robot2_pos, new_r2, low, high)
 
         robot1_heading = _update_heading(robot1_pos, new_r1, robot1_heading)
         robot2_heading = _update_heading(robot2_pos, new_r2, robot2_heading)
@@ -232,9 +278,7 @@ def _advance_target(
         commanded = commanded / speed * sim_config.target_max_speed_mps
 
     position = target_state[:2]
-    proposed = _clamp_to_arena(position + commanded * sim_config.dt, low, high)
-    if _is_obstacle_at(core, proposed):
-        proposed = position.copy()  # walked into a wall: stopped dead
+    proposed = _step_body(core, position, position + commanded * sim_config.dt, low, high)
     # The stored velocity is the ACHIEVED one, so a target braked by a wall reports the
     # motion that actually happened -- which is what the next cycle's evasion model,
     # escape-model momentum term and KF all have to agree with.
