@@ -193,7 +193,8 @@ def run_algo_suite(herding_config: HerdingConfig, trials: int = 100, seed_base: 
         herding_config, trials=max(trials // 10, 3), seed_base=seed_base + 30_000
     )
 
-    _write_report(model_results, algo_status, control_summary, occlusion_summary, sensitivity)
+    _write_report(herding_config, model_results, algo_status, control_summary,
+                  occlusion_summary, sensitivity)
     _write_plots(herding_config, model_results, sensitivity)
     return {
         "model_results": model_results, "algo_status": algo_status,
@@ -300,16 +301,23 @@ def _run_occlusion_recovery_check(herding_config: HerdingConfig, trials: int, se
 # ALGO-008: control experiment                                                  #
 # ---------------------------------------------------------------------------- #
 
-def _chi_square_p(contingency: np.ndarray) -> float | None:
-    """p-value for a contingency table, or None when the table is too degenerate to test."""
+def _chi_square_p(contingency: np.ndarray) -> tuple[float | None, float | None]:
+    """(p-value, smallest expected cell) for a contingency table; (None, None) if degenerate.
+
+    The smallest expected count is returned alongside the p-value because it is what
+    says whether that p-value can be believed: chi-square is an asymptotic test, and the
+    usual rule of thumb is that every expected cell should be at least 5. At the trial
+    counts this suite runs, a table can easily be significant and untrustworthy at the
+    same time, so the caller reports the two together rather than the p-value alone.
+    """
     table = np.asarray(contingency, dtype=float)
     # chi2_contingency raises on an all-zero row/column (an expected frequency of 0).
     # That happens easily at small N -- e.g. every condition failing every trial -- and
     # it is not evidence of a difference, so it is reported as "no test", not as a pass.
     if (table.sum(axis=0) == 0).any() or (table.sum(axis=1) == 0).any():
-        return None
-    _, p_value, _, _ = chi2_contingency(table)
-    return float(p_value)
+        return None, None
+    _, p_value, _, expected = chi2_contingency(table)
+    return float(p_value), float(np.min(expected))
 
 
 def _run_control_experiment(herding_config: HerdingConfig, trials: int, seed_base: int) -> dict:
@@ -326,7 +334,7 @@ def _run_control_experiment(herding_config: HerdingConfig, trials: int, seed_bas
     success_counts = {mode: int(sum(conditions[mode])) for mode in modes}
     fail_counts = {mode: trials - success_counts[mode] for mode in modes}
     contingency = np.array([[success_counts[m], fail_counts[m]] for m in modes])
-    p_value = _chi_square_p(contingency)
+    p_value, min_expected = _chi_square_p(contingency)
 
     algo_rate = success_counts["algorithm"] / trials
     idle_rate = success_counts["idle"] / trials
@@ -336,7 +344,7 @@ def _run_control_experiment(herding_config: HerdingConfig, trials: int, seed_bas
     # Diagnostic only: the spec's gate uses the 3x2 test above, which asks whether the
     # three conditions differ at all, while difference_pp compares the algorithm with the
     # single best baseline. This 2x2 test is the one that matches difference_pp.
-    pairwise_p = _chi_square_p(np.array([
+    pairwise_p, pairwise_min_expected = _chi_square_p(np.array([
         [success_counts["algorithm"], fail_counts["algorithm"]],
         [success_counts[baseline_mode], fail_counts[baseline_mode]],
     ]))
@@ -344,7 +352,8 @@ def _run_control_experiment(herding_config: HerdingConfig, trials: int, seed_bas
         "trials": trials, "algorithm_rate": algo_rate, "idle_rate": idle_rate, "random_rate": random_rate,
         "baseline_mode": baseline_mode,
         "difference_pp": (algo_rate - baseline_rate) * 100.0,
-        "p_value": p_value, "pairwise_p_value": pairwise_p,
+        "p_value": p_value, "min_expected": min_expected,
+        "pairwise_p_value": pairwise_p, "pairwise_min_expected": pairwise_min_expected,
         "contingency": contingency,
     }
 
@@ -373,16 +382,44 @@ def _run_sensitivity_sweep(herding_config: HerdingConfig, trials: int, seed_base
 # Reporting                                                                     #
 # ---------------------------------------------------------------------------- #
 
-def _format_p(p_value: float | None) -> str:
-    """Render a p-value, or mark it as untestable when the contingency table degenerated."""
-    return "n/a (degenerate table)" if p_value is None else f"{p_value:.4f}"
+def _spawned_inside_capture_zone(trial, herding_config: HerdingConfig) -> bool:
+    """True if the target started inside the capture zone, so the trial needed no herding.
+
+    run_trial() spawns the target uniformly over the arena, capture zone included. Such a
+    trial is scored a success after capture_hold_sec with the robots never approaching --
+    a real consequence of the spawn policy rather than a bug, but not evidence that the
+    algorithm works. Changing what counts as a success is Task 15's call, so the headline
+    success_rate deliberately still includes these; the report just says how many there
+    were, and the trajectory figure avoids drawing one as its example.
+    """
+    if not len(trial.target_trajectory):
+        return False
+    goal = np.array([herding_config.capture_zone_x_m, herding_config.capture_zone_y_m])
+    start = trial.target_trajectory[0]
+    return float(np.linalg.norm(start - goal)) <= herding_config.capture_radius_m
 
 
-def _write_report(model_results: dict, algo_status: dict, control_summary: dict,
-                  occlusion_summary: dict, sensitivity: dict) -> None:
+CHI_SQUARE_MIN_EXPECTED = 5.0
+
+
+def _format_p(p_value: float | None, min_expected: float | None = None) -> str:
+    """Render a p-value with its reliability caveat, or mark it untestable if degenerate."""
+    if p_value is None:
+        return "n/a (degenerate table)"
+    # A significant-looking p-value from a table this sparse is not meaningful, and the
+    # numbers in this file are the project's official record -- so the caveat travels
+    # with the number instead of living in a footnote somewhere else.
+    if min_expected is not None and min_expected < CHI_SQUARE_MIN_EXPECTED:
+        return (f"{p_value:.4f} (min expected cell {min_expected:.1f} -- unreliable below "
+                f"{CHI_SQUARE_MIN_EXPECTED:.0f})")
+    return f"{p_value:.4f}"
+
+
+def _write_report(herding_config: HerdingConfig, model_results: dict, algo_status: dict,
+                  control_summary: dict, occlusion_summary: dict, sensitivity: dict) -> None:
     """Print the ALGO-001~008 report and write it to test/output/validation_report.txt."""
     lines = []
-    for name, (_, summary) in model_results.items():
+    for name, (results, summary) in model_results.items():
         lines.append(f"=== Evasion Model: {name} ===")
         lines.append(
             f"  trials: {summary['trials']} | success: {summary['success_rate']*100:.1f}% | "
@@ -391,6 +428,14 @@ def _write_report(model_results: dict, algo_status: dict, control_summary: dict,
         lines.append(
             f"  role swaps/trial: {summary['mean_role_swaps']:.1f} (max {summary['max_role_swaps']}) | "
             f"mean latency: {summary['mean_latency_ms']:.1f} ms"
+        )
+        # The success rate above counts these, so it is stated rather than left to be
+        # discovered: they are captures the algorithm was not required to earn.
+        successes = [r for r in results if r.success]
+        trivial = sum(_spawned_inside_capture_zone(r, herding_config) for r in successes)
+        lines.append(
+            f"  of {len(successes)} successes, {trivial} spawned already inside the capture zone "
+            "(counted in success rate; no herding required)"
         )
     lines.append("=== Model Comparison ===")
     for name, (_, summary) in model_results.items():
@@ -418,12 +463,13 @@ def _write_report(model_results: dict, algo_status: dict, control_summary: dict,
         # One decimal, not zero: the gate is difference_pp >= 40.0 exactly, and a rounded
         # "+40 %p" printed next to a FAIL verdict reads as a contradiction.
         f"  difference   : {control_summary['difference_pp']:+.1f} %p vs best baseline "
-        f"({control_summary['baseline_mode']})  |  chi-square p = {_format_p(control_summary['p_value'])}"
+        f"({control_summary['baseline_mode']})  |  chi-square p = "
+        f"{_format_p(control_summary['p_value'], control_summary['min_expected'])}"
         f"  -> {'PASS' if algo_status['ALGO-008'] else 'FAIL'}"
     )
     lines.append(
         f"  (diagnostic) algorithm vs {control_summary['baseline_mode']} 2x2 chi-square p = "
-        f"{_format_p(control_summary['pairwise_p_value'])}"
+        f"{_format_p(control_summary['pairwise_p_value'], control_summary['pairwise_min_expected'])}"
     )
 
     lines.append("=== Parameter Sensitivity ===")
@@ -447,13 +493,6 @@ def _write_plots(herding_config: HerdingConfig, model_results: dict, sensitivity
     primary_results, _ = model_results["reactive_flee"]
     goal = np.array([herding_config.capture_zone_x_m, herding_config.capture_zone_y_m])
 
-    def spawned_outside_zone(trial) -> bool:
-        """True if the target had to be herded at all, i.e. did not spawn in the capture zone."""
-        if not len(trial.target_trajectory):
-            return False
-        start = trial.target_trajectory[0]
-        return float(np.linalg.norm(start - goal)) > herding_config.capture_radius_m
-
     # First-of-kind, not best-of-kind: the figure illustrates the run, it does not curate it.
     # The one exception is targets that spawn already inside the capture zone -- those are
     # scored as successes after capture_hold_sec without the robots doing anything, so the
@@ -461,7 +500,8 @@ def _write_plots(herding_config: HerdingConfig, model_results: dict, sensitivity
     # them picks a trial that actually herded, which is not the same as picking the best one.
     successes = [r for r in primary_results if r.success]
     examples = (
-        ("success", next((r for r in successes if spawned_outside_zone(r)),
+        ("success", next((r for r in successes
+                          if not _spawned_inside_capture_zone(r, herding_config)),
                          successes[0] if successes else None)),
         ("failure", next((r for r in primary_results if not r.success), None)),
     )
