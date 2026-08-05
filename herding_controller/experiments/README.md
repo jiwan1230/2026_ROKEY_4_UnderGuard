@@ -21,6 +21,9 @@
 - `*_replay.html`
   각 스크립트를 실행한 결과를 이미 끼워 넣어 만든 완성된 페이지. 브라우저로 바로 열면 재생된다
   (재생성 없이 바로 확인하고 싶을 때 사용).
+- `record_trial.py`
+  화면 녹화 없이, `*_frames.json`에 저장된 좌표 데이터를 직접 matplotlib으로 렌더링해서 GIF로
+  저장하는 스크립트. `media/`에 트러블슈팅 노트용으로 미리 뽑아둔 예시가 들어 있다.
 
 ## 재실행 방법
 
@@ -40,6 +43,16 @@ for prefix in ['single_robot', 'real_map']:
     open(f'{prefix}_replay.html', 'w').write(template.replace('/*__TRIAL_DATA__*/', data))
 "
 ```
+
+## GIF로 시행 하나 뽑기
+
+```bash
+# python3 record_trial.py <데이터.json> <시행 번호(0부터)> <출력.gif> [--max-seconds N] [--fps N] [--subsample N]
+python3 record_trial.py real_map_frames.json 0 media/my_clip.gif --fps 15
+```
+
+`--max-seconds`로 앞부분만 잘라낼 수 있고(정지해버린 실패 시행을 끝까지 렌더링할 필요는 없으니),
+`--subsample`로 프레임을 건너뛰어 재생 속도를 조절한다 (기본 3 = 원본 대비 3배속 근처).
 
 ## 알려진 한계 (다음에 이어서 할 사람을 위해)
 
