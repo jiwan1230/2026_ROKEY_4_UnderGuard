@@ -628,7 +628,7 @@ if __name__ == '__main__':
 
 - [ ] **Step 2: self-check 실행**
 
-Run: `python3 turtle_project/central_node.py --check`
+Run: `python3 -m turtle_project.central_node --check`
 Expected: `central_node self-check ok`
 
 ---
@@ -983,7 +983,7 @@ Expected: `db_node ok` / `rat_herding_node ok` / `trap_check_node ok` / `webcam_
 
 Run:
 ```bash
-python3 turtle_project/fleet_msg.py && python3 turtle_project/central_node.py --check
+python3 turtle_project/fleet_msg.py && python3 -m turtle_project.central_node --check
 ```
 Expected: `fleet_msg self-check ok` / `central_node self-check ok`
 
