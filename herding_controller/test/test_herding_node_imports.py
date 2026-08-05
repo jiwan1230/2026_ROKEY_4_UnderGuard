@@ -14,8 +14,12 @@ import math
 import pathlib
 
 import numpy as np
+import pytest
 import rclpy
+import yaml
 from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import OccupancyGrid
+from rclpy.parameter import Parameter
 
 import herding_controller.herding_node as herding_node
 from herding_controller.grid_map import GridConfig, GridMap
@@ -312,6 +316,378 @@ def test_on_robot_pose_updates_heading_from_orientation_not_hardcoded():
             msg2.pose.orientation.w = 1.0  # identity: facing +X
             node._on_robot2_pose(msg2)
             assert not np.allclose(node._robot1_heading, node._robot2_heading)
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+# --- Final review C2: node defaults must equal the shipping yaml exactly ---- #
+
+def _load_shipping_yaml_params() -> dict:
+    path = pathlib.Path(__file__).resolve().parent.parent / "config" / "herding_params.yaml"
+    with open(path) as handle:
+        return yaml.safe_load(handle)["herding_controller"]["ros__parameters"]
+
+
+def test_param_defaults_match_shipping_yaml_values():
+    """Running with no launch file (no yaml) must behave exactly like running with it.
+
+    The pre-existing test above only checks that the *names* line up. Before this
+    check existed the node's built-in defaults still held the pre-Task-15 tuning
+    (drive_distance_m=0.8, ease=1.3, block_lookahead_m=1.2), which violates the
+    drive/flee constraint documented in the yaml -- so `ros2 run herding_controller
+    herding_node` silently ran a configuration measured at ~2.5% success.
+    """
+    params = _load_shipping_yaml_params()
+    assert set(params) == set(herding_node._PARAM_DEFAULTS), (
+        "yaml keys and _PARAM_DEFAULTS keys differ: "
+        f"yaml-only={set(params) - set(herding_node._PARAM_DEFAULTS)}, "
+        f"defaults-only={set(herding_node._PARAM_DEFAULTS) - set(params)}"
+    )
+    mismatched = {
+        name: (herding_node._PARAM_DEFAULTS[name], value)
+        for name, value in params.items()
+        if herding_node._PARAM_DEFAULTS[name] != value
+    }
+    assert mismatched == {}, f"node default vs yaml value drift (default, yaml): {mismatched}"
+
+
+def test_node_builtin_defaults_build_a_valid_herding_config():
+    """The defaults alone must satisfy HerdingConfig's invariants (no yaml, no launch file)."""
+    config = HerdingConfig(**herding_node._PARAM_DEFAULTS)  # raises if the invariant is violated
+    assert config.drive_distance_m * config.drive_distance_ease_factor < config.flee_reaction_distance_m
+
+
+def test_load_config_rejects_zero_control_rate_with_a_clear_error():
+    rclpy.init(args=[])
+    try:
+        node = rclpy.create_node(
+            "test_zero_rate_node",
+            parameter_overrides=[Parameter("control_rate_hz", Parameter.Type.DOUBLE, 0.0)],
+        )
+        try:
+            with pytest.raises(ValueError) as excinfo:
+                herding_node._load_config(node)
+            assert "control_rate_hz" in str(excinfo.value)
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+# --- Final review C1/I3: freshness gating + real-clock dt ------------------- #
+
+class _FakeClock:
+    """Controllable stand-in for HerdingNode._now_sec()."""
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self.t = start
+
+    def advance(self, dt: float) -> None:
+        self.t += dt
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def _target_pose(x: float, y: float) -> PoseStamped:
+    msg = PoseStamped()
+    msg.pose.position.x, msg.pose.position.y = x, y
+    return msg
+
+
+class _RecordingLogger:
+    """Captures rclpy logger calls so tests can assert on operator-visible output."""
+
+    def __init__(self) -> None:
+        self.warnings = []
+        self.errors = []
+
+    def warn(self, message, *args, **kwargs):
+        self.warnings.append(str(message))
+
+    def warning(self, message, *args, **kwargs):
+        self.warnings.append(str(message))
+
+    def error(self, message, *args, **kwargs):
+        self.errors.append(str(message))
+
+    def info(self, message, *args, **kwargs):
+        pass
+
+    def debug(self, message, *args, **kwargs):
+        pass
+
+
+def _make_node_with_fake_clock():
+    """A HerdingNode whose time source is a controllable counter, with both robot poses known."""
+    node = herding_node.HerdingNode()
+    clock = _FakeClock()
+    node._now_sec = clock
+    r1 = PoseStamped()
+    r1.pose.position.x, r1.pose.position.y = 0.0, 0.0
+    r1.pose.orientation.w = 1.0
+    node._on_robot1_pose(r1)
+    r2 = PoseStamped()
+    r2.pose.position.x, r2.pose.position.y = 6.0, 6.0
+    r2.pose.orientation.w = 1.0
+    node._on_robot2_pose(r2)
+    return node, clock
+
+
+def test_timer_reports_no_observation_when_no_new_target_pose_arrived():
+    """A cycle with no new ~/target_pose must hand HerdingCore None, not the stale position."""
+    rclpy.init(args=[])
+    try:
+        node, clock = _make_node_with_fake_clock()
+        try:
+            seen = []
+            real_step = node.core.step
+            node.core.step = lambda obs: (seen.append(obs), real_step(obs))[1]
+
+            node._on_target_pose(_target_pose(2.0, 2.0))
+            clock.advance(0.2)
+            node._on_timer()
+            assert seen[-1].target_measurement is not None
+
+            # No new pose published between these two cycles.
+            clock.advance(0.2)
+            node._on_timer()
+            assert seen[-1].target_measurement is None
+
+            # A new pose arriving makes the next cycle an observation again.
+            node._on_target_pose(_target_pose(2.1, 2.0))
+            clock.advance(0.2)
+            node._on_timer()
+            assert seen[-1].target_measurement is not None
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+def test_fsm_enters_lost_after_occlusion_timeout_of_silent_target_topic():
+    """The whole LOST/occlusion-recovery subsystem must be reachable from the node.
+
+    Before the freshness gate, `_on_timer` re-fed the last received position every
+    cycle forever, `TargetEstimator.update()` zeroed `_time_since_obs` each time,
+    and `is_lost` could never become True in a real deployment.
+    """
+    rclpy.init(args=[])
+    try:
+        node, clock = _make_node_with_fake_clock()
+        try:
+            dt = 0.2
+            for _ in range(6):  # observed every cycle: reach a tracking state
+                node._on_target_pose(_target_pose(2.0, 2.0))
+                clock.advance(dt)
+                node._on_timer()
+            assert node.core.fsm.state in (FSMState.TRACK, FSMState.HERD, FSMState.CORNER)
+            assert node.core.estimator.get_state().is_lost is False
+
+            # Perception goes silent: nothing publishes ~/target_pose any more.
+            silent_cycles = int(node.config.occlusion_timeout_sec / dt) + 2
+            for _ in range(silent_cycles):
+                clock.advance(dt)
+                node._on_timer()
+
+            state = node.core.estimator.get_state()
+            assert state.time_since_observation > node.config.occlusion_timeout_sec
+            assert state.is_lost is True
+            assert node.core.fsm.state == FSMState.LOST
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+def test_fsm_stays_out_of_lost_while_target_poses_keep_arriving():
+    """The freshness gate must not manufacture false LOST episodes on a healthy topic."""
+    rclpy.init(args=[])
+    try:
+        node, clock = _make_node_with_fake_clock()
+        try:
+            for _ in range(int(node.config.occlusion_timeout_sec / 0.2) + 10):
+                node._on_target_pose(_target_pose(2.0, 2.0))
+                clock.advance(0.2)
+                node._on_timer()
+            assert node.core.estimator.get_state().is_lost is False
+            assert node.core.fsm.state != FSMState.LOST
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+def test_observation_dt_and_sim_time_track_the_real_clock_not_the_nominal_period():
+    """capture_hold/role_swap_cooldown/occlusion timeouts must run on wall-clock time."""
+    rclpy.init(args=[])
+    try:
+        node, clock = _make_node_with_fake_clock()
+        try:
+            seen = []
+            real_step = node.core.step
+            node.core.step = lambda obs: (seen.append(obs), real_step(obs))[1]
+
+            nominal = 1.0 / node.config.control_rate_hz
+            node._on_timer()  # first cycle has no previous timestamp: nominal dt
+            assert seen[-1].dt == nominal
+
+            clock.advance(0.9)  # a badly jittered / delayed cycle
+            node._on_timer()
+            assert seen[-1].dt == pytest.approx(0.9)
+            assert seen[-1].sim_time_sec == pytest.approx(nominal + 0.9)
+
+            clock.advance(0.05)  # an early cycle
+            node._on_timer()
+            assert seen[-1].dt == pytest.approx(0.05)
+            assert seen[-1].sim_time_sec == pytest.approx(nominal + 0.95)
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+def test_non_positive_elapsed_time_falls_back_to_the_nominal_period():
+    """A stalled or backwards clock must not stall the KF / timeouts with dt <= 0."""
+    rclpy.init(args=[])
+    try:
+        node, clock = _make_node_with_fake_clock()
+        try:
+            seen = []
+            real_step = node.core.step
+            node.core.step = lambda obs: (seen.append(obs), real_step(obs))[1]
+
+            node._on_timer()
+            node._on_timer()  # clock did not advance at all
+            assert seen[-1].dt == 1.0 / node.config.control_rate_hz
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+# --- Final review I4: a failing cycle must not tear down the node ----------- #
+
+def test_timer_survives_an_exception_from_core_step_and_logs_it():
+    rclpy.init(args=[])
+    try:
+        node, clock = _make_node_with_fake_clock()
+        try:
+            logger = _RecordingLogger()
+            node.get_logger = lambda: logger
+            published = []
+            node.robot1_goal_pub.publish = lambda msg: published.append(msg)
+            node.robot2_goal_pub.publish = lambda msg: published.append(msg)
+            node.state_pub.publish = lambda msg: published.append(msg)
+
+            def boom(_obs):
+                raise RuntimeError("synthetic core failure")
+
+            node.core.step = boom
+            clock.advance(0.2)
+            node._on_timer()  # must not propagate
+
+            assert published == []  # no goals published for the failed cycle
+            assert len(logger.errors) == 1
+            assert "synthetic core failure" in logger.errors[0]
+
+            # The node keeps running: a healthy next cycle publishes again.
+            node.core.step = herding_node.HerdingCore(node.config).step
+            clock.advance(0.2)
+            node._on_timer()
+            assert published != []
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+def test_timer_survives_an_exception_raised_while_publishing():
+    rclpy.init(args=[])
+    try:
+        node, clock = _make_node_with_fake_clock()
+        try:
+            logger = _RecordingLogger()
+            node.get_logger = lambda: logger
+
+            def boom(_msg):
+                raise RuntimeError("synthetic publish failure")
+
+            node.state_pub.publish = boom
+            clock.advance(0.2)
+            node._on_timer()  # must not propagate
+            assert len(logger.errors) == 1
+            assert "synthetic publish failure" in logger.errors[0]
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+# --- Final review I2: map mismatches are warned about through the ROS logger - #
+
+def _make_map_msg(node, height=None, width=None, resolution=None, origin_x=0.0, origin_y=0.0):
+    msg = OccupancyGrid()
+    msg.info.height = int(height if height is not None else node.config.grid_height_cells)
+    msg.info.width = int(width if width is not None else node.config.grid_width_cells)
+    msg.info.resolution = float(
+        resolution if resolution is not None else node.config.grid_resolution_m
+    )
+    msg.info.origin.position.x = float(origin_x)
+    msg.info.origin.position.y = float(origin_y)
+    msg.data = [0] * (msg.info.height * msg.info.width)
+    return msg
+
+
+def test_on_map_warns_through_the_ros_logger_on_shape_mismatch():
+    """HerdingCore's stdlib-logging warning never reaches /rosout; the node's must."""
+    rclpy.init(args=[])
+    try:
+        node, _ = _make_node_with_fake_clock()
+        try:
+            logger = _RecordingLogger()
+            node.get_logger = lambda: logger
+            node._on_map(_make_map_msg(node, height=60, width=80))
+            assert len(logger.warnings) == 1
+            assert "60x80" in logger.warnings[0]
+            assert "grid_height_cells" in logger.warnings[0]
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+def test_on_map_warns_on_resolution_and_origin_mismatch():
+    rclpy.init(args=[])
+    try:
+        node, _ = _make_node_with_fake_clock()
+        try:
+            logger = _RecordingLogger()
+            node.get_logger = lambda: logger
+            node._on_map(_make_map_msg(node, resolution=0.05, origin_x=-5.0, origin_y=-5.0))
+            joined = " ".join(logger.warnings)
+            assert "resolution" in joined
+            assert "origin" in joined
+        finally:
+            node.destroy_node()
+    finally:
+        rclpy.shutdown()
+
+
+def test_on_map_is_silent_and_stores_the_grid_when_the_map_matches_the_config():
+    rclpy.init(args=[])
+    try:
+        node, _ = _make_node_with_fake_clock()
+        try:
+            logger = _RecordingLogger()
+            node.get_logger = lambda: logger
+            node._on_map(_make_map_msg(node))
+            assert logger.warnings == []
+            assert node._occupancy.shape == (
+                node.config.grid_height_cells, node.config.grid_width_cells
+            )
         finally:
             node.destroy_node()
     finally:

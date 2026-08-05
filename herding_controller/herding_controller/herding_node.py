@@ -7,6 +7,7 @@ conversion) is kept as a plain function so it can be unit tested without
 spinning up rclpy machinery.
 """
 import json
+import traceback
 
 import numpy as np
 import rclpy
@@ -51,12 +52,16 @@ _PARAM_DEFAULTS = {
     "escape_route_top_k": 3,
     "escape_concentration_threshold": 0.5,
     # --- Herding Control ---
-    "drive_distance_m": 0.8,
+    # Task 15 tuned values. drive_distance_m * drive_distance_ease_factor must stay
+    # below flee_reaction_distance_m (0.75 * 1.15 = 0.86 < 1.0) -- see the long
+    # rationale in config/herding_params.yaml and HerdingConfig.__post_init__.
+    # test_param_defaults_match_shipping_yaml_values pins these to the yaml.
+    "drive_distance_m": 0.75,
     "flee_reaction_distance_m": 1.0,
     "panic_distance_m": 0.35,
     "alignment_threshold": 0.7,
-    "drive_distance_ease_factor": 1.3,
-    "block_lookahead_m": 1.2,
+    "drive_distance_ease_factor": 1.15,
+    "block_lookahead_m": 3.0,
     # --- Role Assignment ---
     "role_swap_margin": 0.5,
     "role_swap_cooldown_sec": 2.0,
@@ -73,6 +78,14 @@ def _load_config(node: Node) -> HerdingConfig:
     for name, default in _PARAM_DEFAULTS.items():
         node.declare_parameter(name, default)
     values = {name: node.get_parameter(name).value for name in _PARAM_DEFAULTS}
+    # The control period (1 / control_rate_hz) is computed in two places below;
+    # a zero rate would surface as a bare ZeroDivisionError from deep inside the
+    # constructor. Fail here with something an operator can act on. (Other
+    # cross-parameter invariants are enforced by HerdingConfig.__post_init__.)
+    if not values["control_rate_hz"] > 0.0:
+        raise ValueError(
+            f"control_rate_hz must be > 0, got {values['control_rate_hz']}"
+        )
     return HerdingConfig(**values)
 
 
@@ -163,7 +176,19 @@ class HerdingNode(Node):
         self._robot1_pose_received = False
         self._robot2_pose_received = False
         self._occupancy = None
-        self._sim_time = 0.0
+        # True only between a ~/target_pose arriving and the next control cycle
+        # consuming it. A cycle that finds it False reports "no observation this
+        # cycle" to HerdingCore instead of re-feeding the last (stale) position,
+        # which is what lets the estimator's occlusion timeout -- and therefore
+        # the FSM's LOST state -- ever fire when perception goes quiet.
+        self._target_pose_is_fresh = False
+        # Wall-clock bookkeeping: sim_time_sec/dt handed to HerdingCore are real
+        # elapsed node-clock time, not a nominal 1/control_rate_hz counter, so
+        # capture_hold_sec / role_swap_cooldown_sec / occlusion_timeout_sec stay
+        # true to the wall clock under timer jitter or a dropped callback.
+        self._nominal_dt = 1.0 / self.config.control_rate_hz
+        self._last_cycle_sec: float | None = None
+        self._elapsed_sec = 0.0
 
         map_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(PoseStamped, "~/target_pose", self._on_target_pose, 10)
@@ -177,10 +202,15 @@ class HerdingNode(Node):
         self.escape_prob_pub = self.create_publisher(OccupancyGrid, "~/escape_probability", 10)
         self.capture_result_pub = self.create_publisher(Bool, "~/capture_result", 10)
 
-        self.create_timer(1.0 / self.config.control_rate_hz, self._on_timer)
+        self.create_timer(self._nominal_dt, self._on_timer)
+
+    def _now_sec(self) -> float:
+        """Node-clock time in seconds. Single seam so tests can drive time directly."""
+        return self.get_clock().now().nanoseconds * 1e-9
 
     def _on_target_pose(self, msg: PoseStamped) -> None:
         self._target_pos = np.array([msg.pose.position.x, msg.pose.position.y])
+        self._target_pose_is_fresh = True
 
     def _on_robot1_pose(self, msg: PoseStamped) -> None:
         self._robot1_pos = np.array([msg.pose.position.x, msg.pose.position.y])
@@ -198,20 +228,75 @@ class HerdingNode(Node):
         # msg.data always has exactly height*width entries per the OccupancyGrid
         # spec, so this reshape can't fail even if the incoming map's extent
         # differs from our configured grid_width_cells/grid_height_cells.
-        # HerdingCore.step() checks the shape against its own grid config and
-        # logs + ignores a mismatched frame rather than crashing.
+        # HerdingCore.step() also checks the shape against its own grid config
+        # and ignores a mismatched frame, but it logs through stdlib `logging`,
+        # which nothing bridges to the ROS log -- so an operator would never see
+        # it. Check here too and warn through the rclpy logger, which is what
+        # actually reaches `ros2 run`'s console and /rosout.
         self._occupancy = np.array(msg.data, dtype=int).reshape(msg.info.height, msg.info.width)
+        self._warn_on_map_mismatch(msg)
+
+    def _warn_on_map_mismatch(self, msg: OccupancyGrid) -> None:
+        """Warn (via the ROS logger) when /map does not line up with our grid config."""
+        expected_shape = (self.config.grid_height_cells, self.config.grid_width_cells)
+        if (msg.info.height, msg.info.width) != expected_shape:
+            self.get_logger().warn(
+                f"/map is {msg.info.height}x{msg.info.width} cells but "
+                f"grid_height_cells x grid_width_cells is "
+                f"{expected_shape[0]}x{expected_shape[1]}; the map will be IGNORED. "
+                f"Set grid_width_cells/grid_height_cells to match the published map."
+            )
+        if not np.isclose(msg.info.resolution, self.config.grid_resolution_m):
+            self.get_logger().warn(
+                f"/map resolution is {msg.info.resolution} m/cell but "
+                f"grid_resolution_m is {self.config.grid_resolution_m}; "
+                f"world<->cell conversions will be wrong."
+            )
+        origin = msg.info.origin.position
+        if not (np.isclose(origin.x, self.config.grid_origin_x_m)
+                and np.isclose(origin.y, self.config.grid_origin_y_m)):
+            self.get_logger().warn(
+                f"/map origin is ({origin.x}, {origin.y}) but grid_origin_x_m/"
+                f"grid_origin_y_m is ({self.config.grid_origin_x_m}, "
+                f"{self.config.grid_origin_y_m}); obstacles will be offset."
+            )
 
     def _on_timer(self) -> None:
-        dt = 1.0 / self.config.control_rate_hz
+        now_sec = self._now_sec()
+        if self._last_cycle_sec is None:
+            dt = self._nominal_dt  # first cycle: no previous timestamp to diff against
+        else:
+            dt = now_sec - self._last_cycle_sec
+            if dt <= 0.0:
+                # Clock not running yet (use_sim_time with no /clock publisher) or a
+                # backwards jump. A non-positive dt would stall the KF and every
+                # timeout, so fall back to the nominal period for this cycle.
+                dt = self._nominal_dt
+        self._last_cycle_sec = now_sec
+        self._elapsed_sec += dt
+
+        # Only a pose that arrived since the previous cycle counts as an
+        # observation; otherwise the estimator would keep re-fusing a stale
+        # position and never time out into LOST.
+        target_measurement = self._target_pos if self._target_pose_is_fresh else None
+        self._target_pose_is_fresh = False
+
         observation = Observation(
-            target_measurement=self._target_pos, robot1_pos=self._robot1_pos, robot2_pos=self._robot2_pos,
+            target_measurement=target_measurement,
+            robot1_pos=self._robot1_pos, robot2_pos=self._robot2_pos,
             robot1_heading=self._robot1_heading, robot2_heading=self._robot2_heading,
-            occupancy=self._occupancy, sim_time_sec=self._sim_time, dt=dt,
+            occupancy=self._occupancy, sim_time_sec=self._elapsed_sec, dt=dt,
         )
-        self._sim_time += dt
-        output = self.core.step(observation)
-        self._publish(output)
+        try:
+            output = self.core.step(observation)
+            self._publish(output)
+        except Exception:
+            # An exception escaping a timer callback tears down rclpy.spin() and
+            # kills the node mid-mission. Log it and skip this cycle instead: the
+            # robots simply hold their previously published goals.
+            self.get_logger().error(
+                f"control cycle failed, skipping this cycle's goals:\n{traceback.format_exc()}"
+            )
 
     def _publish(self, output: HerdingOutput) -> None:
         # Before both robots have ever reported a real pose, robotN_pos is

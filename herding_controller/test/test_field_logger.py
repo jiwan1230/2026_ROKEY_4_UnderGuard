@@ -38,7 +38,7 @@ def test_detect_rule_violations_counts_target_moving_toward_close_robot():
     robot_positions = [[np.array([5.0, 5.0])]]
     target_positions = [np.array([5.9, 5.0])]  # 0.9m away, inside a 1.0m panic distance
     target_velocities = [np.array([-0.4, 0.0])]  # moving toward the robot: violates rule 2
-    count = detect_rule_violations(robot_positions, target_positions, target_velocities, panic_distance_m=1.0, dt=0.2)
+    count = detect_rule_violations(robot_positions, target_positions, target_velocities, reaction_distance_m=1.0, dt=0.2)
     assert count == 1
 
 
@@ -138,7 +138,7 @@ def test_detect_rule_violations_empty_robot_list_at_one_timestep_does_not_crash(
     robot_positions = [[], [np.array([5.0, 5.0])]]
     target_positions = [np.array([5.9, 5.0]), np.array([5.9, 5.0])]
     target_velocities = [np.array([-0.4, 0.0]), np.array([-0.4, 0.0])]
-    count = detect_rule_violations(robot_positions, target_positions, target_velocities, panic_distance_m=1.0, dt=0.2)
+    count = detect_rule_violations(robot_positions, target_positions, target_velocities, reaction_distance_m=1.0, dt=0.2)
     assert count == 1  # only the second timestep (with a robot present) counts
 
 
@@ -149,7 +149,7 @@ def test_detect_rule_violations_mismatched_list_lengths_raises_instead_of_silent
     target_positions = [np.array([5.9, 5.0])]
     target_velocities = [np.array([-0.4, 0.0])]
     with pytest.raises(ValueError):
-        detect_rule_violations(robot_positions, target_positions, target_velocities, panic_distance_m=1.0, dt=0.2)
+        detect_rule_violations(robot_positions, target_positions, target_velocities, reaction_distance_m=1.0, dt=0.2)
 
 
 def test_detect_rule_violations_closest_robot_is_the_one_evaluated_not_farther_threatened_one():
@@ -165,5 +165,5 @@ def test_detect_rule_violations_closest_robot_is_the_one_evaluated_not_farther_t
     target_positions = [np.array([5.3, 5.0])]
     # Moving toward robot_b (+x direction), i.e. away from the closest robot_a.
     target_velocities = [np.array([0.5, 0.0])]
-    count = detect_rule_violations(robot_positions, target_positions, target_velocities, panic_distance_m=1.0, dt=0.2)
+    count = detect_rule_violations(robot_positions, target_positions, target_velocities, reaction_distance_m=1.0, dt=0.2)
     assert count == 0  # per spec: only the closest robot (robot_a) is evaluated, and target moves away from it

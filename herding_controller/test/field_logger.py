@@ -49,9 +49,15 @@ class FieldLogger:
 
 def detect_rule_violations(
     robot_positions: list, target_positions: list, target_velocities: list,
-    panic_distance_m: float, dt: float,
+    reaction_distance_m: float, dt: float,
 ) -> int:
-    """Count cycles where a robot is within panic_distance_m but the target moves toward it (rule 2)."""
+    """Count cycles where a robot is within reaction_distance_m but the target moves toward it (rule 2).
+
+    `reaction_distance_m` is the operator protocol's rule-2 radius -- i.e. the config's
+    `flee_reaction_distance_m` (1.0 m, "로봇이 약 1m 안으로 들어오면 도망친다"), NOT
+    `panic_distance_m` (0.35 m, the planner's own retreat threshold). Passing the latter
+    would under-count violations and corrupt the 20%-violation trial-exclusion analysis.
+    """
     if not (len(robot_positions) == len(target_positions) == len(target_velocities)):
         raise ValueError(
             "robot_positions, target_positions, and target_velocities must have the same "
@@ -65,7 +71,7 @@ def detect_rule_violations(
         distances = [np.linalg.norm(target_pos - r) for r in robots_at_t]
         closest_index = int(np.argmin(distances))
         closest_dist = distances[closest_index]
-        if closest_dist >= panic_distance_m:
+        if closest_dist >= reaction_distance_m:
             continue
         away = target_pos - robots_at_t[closest_index]
         speed = np.linalg.norm(target_vel)

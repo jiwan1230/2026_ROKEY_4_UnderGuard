@@ -63,6 +63,30 @@ class HerdingConfig:
     grid_origin_x_m: float = 0.0
     grid_origin_y_m: float = 0.0
 
+    def __post_init__(self) -> None:
+        """Reject parameter combinations that are known to deadlock the herd.
+
+        The Driver converges onto its driving point and stops there. When the
+        target is aligned with the goal the planner eases that point outward by
+        drive_distance_ease_factor, so the Driver's closest approach is
+        drive_distance_m * drive_distance_ease_factor. If that exceeds the
+        target's reaction radius (flee_reaction_distance_m) the target never
+        flees and the whole system makes zero progress -- measured success
+        collapses from ~83% to 2.5% (see config/herding_params.yaml). This is a
+        load-bearing invariant, so it fails loudly here at config-construction
+        time rather than degrading silently at runtime.
+        """
+        eased = self.drive_distance_m * self.drive_distance_ease_factor
+        if eased >= self.flee_reaction_distance_m:
+            raise ValueError(
+                "drive_distance_m * drive_distance_ease_factor must be < "
+                "flee_reaction_distance_m, otherwise the Driver stops outside the "
+                "target's reaction radius and the target never flees; got "
+                f"drive_distance_m={self.drive_distance_m} * "
+                f"drive_distance_ease_factor={self.drive_distance_ease_factor} = {eased} "
+                f">= flee_reaction_distance_m={self.flee_reaction_distance_m}"
+            )
+
 
 @dataclass
 class Observation:

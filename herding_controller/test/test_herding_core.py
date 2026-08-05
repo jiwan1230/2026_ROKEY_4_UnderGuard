@@ -1,12 +1,14 @@
 # herding_controller/test/test_herding_core.py
 import numpy as np
+import pytest
 
 from herding_controller.herding_core import HerdingConfig, HerdingCore, Observation
 from herding_controller.state_machine import FSMState
 
 
-def make_config():
-    return HerdingConfig(
+def make_config(**overrides):
+    """Build a HerdingConfig for the tests, with per-test overrides."""
+    defaults = dict(
         frame_id="map", control_rate_hz=5.0,
         capture_zone_x_m=3.0, capture_zone_y_m=3.0, capture_radius_m=0.5, capture_hold_sec=0.4,
         grid_resolution_m=0.25, grid_width_cells=40, grid_height_cells=40,
@@ -15,10 +17,14 @@ def make_config():
         momentum_weight=0.4, robot_repulsion_weight=1.5, wall_detect_radius_cells=1, escape_route_top_k=3,
         escape_concentration_threshold=0.5,
         drive_distance_m=0.8, flee_reaction_distance_m=1.0, panic_distance_m=0.35,
-        alignment_threshold=0.7, drive_distance_ease_factor=1.3, block_lookahead_m=1.2,
+        # ease factor kept below flee_reaction_distance_m / drive_distance_m
+        # (1.0 / 0.8 = 1.25) so HerdingConfig.__post_init__ accepts this fixture.
+        alignment_threshold=0.7, drive_distance_ease_factor=1.15, block_lookahead_m=1.2,
         role_swap_margin=0.5, role_swap_cooldown_sec=2.0, min_robot_separation_m=0.6,
         role_cost_turn_weight=0.3, diffusion_rate=0.2, decay_factor=0.9,
     )
+    defaults.update(overrides)
+    return HerdingConfig(**defaults)
 
 
 def test_no_rclpy_import_anywhere_in_core_chain():
@@ -286,3 +292,47 @@ def test_no_module_in_the_core_import_chain_imports_rclpy():
             source = handle.read()
         assert "import rclpy" not in source, f"{name} imports rclpy"
         assert "from rclpy" not in source, f"{name} imports rclpy"
+
+
+# --- Final review I1: the drive/flee geometric invariant is enforced in code --- #
+
+def test_herding_config_rejects_drive_distance_that_exceeds_the_flee_reaction_radius():
+    """0.8 * 1.3 = 1.04 >= 1.0: the Driver would stop outside the target's reaction radius."""
+    with pytest.raises(ValueError) as excinfo:
+        make_config(drive_distance_m=0.8, drive_distance_ease_factor=1.3,
+                    flee_reaction_distance_m=1.0)
+    message = str(excinfo.value)
+    # The message must name the constraint and the offending values, not just fail.
+    assert "flee_reaction_distance_m" in message
+    assert "drive_distance_ease_factor" in message
+    assert "0.8" in message and "1.3" in message
+
+
+def test_herding_config_rejects_the_exact_boundary_case():
+    """Equality is a violation too: at exactly the reaction radius the target does not flee."""
+    with pytest.raises(ValueError):
+        make_config(drive_distance_m=1.0, drive_distance_ease_factor=1.0,
+                    flee_reaction_distance_m=1.0)
+
+
+def test_herding_config_accepts_a_combination_with_margin():
+    config = make_config(drive_distance_m=0.75, drive_distance_ease_factor=1.15,
+                         flee_reaction_distance_m=1.0)
+    assert config.drive_distance_m * config.drive_distance_ease_factor < config.flee_reaction_distance_m
+
+
+def test_shipping_yaml_config_satisfies_the_invariant():
+    """The values actually shipped in config/herding_params.yaml must load without raising.
+
+    Loaded through run_validation.load_herding_config -- the real offline
+    config-loading path -- so this fails if the yaml ever drifts into a
+    violating combination (and complements the node-side defaults check in
+    test_herding_node_imports.py).
+    """
+    # Imported lazily: run_validation pulls in matplotlib/scipy, which nothing
+    # else in this module needs.
+    from test.run_validation import CONFIG_PATH, load_herding_config
+
+    config = load_herding_config(CONFIG_PATH)  # must not raise
+    eased = config.drive_distance_m * config.drive_distance_ease_factor
+    assert eased < config.flee_reaction_distance_m

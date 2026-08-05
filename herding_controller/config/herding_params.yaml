@@ -13,6 +13,12 @@ herding_controller:
     grid_resolution_m: 0.25
     grid_width_cells: 40
     grid_height_cells: 40
+    # World coordinates of the grid's lower-left corner. These MUST match the
+    # origin of the map published on /map (Nav2 maps are rarely at (0, 0)), or
+    # every world<->cell conversion is offset and the obstacle mask, escape
+    # model, and occlusion belief all address the wrong cells.
+    grid_origin_x_m: 0.0
+    grid_origin_y_m: 0.0
 
     # --- Target Estimator (KF) ---
     kf_process_noise: 0.1

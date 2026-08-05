@@ -21,7 +21,9 @@ def make_herding_config(**overrides):
         momentum_weight=0.4, robot_repulsion_weight=1.5, wall_detect_radius_cells=1, escape_route_top_k=3,
         escape_concentration_threshold=0.5,
         drive_distance_m=0.8, flee_reaction_distance_m=1.0, panic_distance_m=0.35,
-        alignment_threshold=0.7, drive_distance_ease_factor=1.3, block_lookahead_m=1.2,
+        # ease factor kept below flee_reaction_distance_m / drive_distance_m
+        # (1.0 / 0.8 = 1.25) so HerdingConfig.__post_init__ accepts this fixture.
+        alignment_threshold=0.7, drive_distance_ease_factor=1.15, block_lookahead_m=1.2,
         role_swap_margin=0.5, role_swap_cooldown_sec=2.0, min_robot_separation_m=0.6,
         role_cost_turn_weight=0.3, diffusion_rate=0.2, decay_factor=0.9,
     )
