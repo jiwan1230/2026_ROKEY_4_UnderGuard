@@ -54,7 +54,7 @@ class DetectorNode(Node):
         # 추적 goal은 robot_agent가 Nav2로 쓰도록 PoseStamped (rat TODO에서 발행).
         self.pose_pub = self.create_publisher(PoseStamped, 'target_pose', 10)
         self.db = self.create_client(QueryHole, '/db/query_hole')
-        self.nav = Navigator(self, on_arrived=self._arrived)
+        self.nav = Navigator(self, on_arrived=self._arrived, on_failed=self._failed)
 
         self.rgb_sub = Subscriber(self, CompressedImage, 'synced/rgb',
                                   qos_profile=qos_profile_sensor_data)
@@ -184,6 +184,10 @@ class DetectorNode(Node):
         self.get_logger().info('도착 — 검증 시작')
         self.state = 'VERIFYING'
         self.verify_count = 0
+
+    def _failed(self):
+        self.get_logger().warn('접근 실패(Nav2) — 복귀')
+        self._reset()
 
     def _verify(self, box, img_shape, depth):
         if box is None:

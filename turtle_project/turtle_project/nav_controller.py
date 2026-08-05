@@ -41,10 +41,12 @@ class Navigator:
     spin 재탐색은 이 기능(일회성 접근)에 불필요하여 제외.
     """
 
-    def __init__(self, node, on_arrived=None, action='navigate_to_pose'):
+    def __init__(self, node, on_arrived=None, on_failed=None,
+                action='navigate_to_pose'):
         self.log = node.get_logger()
         self.client = ActionClient(node, NavigateToPose, action)
         self.on_arrived = on_arrived
+        self.on_failed = on_failed
         self.active = False
         self.handle = None
 
@@ -73,6 +75,8 @@ class Navigator:
         if not handle.accepted:
             self.log.error('goal 거부됨')
             self.active = False
+            if self.on_failed:
+                self.on_failed()
             return
         self.handle = handle
         handle.get_result_async().add_done_callback(
@@ -87,6 +91,8 @@ class Navigator:
         self.log.info(f'주행 종료 (status={status})')
         if status == SUCCEEDED and self.on_arrived:
             self.on_arrived()
+        elif status != SUCCEEDED and self.on_failed:
+            self.on_failed()
 
 
 def _self_check():
