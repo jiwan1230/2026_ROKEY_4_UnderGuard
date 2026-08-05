@@ -6,9 +6,11 @@
 **Generated artifact:** `herding_controller/test/output/validation_report.txt`
 **Command:** `cd herding_controller && python3 test/run_validation.py 100`
 
-Unit tests: **127 passed, 0 failed**
+Unit tests: **133 passed, 0 failed**
 (`python3 -m pytest test/ -q -p no:anyio`, the whole suite including the
-`test_herding_node_imports.py` node-adapter tests).
+`test_herding_node_imports.py` node-adapter tests and `test_run_validation.py`,
+added when the final-review fix wave gave the validation harness its first
+direct test coverage).
 Note: `-p no:anyio` is required on this machine — a broken system-wide `anyio` pytest
 plugin crashes a bare `python3 -m pytest`.
 
