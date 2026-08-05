@@ -5,4 +5,7 @@ __pycache__/
 build/
 install/
 log/
-test/output/
+# Generated validation artifacts (report + plots). A leading "test/output/" has an
+# embedded slash, so git anchors it to the repo root and it never matched the real
+# path, herding_controller/test/output/. "**/" makes it match at any depth.
+**/test/output/
