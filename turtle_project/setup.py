@@ -25,7 +25,14 @@ setup(
     entry_points={
         'console_scripts': [
             'camera_node = turtle_project.camera_node:main',
-            'opening_test_node = turtle_project.opening_test_node:main'
+            'opening_test_node = turtle_project.opening_test_node:main',
+            'detector_node = turtle_project.detector_node:main',
+            'trap_check_node = turtle_project.trap_check_node:main',
+            'robot_agent = turtle_project.robot_agent:main',
+            'central_node = turtle_project.central_node:main',
+            'db_node = turtle_project.db_node:main',
+            'rat_herding_node = turtle_project.rat_herding_node:main',
+            'webcam_node = turtle_project.webcam_node:main',
         ],
     },
 )
