@@ -13,6 +13,13 @@ import numpy as np  # noqa: E402
 import yaml  # noqa: E402
 from scipy.stats import chi2_contingency  # noqa: E402
 
+# 그래프 라벨을 한글로 표기하기 위한 폰트 설정 (미설정 시 한글이 네모(tofu)로 깨짐).
+# matplotlib은 .ttc 폰트 파일에서 첫 번째 서브패밀리 이름만 색인하기 때문에,
+# 시스템에는 "Noto Sans CJK KR"이 있어도 matplotlib 폰트 매니저는 "Noto Sans CJK JP"라는
+# 이름으로만 이 폰트를 찾을 수 있다 (글리프 자체는 두 이름 모두 동일한 한글 포함).
+matplotlib.rcParams["font.family"] = "Noto Sans CJK JP"
+matplotlib.rcParams["axes.unicode_minus"] = False
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from herding_controller.grid_map import GridConfig, GridMap  # noqa: E402
@@ -551,17 +558,19 @@ def _write_plots(herding_config: HerdingConfig, model_results: dict, sensitivity
 
     # 결과마다 패널을 하나씩: 4초짜리 포획과 120초짜리 추격은 유용하게 공유할 스케일이
     # 없으며, 겹쳐 그리면 짧은 쪽이 완전히 가려진다.
+    panel_labels_ko = {"success": "성공", "failure": "실패"}
     fig, axes = plt.subplots(1, 2, figsize=(11, 5.5), squeeze=False)
     for ax, (label, trial) in zip(axes[0], examples):
+        label_ko = panel_labels_ko[label]
         ax.set_aspect("equal", adjustable="datalim")
         ax.set_xlabel("x [m]")
         ax.set_ylabel("y [m]")
         if trial is None:
-            ax.set_title(f"no {label} trial in this run")
+            ax.set_title(f"이번 실행에는 {label_ko} 사례 없음")
             continue
-        ax.plot(*trial.target_trajectory.T, color="tab:red", label="target")
-        ax.plot(*trial.robot1_trajectory.T, "--", color="tab:blue", alpha=0.7, label="robot1")
-        ax.plot(*trial.robot2_trajectory.T, "--", color="tab:green", alpha=0.7, label="robot2")
+        ax.plot(*trial.target_trajectory.T, color="tab:red", label="표적")
+        ax.plot(*trial.robot1_trajectory.T, "--", color="tab:blue", alpha=0.7, label="로봇1")
+        ax.plot(*trial.robot2_trajectory.T, "--", color="tab:green", alpha=0.7, label="로봇2")
         for traj, color in ((trial.target_trajectory, "tab:red"),
                             (trial.robot1_trajectory, "tab:blue"),
                             (trial.robot2_trajectory, "tab:green")):
@@ -570,12 +579,12 @@ def _write_plots(herding_config: HerdingConfig, model_results: dict, sensitivity
         # 목표 지점이 없으면 이 플롯은 그저 세 개의 곡선일 뿐이다: 핵심은 타겟이
         # 어디로 밀려나고 있는지, 그리고 결국 포획 반경 안에 들어왔는지이다.
         ax.add_patch(plt.Circle(tuple(goal), herding_config.capture_radius_m,
-                                color="tab:orange", alpha=0.25, label="capture zone"))
+                                color="tab:orange", alpha=0.25, label="포획 구역"))
         ax.plot(goal[0], goal[1], "*", color="tab:orange", markersize=12)
         ax.legend(fontsize=8)
-        ax.set_title(f"{label}: {trial.duration_sec:.1f} s, "
-                     f"closest approach {trial.min_robot_target_dist:.2f} m")
-    fig.suptitle("Target and robot trajectories (reactive_flee, circles = start)")
+        ax.set_title(f"{label_ko}: {trial.duration_sec:.1f}초, "
+                     f"최근접 거리 {trial.min_robot_target_dist:.2f} m")
+    fig.suptitle("표적 및 로봇 궤적 (reactive_flee, 동그라미 = 시작 지점)")
     fig.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, "trajectories.png"), dpi=120)
     plt.close(fig)
@@ -588,7 +597,7 @@ def _write_plots(herding_config: HerdingConfig, model_results: dict, sensitivity
         ax.set_aspect("equal", adjustable="datalim")
         ax.set_xlabel("x [m]")
         ax.set_ylabel("y [m]")
-        ax.set_title("Escape-route snapshot (top-K)")
+        ax.set_title("도주 경로 스냅샷 (상위 K개)")
         fig.savefig(os.path.join(OUTPUT_DIR, "escape_heatmap_snapshot.png"), dpi=120)
         plt.close(fig)
 
@@ -619,11 +628,11 @@ def _write_sensitivity_plot(sensitivity: dict) -> None:
         ax.bar(labels, heights, color=colors)
         for index, rate in enumerate(data["success_rates"]):
             if rate is None:
-                ax.text(index, 3, "rejected by\nconfig invariant", ha="center", va="bottom",
+                ax.text(index, 3, "설정 불변식에\n의해 거부됨", ha="center", va="bottom",
                         fontsize=7, color="tab:red", rotation=90)
-        ax.set_title(f"Success rate vs {param}\n({data['trials']} trials/point, orange = baseline)")
+        ax.set_title(f"{param}에 따른 성공률\n(지점당 {data['trials']}회 시행, 주황색 = 기준값)")
         ax.set_xlabel(param)
-        ax.set_ylabel("success %")
+        ax.set_ylabel("성공률 [%]")
         ax.set_ylim(0, 100)
     fig.tight_layout()
     fig.savefig(os.path.join(OUTPUT_DIR, "parameter_sensitivity.png"), dpi=120)

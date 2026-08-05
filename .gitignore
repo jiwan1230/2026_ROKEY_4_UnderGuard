@@ -9,3 +9,5 @@ log/
 # embedded slash, so git anchors it to the repo root and it never matched the real
 # path, herding_controller/test/output/. "**/" makes it match at any depth.
 **/test/output/
+# 실험 스크립트가 생성하는 중간 데이터 (완성된 *_replay.html에 이미 끼워 넣어져 있어 중복).
+herding_controller/experiments/*_frames.json

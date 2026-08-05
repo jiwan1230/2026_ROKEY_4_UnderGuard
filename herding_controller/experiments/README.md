@@ -1,0 +1,53 @@
+# 실험용 프로토타입 (프로덕션 코드 아님)
+
+이 폴더는 `herding_controller/herding_controller/`(정식 알고리즘)와 `herding_controller/test/`(정식 검증
+하네스)와는 별개로, 로봇 2대를 동시에 제어하기 전에 단계적으로 검증해보기 위해 만든 실험용
+스크립트들이다. 프로덕션 코드는 건드리지 않았고, 여기서 검증된 아이디어가 있으면 나중에 정식으로
+통합하면 된다.
+
+## 파일 구성
+
+- `single_robot_sim.py` / `single_robot_template.html` / `single_robot_replay.html`
+  손그림 월드맵(벽 1개 + 쥐구멍 3곳) 위에서, 로봇 1대만 능동적으로 몰이하는 실험. 최종적으로는
+  로봇 A=Driver(미는 역할), 로봇 B=Blocker(경로 차단)로 정리됨 — 기존 검증된
+  `herding_planner.py`의 `compute_driving_point`/`compute_blocking_point`를 그대로 재사용한다.
+- `real_map_sim.py` / `real_map_template.html` / `real_map_replay.html`
+  실제 SLAM 맵(`maps/room_map.pgm`) 위에서 같은 실험. 로봇 A가 경유점을 순회하며 순찰하다가
+  센서 반경 안에 쥐가 들어오면 그 순간 Driver로 전환되고, 로봇 B가 출발해 Blocker를 시작하는
+  순찰→발견 흐름과, 벽에 가까워지면 목표 방향에 반발 방향을 섞는 임시 벽 회피(potential field)가
+  들어 있다.
+- `maps/room_map.pgm`, `maps/room_map.yaml`
+  실제 room_map 원본 (해상도 0.05m, 원점 [-3.19, -9.03]).
+- `*_replay.html`
+  각 스크립트를 실행한 결과를 이미 끼워 넣어 만든 완성된 페이지. 브라우저로 바로 열면 재생된다
+  (재생성 없이 바로 확인하고 싶을 때 사용).
+
+## 재실행 방법
+
+```bash
+cd herding_controller/experiments
+python3 single_robot_sim.py   # single_robot_frames.json 생성
+python3 real_map_sim.py       # real_map_frames.json 생성 (최대 몇 분 소요)
+```
+
+시뮬레이션 데이터를 다시 만든 뒤, 아래처럼 템플릿에 끼워 넣으면 `*_replay.html`을 갱신할 수 있다:
+
+```bash
+python3 -c "
+for prefix in ['single_robot', 'real_map']:
+    data = open(f'{prefix}_frames.json').read()
+    template = open(f'{prefix}_template.html').read()
+    open(f'{prefix}_replay.html', 'w').write(template.replace('/*__TRIAL_DATA__*/', data))
+"
+```
+
+## 알려진 한계 (다음에 이어서 할 사람을 위해)
+
+- **경로 계획 없음**: 로봇 이동이 "목표까지 직선 + 막히면 국소 우회 + 벽 반발력" 조합일 뿐,
+  A* 같은 진짜 경로 계획은 없다. 실제 로봇 연동 전 최소한의 완충용.
+- **목표 쥐구멍 0.3~0.4m 앞에서 멈추는 미해결 실패 케이스**가 있다 (손그림 맵의 "좌측 쥐구멍",
+  실제 맵의 "상단 쥐구멍" 시나리오에서 재현). 로봇이 위협 위치로 이동하는 경로가 표적의 반응
+  반경을 스치면서 표적이 엉뚱한 방향으로 먼저 도망치는 게 원인으로 보임.
+- `SENSOR_RANGE_M`(1.5m), `WALL_AVOID_RADIUS_M`(0.4m) 등은 전부 스펙에 없는 실험적 가정값이다.
+
+자세한 트러블슈팅 히스토리는 저장소 루트의 `herding_controller_포트폴리오_노트.md` 참고.

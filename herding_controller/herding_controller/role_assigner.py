@@ -54,6 +54,13 @@ class RoleAssigner:
         return self._driver_id, blocker_id
 
     def _cost(self, robot_pos: np.ndarray, robot_heading: np.ndarray, target_point: np.ndarray) -> float:
+        """Driver 후보로서의 비용: 직선 거리 + (제자리 회전 각도 * 가중치).
+
+        거리만 비교하면 이미 정확한 방향을 보고 있는 로봇보다, 더 가깝지만
+        180도 돌아야 하는 로봇을 Driver로 뽑아버릴 수 있다. 회전 비용을
+        더해 두 로봇의 "실제로 그 지점에 도달하는 데 걸리는 수고"를 더
+        가깝게 근사한다.
+        """
         distance = float(np.linalg.norm(target_point - robot_pos))
         desired = target_point - robot_pos
         norm = np.linalg.norm(desired)
