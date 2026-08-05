@@ -10,6 +10,8 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
+from turtle_project import fleet_msg  # TODO(팀원): fleet_msg.event(...)로 발행
+
 
 class TrapCheckNode(Node):
 

@@ -5,7 +5,10 @@ namespace 파라미터로 로봇마다 실행 (robot4/robot6). /fleet/command에
 
 배터리 임계 감지만 실제 동작, 주행·도킹 실행은 TODO(팀원).
 """
+import math
+
 import rclpy
+from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import String
@@ -28,6 +31,8 @@ class RobotAgent(Node):
         self.create_subscription(String, '/fleet/command', self.command_cb, 10)
         self.create_subscription(BatteryState, f'{self.ns}/battery_state',
                                  self.battery_cb, 10)
+        self.create_subscription(PoseStamped, f'{self.ns}/target_pose',
+                                 self.target_cb, 10)
         self.create_timer(period, self.report)
         self.get_logger().info(f'{self.ns} agent 시작 — 임계 {self.threshold}%')
 
@@ -43,12 +48,20 @@ class RobotAgent(Node):
                       'HERD': 'HERDING', 'STOP': 'IDLE'}.get(cmd, self.state)
 
     def battery_cb(self, msg):
+        if math.isnan(msg.percentage):
+            return                      # 배터리 값 불명(NaN) — 무시
         self.battery = int(msg.percentage * 100) if msg.percentage <= 1.0 \
             else int(msg.percentage)
         if self.battery < self.threshold and self.state == 'PATROLLING':
             self.state = 'RETURNING'
             self.get_logger().info(f'배터리 {self.battery}% < 임계 — 복귀')
             # TODO(팀원): dock 스테이션 이동 + Dock 액션. 완료되면 state=DOCKED.
+
+    def target_cb(self, msg):
+        # TODO(팀원): 받은 목표 좌표로 Nav2 navigate_to_pose 전송 (TRACK/HERD 주행).
+        self.get_logger().info(
+            f'목표 좌표 수신: ({msg.pose.position.x:.2f}, {msg.pose.position.y:.2f})',
+            throttle_duration_sec=1.0)
 
     def report(self):
         self.status_pub.publish(String(data=fleet_msg.status(

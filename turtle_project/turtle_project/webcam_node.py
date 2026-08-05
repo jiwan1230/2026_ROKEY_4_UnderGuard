@@ -7,6 +7,8 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
+from turtle_project import fleet_msg  # TODO(팀원): fleet_msg.event(...)로 발행
+
 
 class WebcamNode(Node):
 

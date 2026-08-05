@@ -20,9 +20,12 @@ class CameraNode(Node):
     def __init__(self):
         super().__init__('camera_node')
         # 원본은 절대 토픽(네임스페이스는 launch/remap에서). 재발행은 상대 토픽.
-        self.rgb_pub = self.create_publisher(CompressedImage, 'synced/rgb', 10)
-        self.depth_pub = self.create_publisher(CompressedImage, 'synced/depth', 10)
-        self.info_pub = self.create_publisher(CameraInfo, 'synced/camera_info', 10)
+        self.rgb_pub = self.create_publisher(CompressedImage, 'synced/rgb',
+                                             qos_profile_sensor_data)
+        self.depth_pub = self.create_publisher(CompressedImage, 'synced/depth',
+                                               qos_profile_sensor_data)
+        self.info_pub = self.create_publisher(CameraInfo, 'synced/camera_info',
+                                              qos_profile_sensor_data)
 
         self.rgb_sub = Subscriber(self, CompressedImage, RGB_IN,
                                   qos_profile=qos_profile_sensor_data)
