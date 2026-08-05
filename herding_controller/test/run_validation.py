@@ -372,19 +372,47 @@ def _run_control_experiment(herding_config: HerdingConfig, trials: int, seed_bas
 # ---------------------------------------------------------------------------- #
 
 def _run_sensitivity_sweep(herding_config: HerdingConfig, trials: int, seed_base: int) -> dict:
-    """Success rate of the primary model across single-parameter sweeps, for Task 15's tuning."""
+    """Success rate of the primary model across single-parameter sweeps, for Task 15's tuning.
+
+    Some sweep points deliberately sit outside what HerdingConfig will accept: the
+    sweeps exist to characterize exactly the deadlock-prone corner of the parameter
+    space that HerdingConfig.__post_init__ now rejects (e.g. drive_distance_m=1.05
+    with the shipping ease factor gives an eased distance of 1.21 m, past the
+    target's 1.0 m reaction radius -- the configuration the yaml's own comment cites
+    as collapsing to 2.5%). dataclasses.replace() runs __post_init__, so such a point
+    raises ValueError; it is recorded as a rejection (success_rate None) for that one
+    point instead of aborting the whole validation run after all the trial compute.
+    """
     sweep = {}
     for offset, (param, values) in enumerate(SENSITIVITY_SWEEPS.items()):
         rates = []
+        rejected = {}
         for value in values:
-            variant = dataclasses.replace(herding_config, **{param: value})
+            try:
+                variant = dataclasses.replace(herding_config, **{param: value})
+            except ValueError as exc:
+                # Any swept parameter can hit a config invariant, not just
+                # drive_distance_m -- so this is caught generically and the reason
+                # is carried through to the report and the plot.
+                rates.append(None)
+                rejected[value] = str(exc)
+                continue
             results = run_model_trials(variant, "reactive_flee", trials, seed_base + offset * 1_000)
             rates.append(summarize(results)["success_rate"])
         sweep[param] = {
-            "values": list(values), "success_rates": rates,
+            "values": list(values), "success_rates": rates, "rejected": rejected,
             "baseline": getattr(herding_config, param), "trials": trials,
         }
     return sweep
+
+
+def _format_sensitivity_cells(data: dict) -> str:
+    """One-line rendering of a sweep's points; rejected points say so rather than vanishing."""
+    return "  ".join(
+        f"{value:g}{'*' if value == data['baseline'] else ''}="
+        + ("REJECTED" if rate is None else f"{rate*100:.0f}%")
+        for value, rate in zip(data["values"], data["success_rates"])
+    )
 
 
 # ---------------------------------------------------------------------------- #
@@ -483,11 +511,16 @@ def _write_report(herding_config: HerdingConfig, model_results: dict, algo_statu
 
     lines.append("=== Parameter Sensitivity ===")
     for param, data in sensitivity.items():
-        cells = "  ".join(
-            f"{value:g}{'*' if value == data['baseline'] else ''}={rate*100:.0f}%"
-            for value, rate in zip(data["values"], data["success_rates"])
+        lines.append(
+            f"  {param} ({data['trials']} trials/point, * = baseline): "
+            f"{_format_sensitivity_cells(data)}"
         )
-        lines.append(f"  {param} ({data['trials']} trials/point, * = baseline): {cells}")
+        # A rejected point is a result, not a gap: it says the configuration is
+        # outside what HerdingConfig will accept, which is what the sweep is for.
+        for value, reason in data.get("rejected", {}).items():
+            lines.append(
+                f"    {param}={value:g} REJECTED by config invariant, not run: {reason}"
+            )
 
     lines.append("=== SUMMARY ===")
     lines.append(" / ".join(f"{k} {'PASS' if v else 'FAIL'}" for k, v in sorted(algo_status.items())))
@@ -562,14 +595,31 @@ def _write_plots(herding_config: HerdingConfig, model_results: dict, sensitivity
 
 
 def _write_sensitivity_plot(sensitivity: dict) -> None:
-    """Plot the single-parameter success-rate sweeps side by side."""
+    """Plot the single-parameter success-rate sweeps side by side.
+
+    Points rejected by a HerdingConfig invariant are drawn as an explicitly labelled
+    zero-height red bar rather than dropped, so the figure keeps the same x axis as
+    the sweep definition and the reader can see *why* there is no number there.
+    """
     params = list(sensitivity)
     fig, axes = plt.subplots(1, len(params), figsize=(5 * len(params), 4), squeeze=False)
     for ax, param in zip(axes[0], params):
         data = sensitivity[param]
         labels = [f"{value:g}" for value in data["values"]]
-        colors = ["tab:orange" if value == data["baseline"] else "tab:blue" for value in data["values"]]
-        ax.bar(labels, [rate * 100 for rate in data["success_rates"]], color=colors)
+        heights = [0.0 if rate is None else rate * 100 for rate in data["success_rates"]]
+        colors = []
+        for value, rate in zip(data["values"], data["success_rates"]):
+            if rate is None:
+                colors.append("tab:red")
+            elif value == data["baseline"]:
+                colors.append("tab:orange")
+            else:
+                colors.append("tab:blue")
+        ax.bar(labels, heights, color=colors)
+        for index, rate in enumerate(data["success_rates"]):
+            if rate is None:
+                ax.text(index, 3, "rejected by\nconfig invariant", ha="center", va="bottom",
+                        fontsize=7, color="tab:red", rotation=90)
         ax.set_title(f"Success rate vs {param}\n({data['trials']} trials/point, orange = baseline)")
         ax.set_xlabel(param)
         ax.set_ylabel("success %")
