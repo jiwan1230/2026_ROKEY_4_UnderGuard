@@ -1,9 +1,36 @@
-# 우리 패키지만 추적 — 나머지 워크스페이스 패키지 제외
+# UnderGuard 패키지와 시스템 모니터링 소스만 추적
 /*
 !.gitignore
+!/.env.example
+!/README.md
+!/requirements.txt
+!/run_mock.sh
+!/run_ros.sh
+!/docs/
+!/system_monitor/
+!/tests/
 !/turtle_project/
 !/turtle_interfaces/
 
-# 파이썬/빌드 산출물
+# Python/테스트 산출물
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 로컬 설정과 런타임 데이터
+.env
+.env.local
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# 가상 환경, IDE, 운영체제 파일
+.venv/
+venv/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
