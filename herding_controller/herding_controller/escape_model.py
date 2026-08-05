@@ -1,5 +1,5 @@
 # herding_controller/herding_controller/escape_model.py
-"""Grid-based Markov model predicting the target's escape direction."""
+"""타겟의 도주 방향을 예측하는 그리드 기반 마르코프 모델."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -15,7 +15,7 @@ _DIRECTIONS /= np.linalg.norm(_DIRECTIONS, axis=1, keepdims=True)
 
 @dataclass
 class EscapeModelConfig:
-    """Thigmotaxis base weights plus robot-repulsion/momentum terms."""
+    """벽 추종(thigmotaxis) 기본 가중치와 로봇 반발/관성 항."""
     wall_follow_p: float
     wall_hug_p: float
     center_p: float
@@ -27,14 +27,14 @@ class EscapeModelConfig:
 
 @dataclass
 class EscapeEstimate:
-    """Escape direction probability distribution and top-K candidate routes."""
+    """도주 방향 확률 분포와 상위 K개 후보 경로."""
     directions: np.ndarray
     probabilities: np.ndarray
     top_k_routes: list[np.ndarray]
 
 
 class EscapeModel:
-    """Predicts which of 8 compass directions the target is likely to flee toward."""
+    """타겟이 8방위 중 어느 방향으로 도주할 가능성이 높은지 예측한다."""
 
     def __init__(self, config: EscapeModelConfig, grid_map: GridMap) -> None:
         self.config = config
@@ -43,7 +43,7 @@ class EscapeModel:
     def compute(
         self, target_pos: np.ndarray, target_vel: np.ndarray, robot_positions: list[np.ndarray]
     ) -> EscapeEstimate:
-        """Return an escape probability distribution and top-K routes from target_pos."""
+        """target_pos로부터의 도주 확률 분포와 상위 K개 경로를 반환한다."""
         wall_dir = self._nearest_wall_direction(target_pos)
         base = self._base_weights(wall_dir)
         base += self._robot_repulsion(target_pos, robot_positions)
@@ -57,10 +57,10 @@ class EscapeModel:
             if valid.any():
                 base = valid.astype(float)
             else:
-                # Fully boxed in: no valid direction exists at all. Fall back
-                # to a uniform distribution so probabilities still sum to 1,
-                # signaling "no good options, all equally bad" rather than
-                # producing an invalid all-zero degenerate vector.
+                # 완전히 갇힌 상태: 유효한 방향이 하나도 없다. 무효한 all-zero
+                # 퇴화 벡터를 만드는 대신 균등 분포로 대체하여 확률의 합이
+                # 여전히 1이 되도록 하고, "좋은 선택지가 없으며 모두 동등하게
+                # 나쁘다"는 것을 나타낸다.
                 base = np.full(8, 1.0 / 8.0)
             total = base.sum()
         probabilities = base / total
@@ -133,16 +133,15 @@ class EscapeModel:
     def _top_k_routes(self, target_pos: np.ndarray, probabilities: np.ndarray) -> list[np.ndarray]:
         valid = self._valid_mask(target_pos)
         if valid.any():
-            # Only pick among directions that don't step into an obstacle.
-            # If fewer than escape_route_top_k directions are valid, return
-            # fewer routes rather than one that lands in an obstacle cell.
+            # 장애물 셀로 진입하지 않는 방향 중에서만 선택한다.
+            # 유효한 방향이 escape_route_top_k보다 적으면, 장애물 셀에
+            # 도달하는 경로를 포함시키기보다 더 적은 수의 경로를 반환한다.
             candidate_indices = np.nonzero(valid)[0]
         else:
-            # Fully boxed in: no valid direction exists at all, so there is
-            # genuinely no good choice. Fall back to ranking all 8 directions
-            # (the uniform-fallback probabilities from compute()) — routes may
-            # legitimately point into an obstacle cell here, signaling "no
-            # good options."
+            # 완전히 갇힌 상태: 유효한 방향이 하나도 없어 정말로 좋은 선택지가
+            # 없다. compute()에서 계산된 균등 대체 확률을 기준으로 8방향
+            # 전체의 순위를 매긴다 — 이 경우 경로가 장애물 셀을 가리켜도
+            # 무방하며, 이는 "좋은 선택지가 없음"을 나타낸다.
             candidate_indices = np.arange(len(probabilities))
         order = candidate_indices[np.argsort(probabilities[candidate_indices])[::-1]]
         k = min(self.config.escape_route_top_k, len(order))

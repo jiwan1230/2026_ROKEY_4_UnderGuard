@@ -1,5 +1,5 @@
 # herding_controller/test/simulator.py
-"""Headless 2D physics simulator: point-mass robots + a target evasion model, no ROS."""
+"""헤드리스 2D 물리 시뮬레이터: 점질량 로봇 + 타겟 회피 모델, ROS 없이 동작."""
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -8,14 +8,14 @@ from herding_controller.herding_core import HerdingConfig, HerdingCore, Observat
 from herding_controller.state_machine import FSMState
 from test.evasion_models.base import EvasionModel
 
-# The arena's upper edge is exclusive (GridMap.world_to_cell floors), so clamp a hair
-# inside it or a body pinned to the top/right wall would fall off the grid.
+# 아레나의 위쪽 경계는 배타적(exclusive)이다 (GridMap.world_to_cell이 내림 처리하므로),
+# 그래서 살짝 안쪽으로 클램프하지 않으면 위/오른쪽 벽에 붙은 물체가 그리드 밖으로 벗어난다.
 _EDGE_EPS = 1e-9
 
 
 @dataclass
 class SimulatorConfig:
-    """Physical limits and trial duration for the 2D herding simulation."""
+    """2D 허딩 시뮬레이션의 물리적 한계와 시행 지속 시간."""
     robot_max_speed_mps: float = 0.3
     target_max_speed_mps: float = 0.4
     dt: float = 0.1
@@ -25,7 +25,7 @@ class SimulatorConfig:
 
 @dataclass
 class TrialResult:
-    """Outcome and telemetry of one herding trial."""
+    """한 허딩 시행의 결과와 텔레메트리."""
     success: bool
     duration_sec: float
     panic_count: int
@@ -39,7 +39,7 @@ class TrialResult:
 
 
 def _move_toward(position: np.ndarray, goal: np.ndarray, max_speed: float, gain: float, dt: float) -> np.ndarray:
-    """Step `position` toward `goal`, travelling at most max_speed * gain * dt meters."""
+    """`position`을 `goal` 쪽으로 이동시킨다. 최대 max_speed * gain * dt 미터만큼 이동한다."""
     direction = goal - position
     dist = np.linalg.norm(direction)
     if dist < 1e-9:
@@ -49,10 +49,10 @@ def _move_toward(position: np.ndarray, goal: np.ndarray, max_speed: float, gain:
 
 
 def _update_heading(old_pos: np.ndarray, new_pos: np.ndarray, heading: np.ndarray) -> np.ndarray:
-    """Unit heading along the robot's displacement, or the previous heading if it did not move.
+    """로봇의 변위 방향을 단위 벡터로 반환한다. 움직이지 않았다면 이전 방향을 그대로 반환한다.
 
-    Validity depends solely on whether the robot actually moved -- never on where it
-    ended up -- so a robot on the negative-x side of the map keeps updating its heading.
+    유효성 여부는 오직 로봇이 실제로 움직였는지에만 달려 있으며 -- 어디에 도착했는지와는
+    무관하다 -- 그래서 맵의 x 음수 영역에 있는 로봇도 방향(heading) 갱신이 계속 이루어진다.
     """
     delta = np.asarray(new_pos, dtype=float) - np.asarray(old_pos, dtype=float)
     norm = float(np.linalg.norm(delta))
@@ -62,24 +62,24 @@ def _update_heading(old_pos: np.ndarray, new_pos: np.ndarray, heading: np.ndarra
 
 
 def _arena_bounds(config: HerdingConfig) -> tuple[np.ndarray, np.ndarray]:
-    """Lower/upper (x, y) corners of the walled arena, which is exactly the grid extent."""
+    """벽으로 둘러싸인 아레나의 (x, y) 하한/상한 모서리. 그리드 범위와 정확히 일치한다."""
     low = np.array([config.grid_origin_x_m, config.grid_origin_y_m], dtype=float)
     span = np.array([config.grid_width_cells, config.grid_height_cells], dtype=float)
     return low, low + span * config.grid_resolution_m
 
 
 def _clamp_to_arena(position: np.ndarray, low: np.ndarray, high: np.ndarray) -> np.ndarray:
-    """Keep a body inside the arena walls.
+    """물체를 아레나 벽 안쪽에 머무르게 한다.
 
-    The escape model already treats every off-grid neighbour cell as a wall, so an
-    unwalled simulator would let the target wander somewhere the algorithm believes
-    is impossible (and where no escape distribution exists at all).
+    이스케이프 모델은 이미 그리드 밖의 모든 인접 셀을 벽으로 취급하므로, 벽 처리가 없는
+    시뮬레이터는 알고리즘이 불가능하다고 여기는 위치로 (그리고 이스케이프 분포가 전혀
+    존재하지 않는 위치로) 타겟이 벗어나게 만들 수 있다.
     """
     return np.clip(np.asarray(position, dtype=float), low, high - _EDGE_EPS)
 
 
 def _is_obstacle_at(core: HerdingCore, position: np.ndarray) -> bool:
-    """True if `position` falls inside an occupied cell of the core's grid."""
+    """`position`이 core 그리드의 점유된 셀 안에 있으면 True를 반환한다."""
     try:
         row, col = core.grid_map.world_to_cell(float(position[0]), float(position[1]))
     except (ValueError, TypeError):
@@ -88,13 +88,13 @@ def _is_obstacle_at(core: HerdingCore, position: np.ndarray) -> bool:
 
 
 def _boundary_ring_mask(config: HerdingConfig) -> np.ndarray:
-    """Occupancy of a bare walled room: the outermost cell ring is solid wall.
+    """벽만 있는 빈 방의 점유 상태: 가장 바깥쪽 셀 링이 단단한 벽이다.
 
-    The arena walls have to be *visible* as obstacle cells, not merely enforced by
-    clamping. WallHugger (and NoisyHuman, which wraps it) look for occupied cells to
-    hug and stand still when they find none, and EscapeModel's thigmotaxis term needs
-    a wall to follow. An all-False mask leaves both of them modelling an infinite open
-    plane inside a room that the physics says is closed.
+    아레나 벽은 단순히 클램핑으로 강제되는 것이 아니라 장애물 셀로서 *실제로 보여야*
+    한다. WallHugger(그리고 이를 감싸는 NoisyHuman)는 붙어서 이동할 점유 셀을 찾고,
+    없으면 정지한다. 또한 EscapeModel의 향촉성(thigmotaxis) 항도 따라갈 벽이 필요하다.
+    모두 False인 마스크는 물리적으로는 닫혀 있다고 하는 방 안에서 둘 다 무한히 열린
+    평면을 모델링하게 만든다.
     """
     mask = np.zeros((config.grid_height_cells, config.grid_width_cells), dtype=bool)
     mask[0, :] = mask[-1, :] = True
@@ -103,13 +103,13 @@ def _boundary_ring_mask(config: HerdingConfig) -> np.ndarray:
 
 
 def _bind_model_to_arena(evasion_model: EvasionModel, grid_map) -> None:
-    """Re-point every grid-consulting evasion model at the arena this trial simulates.
+    """그리드를 참조하는 모든 회피 모델이 이번 시행이 시뮬레이션하는 아레나를 가리키도록 다시 연결한다.
 
-    WallHugger (and NoisyHuman, which wraps one) resolves walls through the GridMap it
-    was constructed with, not through the `obstacle_map` argument of step(). Callers
-    build their models from a separate probe core's grid map -- a different GridMap
-    object from the one run_trial creates -- so without rebinding, the model reads an
-    empty world while the physics runs in a walled arena, and it never hugs anything.
+    WallHugger(그리고 이를 감싸는 NoisyHuman)는 step()의 `obstacle_map` 인자가 아니라
+    생성 시 전달받은 GridMap을 통해 벽을 판별한다. 호출자는 별도의 프로브 core의
+    그리드 맵으로 모델을 생성하는데 -- 이는 run_trial이 만드는 GridMap 객체와는 다른
+    객체이다 -- 따라서 재연결하지 않으면 물리 엔진은 벽으로 둘러싸인 아레나에서 동작하는데
+    모델은 빈 세계를 읽게 되어 아무것도 따라가지 못한다.
     """
     for candidate in (evasion_model, getattr(evasion_model, "_wall_hugger", None)):
         if candidate is not None and hasattr(candidate, "grid_map"):
@@ -118,10 +118,10 @@ def _bind_model_to_arena(evasion_model: EvasionModel, grid_map) -> None:
 
 def _step_body(core: HerdingCore, position: np.ndarray, proposed: np.ndarray,
                low: np.ndarray, high: np.ndarray) -> np.ndarray:
-    """Move a body to `proposed`, clamped into the arena and blocked by obstacle cells.
+    """물체를 `proposed` 위치로 이동시킨다. 아레나 안으로 클램프되고 장애물 셀에 막힌다.
 
-    Robots and the target obey the same rule: a body that walks into a wall stops dead
-    rather than tunnelling through it.
+    로봇과 타겟은 동일한 규칙을 따른다: 벽으로 걸어 들어간 물체는 벽을 통과하지 않고
+    그 자리에서 멈춘다.
     """
     moved = _clamp_to_arena(proposed, low, high)
     if _is_obstacle_at(core, moved):
@@ -137,14 +137,14 @@ def run_trial(
     obstacle_mask: np.ndarray | None = None,
     control_mode: str = "algorithm",
 ) -> TrialResult:
-    """Simulate one herding trial. control_mode: 'algorithm' | 'idle' | 'random'."""
+    """허딩 시행 한 번을 시뮬레이션한다. control_mode: 'algorithm' | 'idle' | 'random'."""
     if control_mode not in ("algorithm", "idle", "random"):
         raise ValueError(f"unknown control_mode: {control_mode!r}")
 
     rng = np.random.default_rng(seed)
     core = HerdingCore(herding_config)
     if obstacle_mask is not None:
-        # A caller-supplied layout is used verbatim; it is not silently walled in.
+        # 호출자가 제공한 레이아웃은 그대로 사용되며, 조용히 벽으로 둘러싸이지 않는다.
         expected = (herding_config.grid_height_cells, herding_config.grid_width_cells)
         if tuple(np.shape(obstacle_mask)) != expected:
             raise ValueError(f"obstacle_mask shape {np.shape(obstacle_mask)} != expected {expected}")
@@ -156,7 +156,7 @@ def run_trial(
     low, high = _arena_bounds(herding_config)
     margin = herding_config.grid_resolution_m * 2
     spawn_low, spawn_high = low + margin, high - margin
-    # target_state is [x, y, vx, vy]: the evasion models are fed position AND velocity.
+    # target_state는 [x, y, vx, vy]이다: 회피 모델에는 위치와 속도가 함께 전달된다.
     target_state = np.array([
         rng.uniform(spawn_low[0], spawn_high[0]), rng.uniform(spawn_low[1], spawn_high[1]), 0.0, 0.0,
     ])
@@ -178,20 +178,20 @@ def run_trial(
         robot1_traj.append(robot1_pos.copy())
         robot2_traj.append(robot2_pos.copy())
 
-        # Closest approach is sampled at every sub-step of the cycle, not just at its
-        # start: the robots move first and the target reacts afterwards, so the tightest
-        # gap of the cycle is normally the intermediate (robots moved, target has not)
-        # state that a start-of-cycle-only measurement never sees.
+        # 최근접 거리는 주기 시작 시점뿐 아니라 주기의 모든 하위 스텝에서 샘플링된다:
+        # 로봇이 먼저 움직이고 타겟이 나중에 반응하므로, 주기 중 가장 좁은 간격은 보통
+        # (로봇은 움직였고 타겟은 아직 움직이지 않은) 중간 상태에서 발생하는데, 이는
+        # 주기 시작 시점에만 측정하면 결코 볼 수 없다.
         tick_min = _closest_robot_distance(target_state[:2], robot1_pos, robot2_pos)
 
         observation = Observation(
-            target_measurement=target_state[:2].copy(),  # raw sensor reading: position only
+            target_measurement=target_state[:2].copy(),  # 원시 센서 값: 위치 정보만
             robot1_pos=robot1_pos.copy(), robot2_pos=robot2_pos.copy(),
             robot1_heading=robot1_heading.copy(), robot2_heading=robot2_heading.copy(),
             occupancy=None, sim_time_sec=sim_time_sec, dt=sim_config.dt,
         )
-        # Every control mode steps the core, so the FSM, KF, occlusion grid and role
-        # state advance identically; only what the robots do with the goals differs.
+        # 모든 제어 모드는 core를 한 스텝 진행시키므로 FSM, KF, occlusion 그리드, role
+        # 상태는 동일하게 진행된다; 로봇이 목표를 가지고 무엇을 하는지만 다르다.
         output = core.step(observation)
         latencies.append(output.latency_ms)
         if output.role_swapped:
@@ -233,9 +233,9 @@ def run_trial(
         tick_min = min(tick_min, _closest_robot_distance(target_state[:2], robot1_pos, robot2_pos))
 
         min_dist = min(min_dist, tick_min)
-        # One count per control cycle in which the target came within panic distance at
-        # any point. A violation sitting exactly on a cycle boundary is attributed to
-        # both neighbouring cycles; over-reporting a safety metric beats missing it.
+        # 타겟이 한 번이라도 panic 거리 이내에 들어온 제어 주기마다 한 번씩 카운트한다.
+        # 주기 경계에 정확히 걸친 위반은 양쪽 주기 모두에 귀속된다; 안전 지표는
+        # 놓치는 것보다 과다 집계하는 편이 낫다.
         if tick_min < herding_config.panic_distance_m:
             panic_count += 1
 
@@ -251,7 +251,7 @@ def run_trial(
 
 
 def _closest_robot_distance(target_pos: np.ndarray, robot1_pos: np.ndarray, robot2_pos: np.ndarray) -> float:
-    """Distance from the target to whichever robot is nearer."""
+    """타겟으로부터 더 가까운 로봇까지의 거리."""
     return float(min(
         np.linalg.norm(target_pos - robot1_pos),
         np.linalg.norm(target_pos - robot2_pos),
@@ -268,7 +268,7 @@ def _advance_target(
     low: np.ndarray,
     high: np.ndarray,
 ) -> np.ndarray:
-    """Integrate the evasion model's commanded velocity into a new [x, y, vx, vy] state."""
+    """회피 모델이 명령한 속도를 적분하여 새로운 [x, y, vx, vy] 상태를 만든다."""
     commanded = np.asarray(
         evasion_model.step(target_state, [robot1_pos, robot2_pos], core.grid_map.obstacle_mask, sim_config.dt),
         dtype=float,
@@ -279,8 +279,8 @@ def _advance_target(
 
     position = target_state[:2]
     proposed = _step_body(core, position, position + commanded * sim_config.dt, low, high)
-    # The stored velocity is the ACHIEVED one, so a target braked by a wall reports the
-    # motion that actually happened -- which is what the next cycle's evasion model,
-    # escape-model momentum term and KF all have to agree with.
+    # 저장되는 속도는 실제로 "달성된" 속도이다. 따라서 벽에 막혀 감속된 타겟은 실제로
+    # 일어난 움직임을 보고하게 되며 -- 이는 다음 주기의 회피 모델, 이스케이프 모델의
+    # 모멘텀 항, KF가 모두 일치해야 하는 값이다.
     achieved = (proposed - position) / sim_config.dt
     return np.concatenate([proposed, achieved])

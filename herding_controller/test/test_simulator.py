@@ -11,7 +11,7 @@ from test.simulator import SimulatorConfig, _update_heading, run_trial
 
 
 def make_herding_config(**overrides):
-    """Build a HerdingConfig mirroring herding_params.yaml, with per-test overrides."""
+    """herding_params.yaml을 반영한 HerdingConfig를 생성하며, 테스트별로 값을 오버라이드할 수 있다."""
     defaults = dict(
         frame_id="map", control_rate_hz=5.0,
         capture_zone_x_m=3.0, capture_zone_y_m=3.0, capture_radius_m=0.5, capture_hold_sec=1.0,
@@ -21,8 +21,8 @@ def make_herding_config(**overrides):
         momentum_weight=0.4, robot_repulsion_weight=1.5, wall_detect_radius_cells=1, escape_route_top_k=3,
         escape_concentration_threshold=0.5,
         drive_distance_m=0.8, flee_reaction_distance_m=1.0, panic_distance_m=0.35,
-        # ease factor kept below flee_reaction_distance_m / drive_distance_m
-        # (1.0 / 0.8 = 1.25) so HerdingConfig.__post_init__ accepts this fixture.
+        # ease factor를 flee_reaction_distance_m / drive_distance_m
+        # (1.0 / 0.8 = 1.25) 미만으로 유지하여 HerdingConfig.__post_init__이 이 픽스처를 허용하도록 함.
         alignment_threshold=0.7, drive_distance_ease_factor=1.15, block_lookahead_m=1.2,
         role_swap_margin=0.5, role_swap_cooldown_sec=2.0, min_robot_separation_m=0.6,
         role_cost_turn_weight=0.3, diffusion_rate=0.2, decay_factor=0.9,
@@ -32,7 +32,7 @@ def make_herding_config(**overrides):
 
 
 class ScriptedTarget(EvasionModel):
-    """Teleports the target to a scripted position each cycle (needs a lifted speed cap)."""
+    """매 사이클마다 타겟을 스크립트된 위치로 순간이동시킨다(속도 상한을 높여야 함)."""
 
     def __init__(self, positions_by_cycle, dt: float) -> None:
         self.positions_by_cycle = positions_by_cycle
@@ -41,7 +41,7 @@ class ScriptedTarget(EvasionModel):
         self.received_states = []
 
     def step(self, target_state, robot_positions, obstacle_map, dt):
-        """Return the velocity that lands the target on this cycle's scripted position."""
+        """이번 사이클의 스크립트된 위치에 타겟이 도달하도록 하는 속도를 반환한다."""
         self.received_states.append(np.asarray(target_state, dtype=float).copy())
         desired = np.asarray(self.positions_by_cycle(self.calls), dtype=float)
         self.calls += 1
@@ -49,14 +49,14 @@ class ScriptedTarget(EvasionModel):
 
 
 class ConstantVelocity(EvasionModel):
-    """Commands a fixed velocity forever and records every state it was handed."""
+    """항상 고정된 속도를 명령하며, 전달받은 모든 상태를 기록한다."""
 
     def __init__(self, velocity) -> None:
         self.velocity = np.asarray(velocity, dtype=float)
         self.received_states = []
 
     def step(self, target_state, robot_positions, obstacle_map, dt):
-        """Record the incoming state and return the constant command velocity."""
+        """들어오는 상태를 기록하고 고정된 명령 속도를 반환한다."""
         self.received_states.append(np.asarray(target_state, dtype=float).copy())
         return self.velocity.copy()
 
@@ -80,13 +80,13 @@ def test_run_trial_is_deterministic_given_same_seed():
 
 
 # --------------------------------------------------------------------------- #
-# Heading update                                                              #
+# Heading 업데이트                                                            #
 # --------------------------------------------------------------------------- #
 
 def test_heading_update_depends_on_movement_not_on_resulting_x_sign():
-    # A robot that moved is a robot whose heading changed, wherever it ended up.
-    # Gating the update on the new x-coordinate froze the heading of every robot
-    # operating at x <= 0, which is half the map whenever grid_origin_x_m < 0.
+    # 움직인 로봇은 어디로 향했든 heading이 바뀐 로봇이다.
+    # 새 x좌표를 기준으로 업데이트를 게이팅하면 grid_origin_x_m < 0일 때
+    # 지도의 절반에 해당하는 x <= 0에서 동작하는 모든 로봇의 heading이 고정되었다.
     heading = _update_heading(np.array([-3.0, 1.0]), np.array([-4.0, 1.0]), np.array([1.0, 0.0]))
     assert np.allclose(heading, [-1.0, 0.0])
 
@@ -108,21 +108,21 @@ def test_trial_spawns_inside_a_negative_origin_arena():
 
 
 # --------------------------------------------------------------------------- #
-# Arena confinement                                                           #
+# Arena 경계 제한                                                             #
 # --------------------------------------------------------------------------- #
 
 def test_target_is_confined_by_the_arena_walls():
-    # The escape model treats every off-grid neighbour cell as a wall, so a target
-    # that physically leaves the grid puts the simulation somewhere the algorithm
-    # believes is impossible and where no escape distribution exists at all.
+    # escape model은 그리드 밖의 모든 인접 셀을 벽으로 취급하므로, 물리적으로
+    # 그리드를 벗어난 타겟은 시뮬레이션을 알고리즘이 불가능하다고 여기는 위치,
+    # 즉 escape 분포가 전혀 존재하지 않는 위치로 밀어넣는다.
     config = make_herding_config()
     model = ConstantVelocity([10.0, 10.0])
     result = run_trial(config, model, seed=1, sim_config=SimulatorConfig(max_sim_time_sec=60.0),
                        control_mode="idle")
     assert (result.target_trajectory >= 0.0).all()
     assert (result.target_trajectory <= 10.0).all()
-    # Once pinned to the corner the achieved velocity must read zero, not the
-    # command that the wall refused: the next cycle's models all consume it.
+    # 코너에 고정된 이후에는 실제 달성된 속도가 벽이 거부한 명령이 아니라
+    # 0으로 읽혀야 한다: 다음 사이클의 모델들이 이 값을 그대로 소비하기 때문이다.
     assert np.allclose(model.received_states[-1][2:], [0.0, 0.0])
 
 
@@ -138,7 +138,7 @@ def test_random_mode_keeps_robots_inside_the_arena():
 def test_target_is_stopped_by_an_obstacle_cell():
     config = make_herding_config()
     mask = np.zeros((config.grid_height_cells, config.grid_width_cells), dtype=bool)
-    mask[:, 24:] = True  # solid wall from x = 6.0 m rightwards
+    mask[:, 24:] = True  # x = 6.0 m부터 오른쪽으로 이어지는 단단한 벽
     result = run_trial(config, ConstantVelocity([0.4, 0.0]), seed=1,
                        sim_config=SimulatorConfig(max_sim_time_sec=30.0),
                        obstacle_mask=mask, control_mode="idle")
@@ -146,26 +146,26 @@ def test_target_is_stopped_by_an_obstacle_cell():
 
 
 def make_probe_grid_map(config):
-    """The grid map a caller hands to WallHugger/NoisyHuman, exactly as Task 12 builds it."""
+    """Task 12가 만드는 방식 그대로, 호출자가 WallHugger/NoisyHuman에 넘기는 grid map."""
     return HerdingCore(config).grid_map
 
 
 def target_path_length(result) -> float:
-    """Total distance the target actually travelled over a trial."""
+    """한 trial 동안 타겟이 실제로 이동한 총 거리."""
     return float(np.linalg.norm(np.diff(result.target_trajectory, axis=0), axis=1).sum())
 
 
-# Seeds whose target spends time inside WallHugger's 3-cell wall-detection window.
-# Measured total target path over 30 s: 0.16 / 0.56 / 1.72 m with an all-False mask,
-# 6.76 / 6.84 / 5.98 m once the arena walls exist as obstacle cells.
+# WallHugger의 3셀 벽 감지 윈도우 안에서 타겟이 시간을 보내는 시드들.
+# 30초 동안 측정한 총 타겟 이동 거리: all-False 마스크에서는 0.16 / 0.56 / 1.72 m,
+# arena 벽이 장애물 셀로 존재할 때는 6.76 / 6.84 / 5.98 m.
 @pytest.mark.parametrize("seed", [1, 8, 10])
 def test_default_arena_walls_are_visible_to_a_wall_following_target(seed):
-    # With an all-False obstacle mask WallHugger._nearest_wall_tangent() finds nothing
-    # to hug and returns None, so the target stands still whenever no robot is inside
-    # flee_reaction_distance_m -- a near-frozen target that would inflate every capture
-    # rate, noisy_human's above all (it wraps WallHugger and is Task 12's real-world
-    # predictor). The walls must exist as obstacle cells, not only as a clamp in the
-    # physics, and the model must be reading THIS trial's arena.
+    # all-False 장애물 마스크에서는 WallHugger._nearest_wall_tangent()가 붙을 것을
+    # 찾지 못하고 None을 반환하므로, flee_reaction_distance_m 안에 로봇이 없을 때마다
+    # 타겟이 가만히 서 있게 된다 -- 이는 모든 capture rate를 부풀리는 거의 정지된
+    # 타겟이며, 특히 noisy_human(WallHugger를 감싸며 Task 12의 실세계 예측 모델)에서
+    # 심하다. 벽은 물리 엔진의 clamp로만 존재하는 것이 아니라 장애물 셀로도 존재해야
+    # 하며, 모델은 반드시 이번 trial의 arena를 읽고 있어야 한다.
     config = make_herding_config()
     model = WallHugger(0.4, config.flee_reaction_distance_m, make_probe_grid_map(config))
     result = run_trial(config, model, seed=seed, sim_config=SimulatorConfig(max_sim_time_sec=30.0))
@@ -173,7 +173,7 @@ def test_default_arena_walls_are_visible_to_a_wall_following_target(seed):
 
 
 def test_noisy_human_inherits_the_walled_arena():
-    # 4.38 m of target path before the fix, 8.31 m after.
+    # 수정 전에는 타겟 경로가 4.38 m, 수정 후에는 8.31 m.
     config = make_herding_config()
     model = NoisyHuman(0.4, config.flee_reaction_distance_m, make_probe_grid_map(config),
                        rng=np.random.default_rng(8))
@@ -186,7 +186,7 @@ def test_default_obstacle_mask_is_a_boundary_ring():
     config = make_herding_config()
     model = WallHugger(0.4, config.flee_reaction_distance_m, make_probe_grid_map(config))
     run_trial(config, model, seed=2, sim_config=SimulatorConfig(max_sim_time_sec=1.0))
-    mask = model.grid_map.obstacle_mask  # rebound to the trial's own arena
+    mask = model.grid_map.obstacle_mask  # trial 자체의 arena로 다시 연결됨
     assert mask.shape == (config.grid_height_cells, config.grid_width_cells)
     assert mask[0, :].all() and mask[-1, :].all() and mask[:, 0].all() and mask[:, -1].all()
     assert not mask[1:-1, 1:-1].any()
@@ -203,12 +203,12 @@ def test_explicit_obstacle_mask_is_used_verbatim():
 
 
 def test_robots_do_not_walk_into_obstacle_cells():
-    # Robots and the target obey the same collision rule; a robot chasing a goal that
-    # sits inside the wall ring must stop at the wall rather than tunnel into it.
+    # 로봇과 타겟은 동일한 충돌 규칙을 따른다; 벽 링 안에 있는 goal을 쫓는 로봇은
+    # 벽을 뚫고 들어가는 대신 벽에서 멈춰야 한다.
     config = make_herding_config()
     result = run_trial(config, RandomWalk(0.4, np.random.default_rng(5)), seed=5,
                        sim_config=SimulatorConfig(max_sim_time_sec=60.0))
-    ring = config.grid_resolution_m  # outermost cell ring is solid wall
+    ring = config.grid_resolution_m  # 가장 바깥쪽 셀 링은 단단한 벽
     for trajectory in (result.robot1_trajectory, result.robot2_trajectory,
                        result.target_trajectory):
         assert (trajectory >= ring).all() and (trajectory <= 10.0 - ring).all()
@@ -222,7 +222,7 @@ def test_obstacle_mask_shape_is_validated():
 
 
 # --------------------------------------------------------------------------- #
-# Target state handed to the evasion model                                    #
+# evasion model에 전달되는 타겟 상태                                          #
 # --------------------------------------------------------------------------- #
 
 def test_evasion_model_receives_position_and_achieved_velocity():
@@ -232,36 +232,36 @@ def test_evasion_model_receives_position_and_achieved_velocity():
     run_trial(make_herding_config(), model, seed=1,
               sim_config=SimulatorConfig(max_sim_time_sec=2.0, dt=dt), control_mode="idle")
     assert all(state.shape == (4,) for state in model.received_states)
-    assert np.allclose(model.received_states[0][2:], [0.0, 0.0])  # at rest before the first command
+    assert np.allclose(model.received_states[0][2:], [0.0, 0.0])  # 첫 명령 전에는 정지 상태
     for previous, current in zip(model.received_states, model.received_states[1:]):
         assert np.allclose(current[2:], velocity)
         assert np.allclose(current[:2], previous[:2] + velocity * dt)
 
 
 # --------------------------------------------------------------------------- #
-# Panic accounting                                                            #
+# Panic 집계                                                                  #
 # --------------------------------------------------------------------------- #
 
 def test_panic_count_is_per_cycle_and_not_latched_once_triggered():
-    # A running minimum compared against panic_distance_m keeps firing for every
-    # remaining cycle of the trial once the target has been close even once,
-    # turning panic_count into "cycles since the first violation".
+    # panic_distance_m과 비교하는 누적 최소값을 사용하면, 타겟이 한 번이라도
+    # 가까워진 이후에는 trial의 남은 모든 사이클마다 계속 발동하여
+    # panic_count가 "첫 위반 이후 경과한 사이클 수"가 되어버린다.
     config = make_herding_config()
     dt = 0.1
-    far, close = np.array([5.0, 5.0]), np.array([0.7, 0.5])  # 0.2 m from robot 1 at (0.5, 0.5)
+    far, close = np.array([5.0, 5.0]), np.array([0.7, 0.5])  # (0.5, 0.5)에 있는 robot 1로부터 0.2 m
     model = ScriptedTarget(lambda cycle: close if 3 <= cycle <= 5 else far, dt)
     result = run_trial(config, model, seed=1,
                        sim_config=SimulatorConfig(max_sim_time_sec=3.0, dt=dt,
                                                   target_max_speed_mps=1e3),
                        control_mode="idle")
     assert result.min_robot_target_dist == pytest.approx(0.2, abs=1e-6)
-    assert 1 <= result.panic_count <= 6  # 30 cycles ran; only a handful were close
+    assert 1 <= result.panic_count <= 6  # 30 사이클이 실행됨; 그중 소수만 가까웠음
 
 
 def test_panic_is_detected_when_it_happens_at_the_very_end_of_the_last_cycle():
-    # Sampling only at the top of each cycle never measures the state the target
-    # and robots actually finished in, so a violation created by the final move
-    # is silently dropped from ALGO-003's panic accounting.
+    # 매 사이클 시작 시점에서만 샘플링하면 타겟과 로봇이 실제로 도달한 최종
+    # 상태는 절대 측정되지 않으므로, 마지막 이동으로 생긴 위반이 ALGO-003의
+    # panic 집계에서 조용히 누락된다.
     config = make_herding_config()
     dt = 0.1
     far, close = np.array([5.0, 5.0]), np.array([0.7, 0.5])
@@ -275,7 +275,7 @@ def test_panic_is_detected_when_it_happens_at_the_very_end_of_the_last_cycle():
 
 
 # --------------------------------------------------------------------------- #
-# Control modes and trial outcome reporting                                   #
+# 제어 모드 및 trial 결과 보고                                                #
 # --------------------------------------------------------------------------- #
 
 def test_idle_mode_holds_the_robots_but_still_advances_the_core():
@@ -285,8 +285,8 @@ def test_idle_mode_holds_the_robots_but_still_advances_the_core():
     assert np.allclose(result.robot1_trajectory, result.robot1_trajectory[0])
     assert np.allclose(result.robot2_trajectory, result.robot2_trajectory[0])
     assert result.mean_latency_ms > 0.0
-    # A populated escape snapshot proves the FSM reached HERD and the escape model
-    # ran, i.e. the core was stepped exactly as it is in 'algorithm' mode.
+    # escape snapshot이 채워져 있다는 것은 FSM이 HERD에 도달했고 escape model이
+    # 실행되었음을, 즉 core가 'algorithm' 모드와 정확히 동일하게 진행되었음을 증명한다.
     assert result.escape_snapshot is not None
     assert result.escape_snapshot.shape[1] == 2
 

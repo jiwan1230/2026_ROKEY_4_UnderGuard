@@ -33,10 +33,10 @@ def test_obstacle_mask_from_occupancy():
 
 
 def test_world_to_cell_negative_near_origin_raises():
-    """Regression test: small negative offsets from origin should raise ValueError."""
+    """회귀 테스트: 원점에서 작은 음수 오프셋은 ValueError를 발생시켜야 한다."""
     grid = make_grid()
-    # With resolution_m=0.25, origin=(0,0), coordinates like -0.1 have
-    # offset -0.1 from origin, which floors to cell -1 (out-of-bounds).
-    # Previously, int(-0.1/0.25) = int(-0.4) = 0 (wrong truncation direction).
+    # resolution_m=0.25, origin=(0,0)일 때, -0.1과 같은 좌표는 원점으로부터
+    # -0.1의 오프셋을 가지며, 이는 셀 -1로 내림되어(범위 밖) 처리된다.
+    # 이전에는 int(-0.1/0.25) = int(-0.4) = 0으로 잘못된 방향으로 절삭되었다.
     with pytest.raises(ValueError):
         grid.world_to_cell(-0.1, -0.1)

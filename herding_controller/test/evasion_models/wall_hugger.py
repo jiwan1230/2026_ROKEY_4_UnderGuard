@@ -1,5 +1,5 @@
 # herding_controller/test/evasion_models/wall_hugger.py
-"""Target prefers moving along walls; flees like ReactiveFlee when a robot is close."""
+"""타겟은 벽을 따라 이동하는 것을 선호하며, 로봇이 가까워지면 ReactiveFlee처럼 도망친다."""
 import numpy as np
 
 from test.evasion_models.base import EvasionModel
@@ -7,17 +7,17 @@ from test.evasion_models.reactive_flee import ReactiveFlee
 
 
 class WallHugger(EvasionModel):
-    """Hugs the nearest wall when unthreatened, flees directly when a robot is close."""
+    """위협이 없을 때는 가장 가까운 벽을 따라가고, 로봇이 가까워지면 곧장 도망친다."""
 
     def __init__(self, max_speed_mps: float, flee_reaction_distance_m: float, grid_map) -> None:
-        """Store the speed cap, flee-trigger distance, and grid map used for wall lookups."""
+        """속도 상한, 도망 반응 거리, 벽 탐색에 사용할 그리드 맵을 저장한다."""
         self.max_speed_mps = max_speed_mps
         self.flee_reaction_distance_m = flee_reaction_distance_m
         self.grid_map = grid_map
         self._flee = ReactiveFlee(max_speed_mps, flee_reaction_distance_m)
 
     def step(self, target_state: np.ndarray, robot_positions: list, obstacle_map, dt: float) -> np.ndarray:
-        """Flee a nearby robot if any, else hug the tangent of the nearest wall cell."""
+        """근처에 로봇이 있으면 도망치고, 없으면 가장 가까운 벽 셀의 접선 방향을 따라간다."""
         flee_velocity = self._flee.step(target_state, robot_positions, obstacle_map, dt)
         if np.linalg.norm(flee_velocity) > 1e-9:
             return flee_velocity
@@ -29,7 +29,7 @@ class WallHugger(EvasionModel):
         return wall_dir * self.max_speed_mps * 0.5
 
     def _nearest_wall_tangent(self, target_pos: np.ndarray) -> np.ndarray | None:
-        """Return the unit tangent along the nearest obstacle cell, or None if none is nearby."""
+        """가장 가까운 장애물 셀을 따라가는 단위 접선 벡터를 반환한다. 근처에 없으면 None을 반환한다."""
         try:
             row, col = self.grid_map.world_to_cell(*target_pos)
         except ValueError:
@@ -47,4 +47,4 @@ class WallHugger(EvasionModel):
         if norm < 1e-9:
             return None
         normal = nearest / norm
-        return np.array([-normal[1], normal[0]])  # perpendicular = tangent along the wall
+        return np.array([-normal[1], normal[0]])  # 수직 벡터 = 벽을 따라가는 접선 벡터

@@ -1,5 +1,5 @@
 # herding_controller/herding_controller/herding_planner.py
-"""Computes Driving Point (Driver goal) and Blocking Point (Blocker goal)."""
+"""Driving Point(Driver 목표점)와 Blocking Point(Blocker 목표점)를 계산한다."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -10,7 +10,7 @@ from herding_controller.grid_map import GridMap
 
 @dataclass
 class PlannerConfig:
-    """Thresholds controlling how aggressively the Driver pressures the target."""
+    """Driver가 타겟을 얼마나 공격적으로 압박할지를 제어하는 임계값들."""
     drive_distance_m: float
     panic_distance_m: float
     alignment_threshold: float
@@ -20,7 +20,7 @@ class PlannerConfig:
 
 @dataclass
 class DrivingResult:
-    """The Driver's goal point and whether it is in a panic-distance retreat."""
+    """Driver의 목표점과 panic-distance 후퇴 중인지 여부."""
     point: np.ndarray
     is_panic: bool
 
@@ -32,7 +32,7 @@ def compute_driving_point(
     robot_pos: np.ndarray,
     config: PlannerConfig,
 ) -> DrivingResult:
-    """Return the Driver's goal: behind the target, opposite the capture goal."""
+    """Driver의 목표점을 반환한다: 타겟 뒤쪽, 캡처 목표점의 반대 방향."""
     to_target = target_pos - robot_pos
     dist = np.linalg.norm(to_target)
     if dist < config.panic_distance_m:
@@ -62,7 +62,7 @@ def compute_blocking_point(
     grid_map: GridMap,
     config: PlannerConfig,
 ) -> np.ndarray:
-    """Return the Blocker's goal: the most likely escape route outside the goal hemisphere."""
+    """Blocker의 목표점을 반환한다: 목표 반구(goal hemisphere) 밖에서 가장 가능성 높은 도주 경로."""
     to_goal = goal_pos - target_pos
     norm = np.linalg.norm(to_goal)
     to_goal = to_goal / norm if norm > 1e-6 else np.array([1.0, 0.0])
@@ -72,7 +72,7 @@ def compute_blocking_point(
 
     for index in candidate_order:
         if dots[index] > 0:
-            continue  # direction is within the goal hemisphere, skip (2-4 step 1)
+            continue  # 방향이 목표 반구 내부에 있으므로 건너뜀 (2-4 step 1)
         direction = escape_estimate.directions[index]
         point = target_pos + direction * config.block_lookahead_m
         try:
@@ -80,12 +80,12 @@ def compute_blocking_point(
         except ValueError:
             continue
         if grid_map.is_obstacle(row, col):
-            continue  # path already naturally blocked, try next-best route (2-4 step 4)
+            continue  # 경로가 이미 자연적으로 막혀 있으므로 차선책 경로 시도 (2-4 step 4)
         return point
 
-    # Every non-hemisphere candidate was blocked or off-grid: relax the goal-hemisphere
-    # preference and take the highest-probability direction (from ALL 8) that is still
-    # obstacle-clear and in-bounds, rather than returning a point known to be invalid.
+    # 목표 반구 밖의 후보가 모두 막혀 있거나 그리드 밖에 있음: 목표 반구
+    # 선호도를 완화하여, 무효인 것으로 알려진 지점을 반환하는 대신 여전히
+    # 장애물이 없고 범위 내에 있는(전체 8방향 중) 최고 확률 방향을 취한다.
     for index in candidate_order:
         direction = escape_estimate.directions[index]
         point = target_pos + direction * config.block_lookahead_m
@@ -97,7 +97,7 @@ def compute_blocking_point(
             continue
         return point
 
-    # Every direction (all 8) is obstacle-blocked or off-grid: the target is fully
-    # boxed in and there is no valid blocking point nearby. Stay in place rather than
-    # send the Blocker into a wall or off the grid.
+    # 모든 방향(8방향 전부)이 장애물에 막혀 있거나 그리드 밖에 있음: 타겟이
+    # 완전히 갇혀 있어 근처에 유효한 blocking point가 없다. Blocker를 벽이나
+    # 그리드 밖으로 보내는 대신 제자리에 머문다.
     return target_pos.copy()

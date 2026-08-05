@@ -1,5 +1,5 @@
 # herding_controller/herding_controller/role_assigner.py
-"""Dynamic Driver/Blocker role assignment with swap hysteresis."""
+"""스왑 이력현상(hysteresis)을 적용한 동적 Driver/Blocker 역할 배정."""
 from dataclasses import dataclass
 
 import numpy as np
@@ -7,7 +7,7 @@ import numpy as np
 
 @dataclass
 class RoleAssignerConfig:
-    """Hysteresis and separation thresholds for role swapping."""
+    """역할 교체를 위한 이력현상 및 이격 거리 임계값."""
     role_swap_margin: float
     role_swap_cooldown_sec: float
     min_robot_separation_m: float
@@ -15,7 +15,7 @@ class RoleAssignerConfig:
 
 
 class RoleAssigner:
-    """Assigns which robot (1 or 2) is Driver, with hysteresis to prevent oscillation."""
+    """어느 로봇(1 또는 2)이 Driver인지 배정하며, 진동을 막기 위해 이력현상을 적용한다."""
 
     def __init__(self, config: RoleAssignerConfig) -> None:
         self.config = config
@@ -31,17 +31,16 @@ class RoleAssigner:
         driving_point_candidate: np.ndarray,
         current_time_sec: float,
     ) -> tuple[int, int]:
-        """Return (driver_id, blocker_id), swapping only past margin+cooldown thresholds."""
+        """(driver_id, blocker_id)를 반환하며, margin+cooldown 임계값을 넘을 때만 교체한다."""
         cost1 = self._cost(robot1_pos, robot1_heading, driving_point_candidate)
         cost2 = self._cost(robot2_pos, robot2_heading, driving_point_candidate)
         candidate_driver = 1 if cost1 <= cost2 else 2
 
         if self._last_swap_time is None:
-            # First-ever call: there is no prior "swap" to protect with
-            # margin/cooldown gating, and no real prior assignment to
-            # hysterese against -- self._driver_id == 1 so far is just an
-            # arbitrary bootstrap default, not a decision that was ever
-            # actually computed. Adopt the cost-optimal candidate outright.
+            # 최초 호출: margin/cooldown 게이팅으로 보호해야 할 이전 "swap"이
+            # 없고, 이력현상을 적용할 실제 이전 배정도 없다 -- 지금까지의
+            # self._driver_id == 1은 실제로 계산된 결정이 아니라 그저 임의의
+            # 부트스트랩 기본값이다. 비용이 최적인 후보를 그대로 채택한다.
             self._driver_id = candidate_driver
             self._last_swap_time = current_time_sec
         elif candidate_driver != self._driver_id:
@@ -69,14 +68,14 @@ class RoleAssigner:
 def resolve_separation(
     driving_point: np.ndarray, blocking_point: np.ndarray, config: RoleAssignerConfig
 ) -> np.ndarray:
-    """Push the Blocker's goal away from the Driver's goal to keep min separation."""
+    """최소 이격 거리를 유지하기 위해 Blocker의 목표점을 Driver의 목표점으로부터 밀어낸다."""
     delta = blocking_point - driving_point
     dist = np.linalg.norm(delta)
     if dist >= config.min_robot_separation_m:
         return blocking_point
     direction = delta / dist if dist > 1e-6 else np.array([1.0, 0.0])
-    # Nudge slightly past the threshold so floating-point rounding in the
-    # add/subtract round-trip can't leave the result a hair short of
-    # min_robot_separation_m (norm(a+b) is not exactly ||b|| in float64).
+    # 덧셈/뺄셈 왕복 과정의 부동소수점 반올림으로 인해 결과가
+    # min_robot_separation_m보다 미세하게 부족해지지 않도록, 임계값을 살짝
+    # 넘겨서 밀어낸다 (float64에서 norm(a+b)는 정확히 ||b||가 아니다).
     push_distance = config.min_robot_separation_m * (1.0 + 1e-9) + 1e-9
     return driving_point + direction * push_distance

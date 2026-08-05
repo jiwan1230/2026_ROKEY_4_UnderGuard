@@ -1,10 +1,9 @@
 # herding_controller/herding_controller/herding_node.py
-"""rclpy adapter: the only file in this package that imports ROS. Wraps HerdingCore.
+"""rclpy 어댑터: 이 패키지에서 ROS를 가져오는 유일한 파일. HerdingCore를 감싼다.
 
-Every function that does not need a live ROS node (config→dict mapping, JSON
-payload construction, escape-probability rasterization, quaternion-to-heading
-conversion) is kept as a plain function so it can be unit tested without
-spinning up rclpy machinery.
+살아있는 ROS 노드를 필요로 하지 않는 모든 함수(config→dict 매핑, JSON 페이로드
+구성, escape-probability 래스터화, 쿼터니언-헤딩 변환)는 rclpy 장치를 띄우지
+않고도 단위 테스트할 수 있도록 순수 함수로 유지한다.
 """
 import json
 import traceback
@@ -21,28 +20,29 @@ from herding_controller.grid_map import GridMap
 from herding_controller.herding_core import HerdingConfig, HerdingCore, HerdingOutput, Observation
 from herding_controller.state_machine import FSMState
 
-# Defaults mirror config/herding_params.yaml's ros__parameters block. Every
-# field of HerdingConfig (see herding_core.py) must appear here (or have a
-# dataclass default) or HerdingConfig(**values) raises TypeError at startup.
+# 기본값은 config/herding_params.yaml의 ros__parameters 블록을 그대로 반영한다.
+# HerdingConfig(herding_core.py 참고)의 모든 필드는 여기에 나타나야 하며(또는
+# dataclass 기본값을 가져야 하며), 그렇지 않으면 HerdingConfig(**values)가
+# 시작 시 TypeError를 발생시킨다.
 _PARAM_DEFAULTS = {
     "frame_id": "map",
     "control_rate_hz": 5.0,
-    # --- Capture Zone ---
+    # --- 캡처 존 ---
     "capture_zone_x_m": 3.0,
     "capture_zone_y_m": 3.0,
     "capture_radius_m": 0.5,
     "capture_hold_sec": 3.0,
-    # --- Grid ---
+    # --- 그리드 ---
     "grid_resolution_m": 0.25,
     "grid_width_cells": 40,
     "grid_height_cells": 40,
     "grid_origin_x_m": 0.0,
     "grid_origin_y_m": 0.0,
-    # --- Target Estimator (KF) ---
+    # --- 타겟 추정기 (KF) ---
     "kf_process_noise": 0.1,
     "kf_measurement_noise": 0.05,
     "occlusion_timeout_sec": 3.0,
-    # --- Escape Model (Markov) ---
+    # --- 도주 모델 (마르코프) ---
     "markov_wall_follow_p": 0.70,
     "markov_wall_hug_p": 0.20,
     "markov_center_p": 0.10,
@@ -51,37 +51,38 @@ _PARAM_DEFAULTS = {
     "wall_detect_radius_cells": 1,
     "escape_route_top_k": 3,
     "escape_concentration_threshold": 0.5,
-    # --- Herding Control ---
-    # Task 15 tuned values. drive_distance_m * drive_distance_ease_factor must stay
-    # below flee_reaction_distance_m (0.75 * 1.15 = 0.86 < 1.0) -- see the long
-    # rationale in config/herding_params.yaml and HerdingConfig.__post_init__.
-    # test_param_defaults_match_shipping_yaml_values pins these to the yaml.
+    # --- Herding 제어 ---
+    # Task 15에서 튜닝된 값들. drive_distance_m * drive_distance_ease_factor는
+    # flee_reaction_distance_m 미만이어야 한다 (0.75 * 1.15 = 0.86 < 1.0) --
+    # 자세한 근거는 config/herding_params.yaml과 HerdingConfig.__post_init__을
+    # 참고. test_param_defaults_match_shipping_yaml_values가 이 값들을 yaml에
+    # 고정시킨다.
     "drive_distance_m": 0.75,
     "flee_reaction_distance_m": 1.0,
     "panic_distance_m": 0.35,
     "alignment_threshold": 0.7,
     "drive_distance_ease_factor": 1.15,
     "block_lookahead_m": 3.0,
-    # --- Role Assignment ---
+    # --- 역할 배정 ---
     "role_swap_margin": 0.5,
     "role_swap_cooldown_sec": 2.0,
     "min_robot_separation_m": 0.6,
     "role_cost_turn_weight": 0.3,
-    # --- Occlusion Grid ---
+    # --- Occlusion 그리드 ---
     "diffusion_rate": 0.2,
     "decay_factor": 0.9,
 }
 
 
 def _load_config(node: Node) -> HerdingConfig:
-    """Declare every HerdingConfig field as a ROS parameter and build the config."""
+    """HerdingConfig의 모든 필드를 ROS 파라미터로 선언하고 config를 만든다."""
     for name, default in _PARAM_DEFAULTS.items():
         node.declare_parameter(name, default)
     values = {name: node.get_parameter(name).value for name in _PARAM_DEFAULTS}
-    # The control period (1 / control_rate_hz) is computed in two places below;
-    # a zero rate would surface as a bare ZeroDivisionError from deep inside the
-    # constructor. Fail here with something an operator can act on. (Other
-    # cross-parameter invariants are enforced by HerdingConfig.__post_init__.)
+    # 제어 주기(1 / control_rate_hz)는 아래 두 곳에서 계산된다; rate가 0이면
+    # 생성자 내부 깊은 곳에서 맨 ZeroDivisionError로만 드러날 것이다. 운영자가
+    # 조치할 수 있도록 여기서 실패시킨다. (다른 파라미터 간 불변 조건들은
+    # HerdingConfig.__post_init__에서 강제된다.)
     if not values["control_rate_hz"] > 0.0:
         raise ValueError(
             f"control_rate_hz must be > 0, got {values['control_rate_hz']}"
@@ -90,7 +91,7 @@ def _load_config(node: Node) -> HerdingConfig:
 
 
 def _serialize_state(output: HerdingOutput) -> dict:
-    """Build a JSON-safe dict from a HerdingOutput (no numpy arrays, no enums)."""
+    """HerdingOutput으로부터 JSON에 안전한 dict를 만든다 (numpy 배열도, enum도 없이)."""
     return {
         "fsm_state": output.fsm_state.name,
         "roles": {"driver": output.driver_id, "blocker": output.blocker_id},
@@ -104,11 +105,11 @@ def _serialize_state(output: HerdingOutput) -> dict:
 
 
 def _prob_grid_to_flat_int8(grid: np.ndarray) -> list:
-    """Quantize a [0, 1] probability grid to a flat, row-major list of int8 in [0, 100].
+    """[0, 1] 확률 그리드를 [0, 100] 범위의 평탄한 row-major int8 리스트로 양자화한다.
 
-    Row-major (C order) matches how `_on_map` reshapes an incoming
-    OccupancyGrid.data back into (height, width): `np.array(data).reshape(h, w)`
-    is the exact inverse of `.flatten(order="C")` here.
+    row-major(C order)는 `_on_map`이 들어오는 OccupancyGrid.data를 다시
+    (height, width)로 reshape하는 방식과 일치한다: `np.array(data).reshape(h, w)`는
+    여기서의 `.flatten(order="C")`의 정확한 역연산이다.
     """
     scaled = np.clip(grid, 0.0, 1.0) * 100.0
     return scaled.astype(np.int8).flatten(order="C").tolist()
@@ -121,14 +122,15 @@ def _rasterize_escape_probabilities(
     grid_map: GridMap,
     cells_per_ray: int = 3,
 ) -> np.ndarray:
-    """Paint the 8-direction escape distribution onto a (height, width) grid.
+    """8방향 도주 분포를 (height, width) 그리드 위에 그린다.
 
-    For each of the 8 compass directions, a short ray of `cells_per_ray` cells
-    extending from the target's own grid cell is painted with that direction's
-    probability (rays stop early at the grid edge). Cells reachable from more
-    than one ray keep the max, not the sum, so overlapping rays don't produce
-    an out-of-range value. Returns an all-zero grid if the target position is
-    off-grid (mirrors HerdingCore's own off-grid handling rather than raising).
+    8방위 각각에 대해, 타겟이 위치한 그리드 셀에서부터 뻗어 나가는
+    `cells_per_ray` 셀 길이의 짧은 광선이 해당 방향의 확률로 칠해진다
+    (광선은 그리드 경계에서 조기에 멈춘다). 여러 광선이 도달할 수 있는
+    셀은 합이 아니라 최댓값을 유지하므로, 광선이 겹쳐도 범위를 벗어나는
+    값이 생기지 않는다. 타겟 위치가 그리드 밖에 있으면 (예외를 발생시키는
+    대신 HerdingCore 자체의 off-grid 처리를 그대로 따라) all-zero 그리드를
+    반환한다.
     """
     height, width = grid_map.config.height_cells, grid_map.config.width_cells
     grid = np.zeros((height, width))
@@ -147,9 +149,9 @@ def _rasterize_escape_probabilities(
 
 
 def _quaternion_to_heading(x: float, y: float, z: float, w: float) -> np.ndarray:
-    """Extract planar (2D) yaw from a quaternion and return it as a unit heading vector.
+    """쿼터니언에서 평면(2D) yaw를 추출하여 단위 헤딩 벡터로 반환한다.
 
-    Standard quaternion-to-yaw for a rotation about the Z axis:
+    Z축 회전에 대한 표준 쿼터니언-to-yaw 변환:
     yaw = atan2(2*(w*z + x*y), 1 - 2*(y*y + z*z)).
     """
     yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
@@ -157,7 +159,7 @@ def _quaternion_to_heading(x: float, y: float, z: float, w: float) -> np.ndarray
 
 
 class HerdingNode(Node):
-    """Subscribes to poses/map, runs HerdingCore, publishes goals and telemetry."""
+    """poses/map을 구독하고 HerdingCore를 실행하며 목표점과 텔레메트리를 발행한다."""
 
     def __init__(self) -> None:
         super().__init__("herding_controller")
@@ -169,23 +171,25 @@ class HerdingNode(Node):
         self._robot2_pos = np.zeros(2)
         self._robot1_heading = np.array([1.0, 0.0])
         self._robot2_heading = np.array([1.0, 0.0])
-        # Until a real pose arrives for each robot, robotN_pos is a meaningless
-        # (0, 0) placeholder. Goal publishing is withheld (see _publish) until
-        # both flip True, so the robots are never commanded toward the grid
-        # origin before they have ever reported where they actually are.
+        # 각 로봇에 대한 실제 pose가 도착하기 전까지 robotN_pos는 의미 없는
+        # (0, 0) 자리 표시자다. 목표점 발행은 둘 다 True로 바뀔 때까지
+        # 보류되므로(_publish 참고), 로봇이 실제 위치를 한 번도 보고하지
+        # 않은 상태에서 그리드 원점 쪽으로 명령받는 일은 없다.
         self._robot1_pose_received = False
         self._robot2_pose_received = False
         self._occupancy = None
-        # True only between a ~/target_pose arriving and the next control cycle
-        # consuming it. A cycle that finds it False reports "no observation this
-        # cycle" to HerdingCore instead of re-feeding the last (stale) position,
-        # which is what lets the estimator's occlusion timeout -- and therefore
-        # the FSM's LOST state -- ever fire when perception goes quiet.
+        # ~/target_pose가 도착한 시점과 다음 제어 주기가 그것을 소비하는
+        # 시점 사이에서만 True이다. False인 상태로 주기를 맞이하면, 마지막
+        # (오래된) 위치를 다시 넣는 대신 HerdingCore에게 "이번 주기에는
+        # 관측이 없다"고 보고한다. 바로 이 덕분에 인지가 끊겼을 때 estimator의
+        # occlusion timeout -- 그리고 결국 FSM의 LOST 상태 -- 가 발동할 수
+        # 있다.
         self._target_pose_is_fresh = False
-        # Wall-clock bookkeeping: sim_time_sec/dt handed to HerdingCore are real
-        # elapsed node-clock time, not a nominal 1/control_rate_hz counter, so
-        # capture_hold_sec / role_swap_cooldown_sec / occlusion_timeout_sec stay
-        # true to the wall clock under timer jitter or a dropped callback.
+        # 벽시계 기준 기록: HerdingCore에 넘겨지는 sim_time_sec/dt는 명목상의
+        # 1/control_rate_hz 카운터가 아니라 실제로 경과한 노드 클록 시간이므로,
+        # 타이머 지터나 콜백 누락이 있어도 capture_hold_sec /
+        # role_swap_cooldown_sec / occlusion_timeout_sec가 실제 시간에
+        # 충실하게 유지된다.
         self._nominal_dt = 1.0 / self.config.control_rate_hz
         self._last_cycle_sec: float | None = None
         self._elapsed_sec = 0.0
@@ -205,7 +209,7 @@ class HerdingNode(Node):
         self.create_timer(self._nominal_dt, self._on_timer)
 
     def _now_sec(self) -> float:
-        """Node-clock time in seconds. Single seam so tests can drive time directly."""
+        """노드 클록 시간(초). 테스트가 시간을 직접 제어할 수 있는 단일 접합점."""
         return self.get_clock().now().nanoseconds * 1e-9
 
     def _on_target_pose(self, msg: PoseStamped) -> None:
@@ -225,19 +229,19 @@ class HerdingNode(Node):
         self._robot2_pose_received = True
 
     def _on_map(self, msg: OccupancyGrid) -> None:
-        # msg.data always has exactly height*width entries per the OccupancyGrid
-        # spec, so this reshape can't fail even if the incoming map's extent
-        # differs from our configured grid_width_cells/grid_height_cells.
-        # HerdingCore.step() also checks the shape against its own grid config
-        # and ignores a mismatched frame, but it logs through stdlib `logging`,
-        # which nothing bridges to the ROS log -- so an operator would never see
-        # it. Check here too and warn through the rclpy logger, which is what
-        # actually reaches `ros2 run`'s console and /rosout.
+        # OccupancyGrid 스펙상 msg.data는 항상 정확히 height*width개의 항목을
+        # 가지므로, 들어오는 맵의 크기가 우리가 설정한
+        # grid_width_cells/grid_height_cells와 다르더라도 이 reshape는 실패할
+        # 수 없다. HerdingCore.step()도 자신의 grid config와 크기를 비교하여
+        # 불일치하는 프레임을 무시하지만, 그것은 stdlib `logging`을 통해
+        # 로그를 남기며 이는 ROS 로그로 연결되지 않으므로 운영자가 절대 볼 수
+        # 없다. 여기서도 확인하여, 실제로 `ros2 run`의 콘솔과 /rosout에
+        # 도달하는 rclpy 로거를 통해 경고한다.
         self._occupancy = np.array(msg.data, dtype=int).reshape(msg.info.height, msg.info.width)
         self._warn_on_map_mismatch(msg)
 
     def _warn_on_map_mismatch(self, msg: OccupancyGrid) -> None:
-        """Warn (via the ROS logger) when /map does not line up with our grid config."""
+        """/map이 우리 grid config와 맞지 않을 때 (ROS 로거를 통해) 경고한다."""
         expected_shape = (self.config.grid_height_cells, self.config.grid_width_cells)
         if (msg.info.height, msg.info.width) != expected_shape:
             self.get_logger().warn(
@@ -264,20 +268,21 @@ class HerdingNode(Node):
     def _on_timer(self) -> None:
         now_sec = self._now_sec()
         if self._last_cycle_sec is None:
-            dt = self._nominal_dt  # first cycle: no previous timestamp to diff against
+            dt = self._nominal_dt  # 첫 주기: 비교할 이전 타임스탬프가 없음
         else:
             dt = now_sec - self._last_cycle_sec
             if dt <= 0.0:
-                # Clock not running yet (use_sim_time with no /clock publisher) or a
-                # backwards jump. A non-positive dt would stall the KF and every
-                # timeout, so fall back to the nominal period for this cycle.
+                # 클록이 아직 돌지 않고 있거나(/clock 퍼블리셔 없이
+                # use_sim_time을 쓰는 경우) 시간이 뒤로 튄 경우. dt가 0 이하면
+                # KF와 모든 timeout이 정체되므로, 이번 주기는 명목 주기로
+                # 대체한다.
                 dt = self._nominal_dt
         self._last_cycle_sec = now_sec
         self._elapsed_sec += dt
 
-        # Only a pose that arrived since the previous cycle counts as an
-        # observation; otherwise the estimator would keep re-fusing a stale
-        # position and never time out into LOST.
+        # 이전 주기 이후에 도착한 pose만 관측으로 취급한다; 그렇지 않으면
+        # estimator가 오래된 위치를 계속 재융합하여 결코 LOST로 타임아웃되지
+        # 않을 것이다.
         target_measurement = self._target_pos if self._target_pose_is_fresh else None
         self._target_pose_is_fresh = False
 
@@ -291,20 +296,20 @@ class HerdingNode(Node):
             output = self.core.step(observation)
             self._publish(output)
         except Exception:
-            # An exception escaping a timer callback tears down rclpy.spin() and
-            # kills the node mid-mission. Log it and skip this cycle instead: the
-            # robots simply hold their previously published goals.
+            # 타이머 콜백을 벗어난 예외는 rclpy.spin()을 무너뜨려 미션 도중
+            # 노드를 죽인다. 그 대신 로그를 남기고 이번 주기를 건너뛴다:
+            # 로봇들은 그저 이전에 발행된 목표점을 그대로 유지한다.
             self.get_logger().error(
                 f"control cycle failed, skipping this cycle's goals:\n{traceback.format_exc()}"
             )
 
     def _publish(self, output: HerdingOutput) -> None:
-        # Before both robots have ever reported a real pose, robotN_pos is
-        # still the (0, 0) placeholder set in __init__, and HerdingCore (in
-        # IDLE/SEARCH/TRACK/CAPTURED) echoes robot_pos straight back as the
-        # goal -- publishing it here would actively drive both robots toward
-        # the grid origin. Withhold goal publishing until we have a real fix
-        # on both.
+        # 두 로봇 모두 실제 pose를 보고하기 전까지 robotN_pos는 여전히
+        # __init__에서 설정한 (0, 0) 자리 표시자이며, HerdingCore는
+        # (IDLE/SEARCH/TRACK/CAPTURED 상태에서) robot_pos를 그대로 목표점으로
+        # 되돌려준다 -- 여기서 그것을 발행하면 두 로봇을 그리드 원점 쪽으로
+        # 실제로 몰아가게 된다. 둘 다에 대한 실제 위치 확정이 있을 때까지
+        # 목표점 발행을 보류한다.
         if self._robot1_pose_received and self._robot2_pose_received:
             self.robot1_goal_pub.publish(self._to_pose(output.robot1_goal))
             self.robot2_goal_pub.publish(self._to_pose(output.robot2_goal))
@@ -329,16 +334,16 @@ class HerdingNode(Node):
         return msg
 
     def _to_escape_grid(self, output: HerdingOutput) -> OccupancyGrid:
-        """Rasterize the current escape-direction distribution onto the map grid.
+        """현재 도주 방향 분포를 맵 그리드 위에 래스터화한다.
 
-        `output.escape_directions`/`escape_probabilities` are populated by
-        HerdingCore only when the escape model actually ran this cycle (i.e.
-        the KF has converged and the target's cell is on-grid -- see
-        HerdingCore.step()). In every other state (SEARCH/TRACK before
-        convergence, LOST) there genuinely is no escape distribution, so an
-        honest all-zero grid is published rather than repurposing an unrelated
-        array (e.g. the occlusion belief, which represents "where the target
-        might be while hidden", not "which way it's likely to flee").
+        `output.escape_directions`/`escape_probabilities`는 이번 주기에
+        escape model이 실제로 실행되었을 때만(즉 KF가 수렴했고 타겟의 셀이
+        그리드 위에 있을 때만 -- HerdingCore.step() 참고) HerdingCore에 의해
+        채워진다. 그 밖의 모든 상태(수렴 전 SEARCH/TRACK, LOST)에서는 정말로
+        escape distribution이 존재하지 않으므로, 관련 없는 배열(예를 들어
+        "숨어 있는 동안 타겟이 있을 만한 곳"을 나타낼 뿐 "어느 방향으로 도주할
+        가능성이 높은지"는 나타내지 않는 occlusion belief)을 용도 변경하는
+        대신 정직하게 all-zero 그리드를 발행한다.
         """
         msg = OccupancyGrid()
         msg.header.frame_id = self.config.frame_id

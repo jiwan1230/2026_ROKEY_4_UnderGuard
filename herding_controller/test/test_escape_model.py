@@ -25,7 +25,7 @@ def test_obstacle_direction_is_masked_to_zero():
     grid = GridMap(GridConfig(resolution_m=0.25, width_cells=40, height_cells=40))
     model, grid = make_model(grid)
     target_pos = np.array([5.0, 5.0])
-    row, col = grid.world_to_cell(5.0, 5.25)  # the "N" neighbor cell
+    row, col = grid.world_to_cell(5.0, 5.25)  # "N" 인접 셀
     grid.obstacle_mask[row, col] = True
     estimate = model.compute(target_pos, np.array([0.0, 0.0]), [np.array([2.0, 2.0])])
     north_index = 0  # directions[0] == N == (0, 1)
@@ -57,7 +57,7 @@ def test_top_k_routes_excludes_obstacle_cells_when_some_directions_invalid():
     model, grid = make_model(grid)
     target_pos = np.array([5.0, 5.0])
     row, col = grid.world_to_cell(*target_pos)
-    # Block N, NE, E, SE, SW (5 of 8 neighbors); only S, W, NW stay valid.
+    # N, NE, E, SE, SW를 차단 (8방향 중 5개); S, W, NW만 유효하게 남음.
     blocked_dirs = [(0, 1), (1, 1), (1, 0), (1, -1), (-1, -1)]
     for dx, dy in blocked_dirs:
         grid.obstacle_mask[row + dy, col + dx] = True

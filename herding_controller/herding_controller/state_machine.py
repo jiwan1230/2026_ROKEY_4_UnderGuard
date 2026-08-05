@@ -1,11 +1,11 @@
 # herding_controller/herding_controller/state_machine.py
-"""Six-state herding FSM: IDLE -> SEARCH -> TRACK -> HERD -> CORNER -> CAPTURED, with LOST recovery."""
+"""6단계 herding FSM: IDLE -> SEARCH -> TRACK -> HERD -> CORNER -> CAPTURED, LOST 복구 포함."""
 from dataclasses import dataclass
 from enum import Enum, auto
 
 
 class FSMState(Enum):
-    """The herding controller's operating mode."""
+    """herding controller의 동작 모드."""
     IDLE = auto()
     SEARCH = auto()
     TRACK = auto()
@@ -17,7 +17,7 @@ class FSMState(Enum):
 
 @dataclass
 class FSMInputs:
-    """Signals the FSM needs to decide its next transition for this cycle."""
+    """FSM이 이번 주기의 다음 전이를 결정하는 데 필요한 신호들."""
     target_observed: bool
     kf_converged: bool
     distance_to_goal_m: float
@@ -30,7 +30,7 @@ class FSMInputs:
 
 
 class HerdingStateMachine:
-    """Advances the herding FSM state given per-cycle sensor/estimator signals."""
+    """주기마다의 센서/estimator 신호를 받아 herding FSM 상태를 진행시킨다."""
 
     def __init__(self) -> None:
         self._state = FSMState.IDLE
@@ -38,11 +38,11 @@ class HerdingStateMachine:
 
     @property
     def state(self) -> FSMState:
-        """The current FSM state."""
+        """현재 FSM 상태."""
         return self._state
 
     def step(self, inputs: FSMInputs) -> FSMState:
-        """Compute and store the next FSM state for this control cycle."""
+        """이번 제어 주기의 다음 FSM 상태를 계산하여 저장한다."""
         state = self._state
 
         if state == FSMState.IDLE:

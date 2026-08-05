@@ -1,11 +1,11 @@
 # herding_controller/test/test_run_validation.py
-"""Smoke tests for the validation harness itself.
+"""검증 하네스(run_validation.py) 자체에 대한 스모크 테스트.
 
-Nothing in test/ exercised run_validation.py, which is how a config-invariant
-regression made `python3 test/run_validation.py 100` -- the reproduction command
-in the final report -- crash after burning the full trial compute, while 127 unit
-tests stayed green. These tests run the sweep end-to-end at a tiny trial count so
-that path is covered.
+test/ 안의 어떤 것도 run_validation.py를 실행해보지 않았고, 이 때문에 config
+불변식 회귀가 `python3 test/run_validation.py 100`(최종 보고서의 재현 명령)을
+전체 trial 연산을 다 소모한 후에야 크래시시키는 동안, 127개의 단위 테스트는
+계속 통과 상태로 남아 있었다. 이 테스트들은 아주 작은 trial 수로 스윕을
+end-to-end로 실행하여 그 경로를 커버한다.
 """
 import test.run_validation as run_validation
 from herding_controller.herding_core import HerdingConfig
@@ -20,11 +20,11 @@ from test.run_validation import (
 
 
 def test_shipping_sweep_contains_points_the_config_invariant_rejects():
-    """Documents *why* the sweep needs rejection handling at all.
+    """스윕이 애초에 왜 rejection 처리를 필요로 하는지를 문서화한다.
 
-    The sweep deliberately probes the deadlock-prone corner of the parameter space
-    (eased drive distance beyond the target's reaction radius), which is exactly what
-    HerdingConfig.__post_init__ refuses to construct.
+    이 스윕은 의도적으로 파라미터 공간에서 교착 상태에 빠지기 쉬운 코너
+    (타겟의 반응 반경을 넘어서는 완화된 drive distance)를 탐색하는데, 이는
+    정확히 HerdingConfig.__post_init__이 생성을 거부하는 값이다.
     """
     config = load_herding_config(CONFIG_PATH)
     violating = [
@@ -38,14 +38,14 @@ def test_shipping_sweep_contains_points_the_config_invariant_rejects():
 
 
 def test_sensitivity_sweep_completes_with_the_shipping_config():
-    """The whole point: an invariant-violating sweep point must not abort the run."""
+    """이 테스트의 핵심: 불변식을 위반하는 스윕 지점이 실행을 중단시켜서는 안 된다."""
     config = load_herding_config(CONFIG_PATH)
-    sweep = _run_sensitivity_sweep(config, trials=1, seed_base=0)  # must not raise
+    sweep = _run_sensitivity_sweep(config, trials=1, seed_base=0)  # 예외가 발생하면 안 됨
 
     assert set(sweep) == set(SENSITIVITY_SWEEPS)
     for param, data in sweep.items():
         assert data["values"] == list(SENSITIVITY_SWEEPS[param])
-        # Every swept point is still represented, rejected or not -- no silent gaps.
+        # 스윕된 모든 지점은 rejected 여부와 무관하게 여전히 표현된다 -- 조용한 누락이 없음.
         assert len(data["success_rates"]) == len(data["values"])
         for value, rate in zip(data["values"], data["success_rates"]):
             if rate is None:
@@ -57,13 +57,13 @@ def test_sensitivity_sweep_completes_with_the_shipping_config():
     assert set(drive["rejected"]) == {0.9, 1.05}
     for reason in drive["rejected"].values():
         assert "flee_reaction_distance_m" in reason
-    # The valid points really ran rather than being rejected wholesale.
+    # 유효한 지점들은 통째로 rejected 되지 않고 실제로 실행되었다.
     assert drive["success_rates"][0] is not None
     assert drive["success_rates"][1] is not None
 
 
 def test_sweep_over_a_valid_config_rejects_nothing():
-    """A config with enough margin leaves every sweep point runnable."""
+    """margin이 충분한 config는 모든 스윕 지점을 실행 가능하게 남겨둔다."""
     config = load_herding_config(CONFIG_PATH)
     roomy = HerdingConfig(**{
         **{f: getattr(config, f) for f in config.__dataclass_fields__},
@@ -88,8 +88,8 @@ def _sweep_with_a_rejected_point() -> dict:
 
 def test_report_cells_mark_a_rejected_point_instead_of_dropping_it():
     cells = _format_sensitivity_cells(_sweep_with_a_rejected_point()["drive_distance_m"])
-    assert "0.75*=80%" in cells       # baseline still starred
-    assert "0.9=REJECTED" in cells    # rejected point present and labelled
+    assert "0.75*=80%" in cells       # baseline은 여전히 별표 표시됨
+    assert "0.9=REJECTED" in cells    # rejected된 지점이 존재하며 표시됨
     assert "0.6=40%" in cells
 
 

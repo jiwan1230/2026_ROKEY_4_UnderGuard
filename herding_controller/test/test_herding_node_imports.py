@@ -1,12 +1,12 @@
 # herding_controller/test/test_herding_node_imports.py
-"""Import-boundary + adapter-logic tests for herding_node.py.
+"""herding_node.py에 대한 import 경계 + 어댑터 로직 테스트.
 
-The module-level import below is deliberate: pytest fully collects (imports)
-every test module before executing any test bodies, so by the time
-test_herding_core.py's `test_no_module_in_the_core_import_chain_imports_rclpy`
-runs, `herding_controller.herding_node` is already present in sys.modules.
-That is what makes that test's `.herding_node` exemption branch actually get
-exercised instead of being dead code that never triggers.
+아래의 모듈 수준 import는 의도적이다: pytest는 어떤 테스트 본문을 실행하기 전에
+모든 테스트 모듈을 완전히 수집(import)하므로, test_herding_core.py의
+`test_no_module_in_the_core_import_chain_imports_rclpy`가 실행될 시점에는
+`herding_controller.herding_node`가 이미 sys.modules에 존재한다.
+이 덕분에 그 테스트의 `.herding_node` 예외 분기가 결코 실행되지 않는
+죽은 코드가 아니라 실제로 실행되게 된다.
 """
 import dataclasses
 import json
@@ -46,11 +46,11 @@ def test_herding_node_module_has_expected_public_surface():
 
 
 def test_load_config_declares_every_herdingconfig_field_without_crashing():
-    """_load_config(node) must produce a valid HerdingConfig with no missing args.
+    """_load_config(node)는 인자 누락 없이 유효한 HerdingConfig를 생성해야 한다.
 
-    This constructs a real (non-spinning) rclpy Node, so it directly exercises
-    the declare_parameter/get_parameter path a launch file would hit, rather
-    than just eyeballing the dict against the dataclass definition.
+    실제(spin하지 않는) rclpy Node를 생성하므로, dict를 dataclass 정의와
+    눈으로 비교하는 대신 launch 파일이 거치게 될 declare_parameter/get_parameter
+    경로를 직접 실행한다.
     """
     rclpy.init(args=[])
     try:
@@ -65,9 +65,9 @@ def test_load_config_declares_every_herdingconfig_field_without_crashing():
     assert isinstance(config, HerdingConfig)
     field_names = {f.name for f in dataclasses.fields(HerdingConfig)}
     declared_names = set(herding_node._PARAM_DEFAULTS)
-    # Every dataclass field must either be explicitly declared as a ROS
-    # parameter, or have a dataclass default -- otherwise HerdingConfig(**values)
-    # would have already raised TypeError above.
+    # 모든 dataclass 필드는 ROS 파라미터로 명시적으로 선언되거나
+    # dataclass 기본값을 가져야 한다 -- 그렇지 않으면 위에서 이미
+    # HerdingConfig(**values)가 TypeError를 발생시켰을 것이다.
     fields_without_default = {
         f.name for f in dataclasses.fields(HerdingConfig)
         if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING
@@ -76,9 +76,9 @@ def test_load_config_declares_every_herdingconfig_field_without_crashing():
         f"HerdingConfig fields with no default are missing from _PARAM_DEFAULTS: "
         f"{fields_without_default - declared_names}"
     )
-    # grid_origin_x_m/grid_origin_y_m have dataclass defaults but are still
-    # explicitly declared as ROS parameters (see _PARAM_DEFAULTS), so this is
-    # an exact match rather than a subset check.
+    # grid_origin_x_m/grid_origin_y_m은 dataclass 기본값을 갖고 있지만
+    # 여전히 ROS 파라미터로 명시적으로 선언되어 있으므로(_PARAM_DEFAULTS 참조),
+    # 부분집합 검사가 아니라 정확히 일치하는지 검사한다.
     assert field_names == declared_names
 
 
@@ -104,7 +104,7 @@ def _make_output(**overrides):
 
 def test_serialize_state_is_json_safe_with_escape_routes_and_enum():
     payload = herding_node._serialize_state(_make_output())
-    encoded = json.dumps(payload)  # must not raise TypeError
+    encoded = json.dumps(payload)  # TypeError가 발생하면 안 됨
     decoded = json.loads(encoded)
     assert decoded["fsm_state"] == "HERD"
     assert decoded["roles"] == {"driver": 1, "blocker": 2}
@@ -125,12 +125,12 @@ def test_serialize_state_handles_empty_escape_top3():
 def test_serialize_state_handles_every_fsm_state():
     for state in FSMState:
         payload = herding_node._serialize_state(_make_output(fsm_state=state))
-        json.dumps(payload)  # must not raise for any enum member
+        json.dumps(payload)  # 어떤 enum 멤버에 대해서도 예외가 발생하면 안 됨
         assert payload["fsm_state"] == state.name
 
 
 def test_prob_grid_to_flat_int8_range_shape_and_row_major_order():
-    grid = np.array([[0.0, 0.5], [1.0, 2.0]])  # 2.0 exercises the clip-to-1.0 path
+    grid = np.array([[0.0, 0.5], [1.0, 2.0]])  # 2.0은 1.0으로 클리핑되는 경로를 검증함
     flat = herding_node._prob_grid_to_flat_int8(grid)
     assert flat == [0, 50, 100, 100]
     assert all(-1 <= v <= 100 for v in flat)
@@ -138,7 +138,7 @@ def test_prob_grid_to_flat_int8_range_shape_and_row_major_order():
 
 
 def test_prob_grid_to_flat_int8_round_trips_with_on_map_reshape():
-    """The publisher's flatten order must be the inverse of `_on_map`'s reshape."""
+    """publisher의 flatten 순서는 `_on_map`의 reshape과 정확히 역순이어야 한다."""
     height, width = 3, 5
     grid = np.arange(height * width, dtype=float).reshape(height, width)
     grid = grid / grid.max()
@@ -148,7 +148,7 @@ def test_prob_grid_to_flat_int8_round_trips_with_on_map_reshape():
     assert np.array_equal(reshaped, expected.astype(np.int8))
 
 
-# --- Fix 1: ~/escape_probability rasterizes the real escape distribution --- #
+# --- Fix 1: ~/escape_probability는 실제 escape 분포를 래스터화한다 --- #
 
 def _make_grid_map():
     return GridMap(GridConfig(resolution_m=1.0, width_cells=10, height_cells=10))
@@ -156,8 +156,8 @@ def _make_grid_map():
 
 def test_rasterize_escape_probabilities_paints_rays_from_target_cell():
     grid_map = _make_grid_map()
-    # Two directions: due "east" (dx=1, dy=0) at high probability, due "north"
-    # (dx=0, dy=1) at lower probability. Target sits at cell (row=5, col=5).
+    # 두 방향: 정확히 "east"(dx=1, dy=0)는 높은 확률, "north"
+    # (dx=0, dy=1)는 낮은 확률. 타겟은 셀 (row=5, col=5)에 위치.
     directions = np.array([[1.0, 0.0], [0.0, 1.0]])
     probabilities = np.array([0.8, 0.2])
     target_position = np.array(grid_map.cell_to_world(5, 5))
@@ -165,13 +165,13 @@ def test_rasterize_escape_probabilities_paints_rays_from_target_cell():
         target_position, directions, probabilities, grid_map, cells_per_ray=2,
     )
     assert grid.shape == (10, 10)
-    # East ray: col increases, row fixed.
+    # East ray: col은 증가, row는 고정.
     assert grid[5, 6] == 0.8
     assert grid[5, 7] == 0.8
-    # North ray: row increases, col fixed.
+    # North ray: row는 증가, col은 고정.
     assert grid[6, 5] == 0.2
     assert grid[7, 5] == 0.2
-    # A cell nobody painted stays zero.
+    # 아무도 칠하지 않은 셀은 0으로 남는다.
     assert grid[0, 0] == 0.0
 
 
@@ -179,11 +179,11 @@ def test_rasterize_escape_probabilities_stops_at_grid_edge_without_crashing():
     grid_map = _make_grid_map()
     directions = np.array([[1.0, 0.0]])
     probabilities = np.array([0.9])
-    target_position = np.array(grid_map.cell_to_world(0, 9))  # already at the east edge
+    target_position = np.array(grid_map.cell_to_world(0, 9))  # 이미 east 가장자리에 있음
     grid = herding_node._rasterize_escape_probabilities(
         target_position, directions, probabilities, grid_map, cells_per_ray=3,
     )
-    assert grid.shape == (10, 10)  # no IndexError, ray simply truncates
+    assert grid.shape == (10, 10)  # IndexError 없이 ray가 단순히 잘림
 
 
 def test_rasterize_escape_probabilities_off_grid_target_returns_all_zero():
@@ -197,15 +197,15 @@ def test_rasterize_escape_probabilities_off_grid_target_returns_all_zero():
 
 
 def test_to_escape_grid_is_all_zero_when_no_escape_estimate_this_cycle():
-    """SEARCH/TRACK/LOST states carry no escape_directions/probabilities."""
+    """SEARCH/TRACK/LOST 상태는 escape_directions/probabilities를 갖지 않는다."""
     rclpy.init(args=[])
     try:
         node = herding_node.HerdingNode()
         try:
             output = _make_output(escape_directions=None, escape_probabilities=None)
             msg = node._to_escape_grid(output)
-            # msg.data comes back as array.array('b', ...) from the generated
-            # rosidl message class, not a plain list -- compare via list().
+            # msg.data는 생성된 rosidl 메시지 클래스로부터 일반 리스트가 아니라
+            # array.array('b', ...)로 반환된다 -- list()로 변환하여 비교한다.
             assert list(msg.data) == [0] * (node.config.grid_width_cells * node.config.grid_height_cells)
         finally:
             node.destroy_node()
@@ -214,7 +214,7 @@ def test_to_escape_grid_is_all_zero_when_no_escape_estimate_this_cycle():
 
 
 def test_to_escape_grid_reflects_the_current_cycles_distribution_not_stale_state():
-    """Publishing must not silently reuse leftover data from a previous cycle."""
+    """publish는 이전 사이클에 남은 데이터를 조용히 재사용해서는 안 된다."""
     rclpy.init(args=[])
     try:
         node = herding_node.HerdingNode()
@@ -231,14 +231,14 @@ def test_to_escape_grid_reflects_the_current_cycles_distribution_not_stale_state
 
             empty = _make_output(escape_directions=None, escape_probabilities=None)
             msg2 = node._to_escape_grid(empty)
-            assert max(msg2.data) == 0  # must not still show the previous cycle's ray
+            assert max(msg2.data) == 0  # 이전 사이클의 ray가 여전히 보이면 안 됨
         finally:
             node.destroy_node()
     finally:
         rclpy.shutdown()
 
 
-# --- Fix 2: goal publishing withheld until both robot poses are known ------ #
+# --- Fix 2: 두 로봇의 pose가 모두 확인될 때까지 goal publishing을 보류함 ------ #
 
 def test_goal_publish_is_withheld_until_both_robot_poses_received():
     rclpy.init(args=[])
@@ -249,19 +249,19 @@ def test_goal_publish_is_withheld_until_both_robot_poses_received():
             node.robot1_goal_pub.publish = lambda msg: published.append(("r1", msg))
             node.robot2_goal_pub.publish = lambda msg: published.append(("r2", msg))
 
-            node._on_timer()  # neither pose ever received
+            node._on_timer()  # 어느 pose도 아직 수신되지 않음
             assert published == []
 
             r1 = PoseStamped()
             r1.pose.position.x, r1.pose.position.y = 1.0, 1.0
             node._on_robot1_pose(r1)
-            node._on_timer()  # only robot1 known
+            node._on_timer()  # robot1만 알려짐
             assert published == []
 
             r2 = PoseStamped()
             r2.pose.position.x, r2.pose.position.y = 9.0, 1.0
             node._on_robot2_pose(r2)
-            node._on_timer()  # both known now
+            node._on_timer()  # 이제 둘 다 알려짐
             assert {name for name, _ in published} == {"r1", "r2"}
         finally:
             node.destroy_node()
@@ -270,7 +270,7 @@ def test_goal_publish_is_withheld_until_both_robot_poses_received():
 
 
 def test_other_topics_still_publish_while_goals_are_withheld():
-    """Only the goal topics are gated -- state/escape/capture must still flow."""
+    """goal 토픽만 게이팅된다 -- state/escape/capture는 계속 흘러야 한다."""
     rclpy.init(args=[])
     try:
         node = herding_node.HerdingNode()
@@ -285,7 +285,7 @@ def test_other_topics_still_publish_while_goals_are_withheld():
         rclpy.shutdown()
 
 
-# --- Fix 3: robot heading is extracted from the pose's orientation --------- #
+# --- Fix 3: robot heading은 pose의 orientation으로부터 추출된다 --------- #
 
 def test_quaternion_to_heading_identity_points_along_positive_x():
     heading = herding_node._quaternion_to_heading(0.0, 0.0, 0.0, 1.0)
@@ -293,7 +293,7 @@ def test_quaternion_to_heading_identity_points_along_positive_x():
 
 
 def test_quaternion_to_heading_ninety_degree_yaw_points_along_positive_y():
-    # Rotation of +90 deg about Z: qz = sin(45 deg), qw = cos(45 deg).
+    # Z축 기준 +90도 회전: qz = sin(45도), qw = cos(45도).
     heading = herding_node._quaternion_to_heading(0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
     assert np.allclose(heading, [0.0, 1.0], atol=1e-9)
 
@@ -303,17 +303,17 @@ def test_on_robot_pose_updates_heading_from_orientation_not_hardcoded():
     try:
         node = herding_node.HerdingNode()
         try:
-            assert np.allclose(node._robot1_heading, [1.0, 0.0])  # default before any pose
+            assert np.allclose(node._robot1_heading, [1.0, 0.0])  # 어떤 pose도 오기 전의 기본값
             msg = PoseStamped()
             msg.pose.orientation.z = math.sin(math.pi / 4)
             msg.pose.orientation.w = math.cos(math.pi / 4)
             node._on_robot1_pose(msg)
             assert np.allclose(node._robot1_heading, [0.0, 1.0], atol=1e-9)
 
-            # robot2 gets a different orientation than robot1: role_cost_turn_weight
-            # can only ever differentiate the two robots if their headings can differ.
+            # robot2는 robot1과 다른 orientation을 받는다: role_cost_turn_weight는
+            # 두 로봇의 heading이 서로 달라야만 둘을 구분할 수 있다.
             msg2 = PoseStamped()
-            msg2.pose.orientation.w = 1.0  # identity: facing +X
+            msg2.pose.orientation.w = 1.0  # identity: +X를 향함
             node._on_robot2_pose(msg2)
             assert not np.allclose(node._robot1_heading, node._robot2_heading)
         finally:
@@ -322,7 +322,7 @@ def test_on_robot_pose_updates_heading_from_orientation_not_hardcoded():
         rclpy.shutdown()
 
 
-# --- Final review C2: node defaults must equal the shipping yaml exactly ---- #
+# --- 최종 검토 C2: 노드 기본값은 배포용 yaml과 정확히 일치해야 함 ---- #
 
 def _load_shipping_yaml_params() -> dict:
     path = pathlib.Path(__file__).resolve().parent.parent / "config" / "herding_params.yaml"
@@ -331,13 +331,14 @@ def _load_shipping_yaml_params() -> dict:
 
 
 def test_param_defaults_match_shipping_yaml_values():
-    """Running with no launch file (no yaml) must behave exactly like running with it.
+    """launch 파일(yaml) 없이 실행해도 있을 때와 정확히 동일하게 동작해야 한다.
 
-    The pre-existing test above only checks that the *names* line up. Before this
-    check existed the node's built-in defaults still held the pre-Task-15 tuning
-    (drive_distance_m=0.8, ease=1.3, block_lookahead_m=1.2), which violates the
-    drive/flee constraint documented in the yaml -- so `ros2 run herding_controller
-    herding_node` silently ran a configuration measured at ~2.5% success.
+    위쪽의 기존 테스트는 *이름*이 일치하는지만 확인한다. 이 검사가 존재하기
+    전에는 노드의 내장 기본값이 여전히 Task-15 이전 튜닝값
+    (drive_distance_m=0.8, ease=1.3, block_lookahead_m=1.2)을 갖고 있었는데,
+    이는 yaml에 문서화된 drive/flee 제약을 위반한다 -- 즉 `ros2 run
+    herding_controller herding_node`가 약 2.5% 성공률로 측정된 구성을
+    조용히 실행하고 있었다.
     """
     params = _load_shipping_yaml_params()
     assert set(params) == set(herding_node._PARAM_DEFAULTS), (
@@ -354,7 +355,7 @@ def test_param_defaults_match_shipping_yaml_values():
 
 
 def test_node_builtin_defaults_build_a_valid_herding_config():
-    """The defaults alone must satisfy HerdingConfig's invariants (no yaml, no launch file)."""
+    """기본값만으로도 HerdingConfig의 불변식을 만족해야 한다(yaml도, launch 파일도 없이)."""
     config = HerdingConfig(**herding_node._PARAM_DEFAULTS)  # raises if the invariant is violated
     assert config.drive_distance_m * config.drive_distance_ease_factor < config.flee_reaction_distance_m
 
@@ -376,10 +377,10 @@ def test_load_config_rejects_zero_control_rate_with_a_clear_error():
         rclpy.shutdown()
 
 
-# --- Final review C1/I3: freshness gating + real-clock dt ------------------- #
+# --- 최종 검토 C1/I3: freshness gating + 실시간 클록 dt ------------------- #
 
 class _FakeClock:
-    """Controllable stand-in for HerdingNode._now_sec()."""
+    """HerdingNode._now_sec()를 대체할 수 있는 제어 가능한 스텁."""
 
     def __init__(self, start: float = 1000.0) -> None:
         self.t = start
@@ -398,7 +399,7 @@ def _target_pose(x: float, y: float) -> PoseStamped:
 
 
 class _RecordingLogger:
-    """Captures rclpy logger calls so tests can assert on operator-visible output."""
+    """rclpy logger 호출을 캡처하여 테스트가 운영자에게 보이는 출력을 검증할 수 있게 한다."""
 
     def __init__(self) -> None:
         self.warnings = []
@@ -421,7 +422,7 @@ class _RecordingLogger:
 
 
 def _make_node_with_fake_clock():
-    """A HerdingNode whose time source is a controllable counter, with both robot poses known."""
+    """시간 소스가 제어 가능한 카운터이며, 두 로봇의 pose가 모두 알려진 HerdingNode."""
     node = herding_node.HerdingNode()
     clock = _FakeClock()
     node._now_sec = clock
@@ -437,7 +438,7 @@ def _make_node_with_fake_clock():
 
 
 def test_timer_reports_no_observation_when_no_new_target_pose_arrived():
-    """A cycle with no new ~/target_pose must hand HerdingCore None, not the stale position."""
+    """새로운 ~/target_pose가 없는 사이클은 오래된 위치가 아니라 None을 HerdingCore에 전달해야 한다."""
     rclpy.init(args=[])
     try:
         node, clock = _make_node_with_fake_clock()
@@ -451,12 +452,12 @@ def test_timer_reports_no_observation_when_no_new_target_pose_arrived():
             node._on_timer()
             assert seen[-1].target_measurement is not None
 
-            # No new pose published between these two cycles.
+            # 이 두 사이클 사이에는 새 pose가 publish되지 않았다.
             clock.advance(0.2)
             node._on_timer()
             assert seen[-1].target_measurement is None
 
-            # A new pose arriving makes the next cycle an observation again.
+            # 새 pose가 도착하면 다음 사이클은 다시 관측이 된다.
             node._on_target_pose(_target_pose(2.1, 2.0))
             clock.advance(0.2)
             node._on_timer()
@@ -468,25 +469,26 @@ def test_timer_reports_no_observation_when_no_new_target_pose_arrived():
 
 
 def test_fsm_enters_lost_after_occlusion_timeout_of_silent_target_topic():
-    """The whole LOST/occlusion-recovery subsystem must be reachable from the node.
+    """LOST/occlusion-recovery 서브시스템 전체가 노드에서 도달 가능해야 한다.
 
-    Before the freshness gate, `_on_timer` re-fed the last received position every
-    cycle forever, `TargetEstimator.update()` zeroed `_time_since_obs` each time,
-    and `is_lost` could never become True in a real deployment.
+    freshness gate가 도입되기 전에는 `_on_timer`가 마지막으로 받은 위치를
+    매 사이클마다 영원히 다시 공급했고, `TargetEstimator.update()`는 매번
+    `_time_since_obs`를 0으로 만들었으며, 실제 배포 환경에서 `is_lost`가
+    결코 True가 될 수 없었다.
     """
     rclpy.init(args=[])
     try:
         node, clock = _make_node_with_fake_clock()
         try:
             dt = 0.2
-            for _ in range(6):  # observed every cycle: reach a tracking state
+            for _ in range(6):  # 매 사이클마다 관측됨: tracking 상태에 도달
                 node._on_target_pose(_target_pose(2.0, 2.0))
                 clock.advance(dt)
                 node._on_timer()
             assert node.core.fsm.state in (FSMState.TRACK, FSMState.HERD, FSMState.CORNER)
             assert node.core.estimator.get_state().is_lost is False
 
-            # Perception goes silent: nothing publishes ~/target_pose any more.
+            # 인식이 멈춤: 더 이상 아무도 ~/target_pose를 publish하지 않는다.
             silent_cycles = int(node.config.occlusion_timeout_sec / dt) + 2
             for _ in range(silent_cycles):
                 clock.advance(dt)
@@ -503,7 +505,7 @@ def test_fsm_enters_lost_after_occlusion_timeout_of_silent_target_topic():
 
 
 def test_fsm_stays_out_of_lost_while_target_poses_keep_arriving():
-    """The freshness gate must not manufacture false LOST episodes on a healthy topic."""
+    """freshness gate는 정상적인 토픽에서 가짜 LOST 에피소드를 만들어내서는 안 된다."""
     rclpy.init(args=[])
     try:
         node, clock = _make_node_with_fake_clock()
@@ -521,7 +523,7 @@ def test_fsm_stays_out_of_lost_while_target_poses_keep_arriving():
 
 
 def test_observation_dt_and_sim_time_track_the_real_clock_not_the_nominal_period():
-    """capture_hold/role_swap_cooldown/occlusion timeouts must run on wall-clock time."""
+    """capture_hold/role_swap_cooldown/occlusion 타임아웃은 실제 벽시계 시간으로 동작해야 한다."""
     rclpy.init(args=[])
     try:
         node, clock = _make_node_with_fake_clock()
@@ -531,15 +533,15 @@ def test_observation_dt_and_sim_time_track_the_real_clock_not_the_nominal_period
             node.core.step = lambda obs: (seen.append(obs), real_step(obs))[1]
 
             nominal = 1.0 / node.config.control_rate_hz
-            node._on_timer()  # first cycle has no previous timestamp: nominal dt
+            node._on_timer()  # 첫 사이클은 이전 타임스탬프가 없음: 명목 dt 사용
             assert seen[-1].dt == nominal
 
-            clock.advance(0.9)  # a badly jittered / delayed cycle
+            clock.advance(0.9)  # 지터가 심하거나 지연된 사이클
             node._on_timer()
             assert seen[-1].dt == pytest.approx(0.9)
             assert seen[-1].sim_time_sec == pytest.approx(nominal + 0.9)
 
-            clock.advance(0.05)  # an early cycle
+            clock.advance(0.05)  # 이른 사이클
             node._on_timer()
             assert seen[-1].dt == pytest.approx(0.05)
             assert seen[-1].sim_time_sec == pytest.approx(nominal + 0.95)
@@ -550,7 +552,7 @@ def test_observation_dt_and_sim_time_track_the_real_clock_not_the_nominal_period
 
 
 def test_non_positive_elapsed_time_falls_back_to_the_nominal_period():
-    """A stalled or backwards clock must not stall the KF / timeouts with dt <= 0."""
+    """정지되거나 거꾸로 흐르는 클록이 dt <= 0으로 인해 KF/타임아웃을 멈추게 해서는 안 된다."""
     rclpy.init(args=[])
     try:
         node, clock = _make_node_with_fake_clock()
@@ -560,7 +562,7 @@ def test_non_positive_elapsed_time_falls_back_to_the_nominal_period():
             node.core.step = lambda obs: (seen.append(obs), real_step(obs))[1]
 
             node._on_timer()
-            node._on_timer()  # clock did not advance at all
+            node._on_timer()  # 클록이 전혀 진행되지 않음
             assert seen[-1].dt == 1.0 / node.config.control_rate_hz
         finally:
             node.destroy_node()
@@ -568,7 +570,7 @@ def test_non_positive_elapsed_time_falls_back_to_the_nominal_period():
         rclpy.shutdown()
 
 
-# --- Final review I4: a failing cycle must not tear down the node ----------- #
+# --- 최종 검토 I4: 실패한 사이클이 노드를 무너뜨려서는 안 됨 ----------- #
 
 def test_timer_survives_an_exception_from_core_step_and_logs_it():
     rclpy.init(args=[])
@@ -587,13 +589,13 @@ def test_timer_survives_an_exception_from_core_step_and_logs_it():
 
             node.core.step = boom
             clock.advance(0.2)
-            node._on_timer()  # must not propagate
+            node._on_timer()  # 예외가 전파되면 안 됨
 
-            assert published == []  # no goals published for the failed cycle
+            assert published == []  # 실패한 사이클에서는 goal이 publish되지 않음
             assert len(logger.errors) == 1
             assert "synthetic core failure" in logger.errors[0]
 
-            # The node keeps running: a healthy next cycle publishes again.
+            # 노드는 계속 실행된다: 다음 정상 사이클에서는 다시 publish된다.
             node.core.step = herding_node.HerdingCore(node.config).step
             clock.advance(0.2)
             node._on_timer()
@@ -617,7 +619,7 @@ def test_timer_survives_an_exception_raised_while_publishing():
 
             node.state_pub.publish = boom
             clock.advance(0.2)
-            node._on_timer()  # must not propagate
+            node._on_timer()  # 예외가 전파되면 안 됨
             assert len(logger.errors) == 1
             assert "synthetic publish failure" in logger.errors[0]
         finally:
@@ -626,7 +628,7 @@ def test_timer_survives_an_exception_raised_while_publishing():
         rclpy.shutdown()
 
 
-# --- Final review I2: map mismatches are warned about through the ROS logger - #
+# --- 최종 검토 I2: map 불일치는 ROS logger를 통해 경고됨 - #
 
 def _make_map_msg(node, height=None, width=None, resolution=None, origin_x=0.0, origin_y=0.0):
     msg = OccupancyGrid()
@@ -642,7 +644,7 @@ def _make_map_msg(node, height=None, width=None, resolution=None, origin_x=0.0, 
 
 
 def test_on_map_warns_through_the_ros_logger_on_shape_mismatch():
-    """HerdingCore's stdlib-logging warning never reaches /rosout; the node's must."""
+    """HerdingCore의 stdlib-logging 경고는 /rosout에 도달하지 않는다; 노드의 경고는 도달해야 한다."""
     rclpy.init(args=[])
     try:
         node, _ = _make_node_with_fake_clock()

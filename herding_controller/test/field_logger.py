@@ -1,4 +1,4 @@
-"""Blinded capture-zone selection and per-trial CSV logging for the minicar field protocol."""
+"""미니카 현장 프로토콜을 위한 블라인드 포획 구역 선택 및 시행별 CSV 로깅."""
 import csv
 import os
 
@@ -15,13 +15,13 @@ _FIELDNAMES = [
 
 
 def select_capture_zone(rng: np.random.Generator) -> tuple[float, float]:
-    """Pick one of the 4 fixed capture-zone candidates. Caller must not print this (operator blinding)."""
+    """4개의 고정 포획 구역 후보 중 하나를 선택한다. 호출자는 이 값을 출력해서는 안 된다(조작자 블라인딩)."""
     index = int(rng.integers(0, len(CAPTURE_ZONE_CANDIDATES)))
     return CAPTURE_ZONE_CANDIDATES[index]
 
 
 class FieldLogger:
-    """Appends one CSV row per field trial. Never writes the capture zone to the console."""
+    """현장 시행마다 CSV 행을 하나씩 추가한다. 포획 구역 값을 콘솔에 절대 출력하지 않는다."""
 
     def __init__(self, csv_path: str) -> None:
         self.csv_path = csv_path
@@ -36,7 +36,7 @@ class FieldLogger:
         self, trial_id: int, condition: str, capture_zone_id: int, start_time: float, end_time: float,
         success: bool, min_robot_target_dist: float, rule_violation_count: int, note: str = "",
     ) -> None:
-        """Append one trial's outcome. capture_zone_id is written only to this file, never printed."""
+        """한 시행의 결과를 추가한다. capture_zone_id는 이 파일에만 기록되고 절대 출력되지 않는다."""
         with open(self.csv_path, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=_FIELDNAMES)
             writer.writerow({
@@ -51,12 +51,12 @@ def detect_rule_violations(
     robot_positions: list, target_positions: list, target_velocities: list,
     reaction_distance_m: float, dt: float,
 ) -> int:
-    """Count cycles where a robot is within reaction_distance_m but the target moves toward it (rule 2).
+    """로봇이 reaction_distance_m 이내에 있는데도 타겟이 그쪽으로 이동하는 주기를 센다 (규칙 2).
 
-    `reaction_distance_m` is the operator protocol's rule-2 radius -- i.e. the config's
-    `flee_reaction_distance_m` (1.0 m, "로봇이 약 1m 안으로 들어오면 도망친다"), NOT
-    `panic_distance_m` (0.35 m, the planner's own retreat threshold). Passing the latter
-    would under-count violations and corrupt the 20%-violation trial-exclusion analysis.
+    `reaction_distance_m`은 조작자 프로토콜의 규칙 2 반경, 즉 설정값의
+    `flee_reaction_distance_m`(1.0 m, "로봇이 약 1m 안으로 들어오면 도망친다")을 의미하며,
+    `panic_distance_m`(0.35 m, 플래너 자체의 후퇴 임계값)이 아니다. 후자를 넘기면
+    위반을 과소 집계하여 20% 위반 시행 제외 분석을 왜곡하게 된다.
     """
     if not (len(robot_positions) == len(target_positions) == len(target_velocities)):
         raise ValueError(

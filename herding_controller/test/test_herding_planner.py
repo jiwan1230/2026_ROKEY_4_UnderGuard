@@ -18,7 +18,7 @@ def test_driving_point_is_opposite_the_goal():
     target_pos = np.array([2.0, 2.0])
     goal_pos = np.array([5.0, 2.0])
     result = compute_driving_point(target_pos, np.zeros(2), goal_pos, np.array([1.0, 2.0]), config)
-    # goal is to the +x side of target, so the driving point must be on the -x side
+    # goal이 target의 +x 쪽에 있으므로, driving point는 -x 쪽에 있어야 한다
     assert result.point[0] < target_pos[0]
     assert result.is_panic is False
 
@@ -26,10 +26,10 @@ def test_driving_point_is_opposite_the_goal():
 def test_panic_distance_triggers_retreat():
     config = make_config()
     target_pos = np.array([2.0, 2.0])
-    robot_pos = np.array([2.1, 2.0])  # 0.1m away, inside panic_distance_m
+    robot_pos = np.array([2.1, 2.0])  # 0.1m 거리, panic_distance_m 이내
     result = compute_driving_point(target_pos, np.zeros(2), np.array([5.0, 2.0]), robot_pos, config)
     assert result.is_panic is True
-    # retreat point must be farther from the target than the robot currently is
+    # 후퇴 지점은 로봇의 현재 위치보다 타겟으로부터 더 멀어야 한다
     assert np.linalg.norm(result.point - target_pos) > np.linalg.norm(robot_pos - target_pos)
 
 
@@ -37,24 +37,24 @@ def test_blocking_point_excludes_goal_hemisphere():
     config = make_config()
     grid = GridMap(GridConfig(resolution_m=0.25, width_cells=40, height_cells=40))
     target_pos = np.array([5.0, 5.0])
-    goal_pos = np.array([8.0, 5.0])  # goal is due "E" of target
+    goal_pos = np.array([8.0, 5.0])  # goal은 target의 정확히 "E" 방향에 있음
     directions = np.array(
         [[0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1]], dtype=float
     )
     directions /= np.linalg.norm(directions, axis=1, keepdims=True)
     probabilities = np.zeros(8)
-    probabilities[2] = 1.0  # "E" (toward goal) has max probability but must be excluded
-    probabilities[6] = 0.5  # "W" (away from goal) is the best allowed candidate
+    probabilities[2] = 1.0  # "E"(goal 쪽)는 확률이 최대지만 제외되어야 함
+    probabilities[6] = 0.5  # "W"(goal 반대쪽)가 허용되는 후보 중 최선
     estimate = EscapeEstimate(directions=directions, probabilities=probabilities, top_k_routes=[])
     point = compute_blocking_point(target_pos, goal_pos, estimate, grid, config)
-    assert point[0] < target_pos[0]  # chosen route points away from the goal (west)
+    assert point[0] < target_pos[0]  # 선택된 경로가 goal 반대 방향(서쪽)을 향함
 
 
 def test_blocking_point_falls_back_when_all_non_hemisphere_routes_blocked():
     config = make_config()
     grid = GridMap(GridConfig(resolution_m=0.25, width_cells=40, height_cells=40))
     target_pos = np.array([5.0, 5.0])
-    goal_pos = np.array([8.0, 5.0])  # goal is due "E" of target
+    goal_pos = np.array([8.0, 5.0])  # goal은 target의 정확히 "E" 방향에 있음
     directions = np.array(
         [[0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1]], dtype=float
     )
@@ -62,20 +62,20 @@ def test_blocking_point_falls_back_when_all_non_hemisphere_routes_blocked():
     to_goal = goal_pos - target_pos
     to_goal = to_goal / np.linalg.norm(to_goal)
     dots = directions @ to_goal
-    # Block every non-hemisphere direction (dots <= 0) with an obstacle so the main
-    # loop's hemisphere-restricted search cannot find any valid route at all.
+    # hemisphere가 아닌 모든 방향(dots <= 0)을 장애물로 막아서, 메인 루프의
+    # hemisphere 제한 탐색이 유효한 경로를 전혀 찾을 수 없도록 한다.
     for index, dot in enumerate(dots):
         if dot <= 0:
             point = target_pos + directions[index] * config.block_lookahead_m
             row, col = grid.world_to_cell(*point)
             grid.obstacle_mask[row, col] = True
-    # "W" (index 6, blocked) ranks highest by probability; the two hemisphere
-    # directions ("NE", "E") are left unblocked and must be considered by the fallback.
+    # "W"(인덱스 6, 막힘)가 확률 순위가 가장 높다; hemisphere에 속한 두 방향
+    # ("NE", "E")은 막혀 있지 않으므로 fallback에서 고려되어야 한다.
     probabilities = np.array([0.1, 0.1, 0.5, 0.1, 0.05, 0.05, 0.15, 0.05])
     estimate = EscapeEstimate(directions=directions, probabilities=probabilities, top_k_routes=[])
     point = compute_blocking_point(target_pos, goal_pos, estimate, grid, config)
-    # The fallback must relax the goal-hemisphere restriction rather than return a
-    # point already known (from the main loop) to be inside an obstacle cell.
+    # fallback은 (메인 루프에서 이미 장애물 셀 안에 있다고 알려진) 지점을 반환하는 대신
+    # goal-hemisphere 제한을 완화해야 한다.
     row, col = grid.world_to_cell(*point)
     assert not grid.is_obstacle(row, col)
 
@@ -89,7 +89,7 @@ def test_blocking_point_stays_put_when_fully_boxed_in():
         [[0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1]], dtype=float
     )
     directions /= np.linalg.norm(directions, axis=1, keepdims=True)
-    # Block every one of the 8 directions: the target has no valid escape route at all.
+    # 8방향 전부를 막는다: 타겟에게 유효한 escape 경로가 전혀 없는 상황.
     for direction in directions:
         point = target_pos + direction * config.block_lookahead_m
         row, col = grid.world_to_cell(*point)
@@ -97,5 +97,5 @@ def test_blocking_point_stays_put_when_fully_boxed_in():
     probabilities = np.full(8, 1.0 / 8.0)
     estimate = EscapeEstimate(directions=directions, probabilities=probabilities, top_k_routes=[])
     point = compute_blocking_point(target_pos, goal_pos, estimate, grid, config)
-    # No direction is valid: stay in place rather than send the Blocker into a wall.
+    # 유효한 방향이 없음: Blocker를 벽으로 보내는 대신 제자리에 머무른다.
     np.testing.assert_array_equal(point, target_pos)

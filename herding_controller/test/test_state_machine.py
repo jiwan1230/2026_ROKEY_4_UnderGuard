@@ -20,7 +20,7 @@ def test_full_forward_path_idle_to_captured():
     assert fsm.step(base_inputs(
         target_observed=True, kf_converged=True, distance_to_goal_m=0.3, escape_prob_concentrated=True
     )) == FSMState.CORNER
-    # hold inside capture radius for capture_hold_required_sec (dt=0.2, need >=15 steps for 3.0s)
+    # capture_hold_required_sec 동안 capture 반경 안에서 유지 (dt=0.2, 3.0초를 위해 >=15 스텝 필요)
     state = FSMState.CORNER
     for _ in range(16):
         state = fsm.step(base_inputs(
@@ -33,7 +33,7 @@ def test_occlusion_timeout_from_herd_transitions_to_lost_then_back_to_track():
     fsm = HerdingStateMachine()
     fsm.step(base_inputs())
     fsm.step(base_inputs(target_observed=True))
-    fsm.step(base_inputs(target_observed=True, kf_converged=True))  # now in HERD
+    fsm.step(base_inputs(target_observed=True, kf_converged=True))  # 이제 HERD 상태
     lost_state = fsm.step(base_inputs(
         target_observed=False, kf_converged=True, occlusion_elapsed_sec=3.5
     ))
@@ -43,11 +43,11 @@ def test_occlusion_timeout_from_herd_transitions_to_lost_then_back_to_track():
 
 
 def test_corner_falls_back_to_herd_when_entry_invariant_breaks():
-    # Regression test: CORNER requires (in capture zone AND escape_prob_concentrated) to
-    # enter. If that invariant later breaks (e.g. the target flees the capture zone), the
-    # FSM must fall back to HERD rather than staying latched in CORNER forever -- otherwise
-    # downstream control code keyed on `.state` would keep running cornering maneuvers on a
-    # target that is no longer near the goal.
+    # 회귀 테스트: CORNER에 진입하려면 (capture zone 안에 있음 AND escape_prob_concentrated)
+    # 조건이 필요하다. 이 불변식이 나중에 깨지면(예: 타겟이 capture zone을 벗어남),
+    # FSM은 CORNER에 영원히 고착되어 있지 않고 HERD로 되돌아가야 한다 -- 그렇지 않으면
+    # `.state`를 기준으로 동작하는 하위 제어 코드가 더 이상 goal 근처에 있지 않은
+    # 타겟에 대해 계속 코너링 기동을 실행하게 된다.
     fsm = HerdingStateMachine()
     fsm.step(base_inputs())
     fsm.step(base_inputs(target_observed=True))
@@ -57,19 +57,19 @@ def test_corner_falls_back_to_herd_when_entry_invariant_breaks():
     ))
     assert entered == FSMState.CORNER
 
-    # Target flees the capture zone and escape probability disperses.
+    # 타겟이 capture zone을 벗어나고 escape 확률이 흩어진다.
     fell_back = fsm.step(base_inputs(
         target_observed=True, kf_converged=True, distance_to_goal_m=10.0, escape_prob_concentrated=False
     ))
     assert fell_back == FSMState.HERD
 
-    # It stays HERD on subsequent steps too (doesn't oscillate/re-enter without cause).
+    # 이후 스텝에서도 계속 HERD를 유지한다(원인 없이 진동하거나 재진입하지 않음).
     still_herd = fsm.step(base_inputs(
         target_observed=True, kf_converged=True, distance_to_goal_m=10.0, escape_prob_concentrated=False
     ))
     assert still_herd == FSMState.HERD
 
-    # And can re-enter CORNER again once the invariant is re-established.
+    # 그리고 불변식이 다시 성립되면 CORNER에 재진입할 수 있다.
     re_entered = fsm.step(base_inputs(
         target_observed=True, kf_converged=True, distance_to_goal_m=0.3, escape_prob_concentrated=True
     ))

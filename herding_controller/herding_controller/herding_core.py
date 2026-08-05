@@ -1,8 +1,8 @@
 # herding_controller/herding_controller/herding_core.py
-"""Pure-Python facade combining all herding sub-modules.
+"""모든 herding 하위 모듈을 결합하는 순수 Python 퍼사드(facade).
 
-Hard constraint: this module, and every module it imports, must stay free of any ROS2
-dependency so the whole algorithm can be exercised offline without a ROS installation.
+강한 제약: 이 모듈과 이 모듈이 가져오는 모든 모듈은, ROS 설치 없이도 전체
+알고리즘을 오프라인에서 구동할 수 있도록 어떠한 ROS2 의존성도 가져서는 안 된다.
 """
 import logging
 import time
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class HerdingConfig:
-    """Flat mirror of config/herding_params.yaml's ros__parameters block."""
+    """config/herding_params.yaml의 ros__parameters 블록을 평평하게 옮긴 것."""
     frame_id: str
     control_rate_hz: float
     capture_zone_x_m: float
@@ -64,17 +64,17 @@ class HerdingConfig:
     grid_origin_y_m: float = 0.0
 
     def __post_init__(self) -> None:
-        """Reject parameter combinations that are known to deadlock the herd.
+        """herd를 교착 상태에 빠뜨리는 것으로 알려진 파라미터 조합을 거부한다.
 
-        The Driver converges onto its driving point and stops there. When the
-        target is aligned with the goal the planner eases that point outward by
-        drive_distance_ease_factor, so the Driver's closest approach is
-        drive_distance_m * drive_distance_ease_factor. If that exceeds the
-        target's reaction radius (flee_reaction_distance_m) the target never
-        flees and the whole system makes zero progress -- measured success
-        collapses from ~83% to 2.5% (see config/herding_params.yaml). This is a
-        load-bearing invariant, so it fails loudly here at config-construction
-        time rather than degrading silently at runtime.
+        Driver는 자신의 driving point로 수렴하여 그곳에 멈춘다. 타겟이 목표
+        지점과 정렬되어 있으면 planner는 drive_distance_ease_factor만큼 그
+        지점을 바깥쪽으로 완화하므로, Driver의 최근접 거리는
+        drive_distance_m * drive_distance_ease_factor가 된다. 이 값이 타겟의
+        반응 반경(flee_reaction_distance_m)을 초과하면 타겟은 결코 도주하지
+        않고 전체 시스템은 전혀 진행되지 않는다 -- 측정된 성공률이 약 83%에서
+        2.5%로 붕괴한다 (config/herding_params.yaml 참고). 이는 시스템을
+        떠받치는 불변 조건이므로, 실행 중에 조용히 성능이 저하되는 대신
+        설정 생성 시점에 여기서 즉시 크게 실패하도록 한다.
         """
         eased = self.drive_distance_m * self.drive_distance_ease_factor
         if eased >= self.flee_reaction_distance_m:
@@ -90,7 +90,7 @@ class HerdingConfig:
 
 @dataclass
 class Observation:
-    """One control cycle's worth of sensor input, in plain Python/numpy types."""
+    """한 제어 주기 분량의 센서 입력을, 순수 Python/numpy 타입으로 표현한 것."""
     target_measurement: np.ndarray | None
     robot1_pos: np.ndarray
     robot2_pos: np.ndarray
@@ -103,7 +103,7 @@ class Observation:
 
 @dataclass
 class HerdingOutput:
-    """Everything herding_node.py needs to publish for one control cycle."""
+    """herding_node.py가 한 제어 주기 동안 발행하는 데 필요한 모든 것."""
     robot1_goal: np.ndarray
     robot2_goal: np.ndarray
     fsm_state: FSMState
@@ -120,7 +120,7 @@ class HerdingOutput:
 
 
 class HerdingCore:
-    """Wires grid, estimator, escape model, planner, role assigner, FSM, and occlusion grid together."""
+    """grid, estimator, escape model, planner, role assigner, FSM, occlusion grid를 서로 연결한다."""
 
     def __init__(self, config: HerdingConfig) -> None:
         self.config = config
@@ -165,18 +165,18 @@ class HerdingCore:
         self._roles_ever_assigned = False
 
     # ------------------------------------------------------------------ #
-    # Grid helpers                                                        #
+    # 그리드 헬퍼                                                          #
     # ------------------------------------------------------------------ #
 
     def _cell_or_none(self, position: np.ndarray) -> tuple[int, int] | None:
-        """Cell index for a world point, or None if it is off-grid / non-finite."""
+        """월드 좌표에 대응하는 셀 인덱스, 그리드 밖이거나 유한하지 않으면 None."""
         try:
             return self.grid_map.world_to_cell(float(position[0]), float(position[1]))
         except (ValueError, TypeError):
             return None
 
     def _clamped_cell_or_none(self, position: np.ndarray) -> tuple[int, int] | None:
-        """Cell index for a world point, clamped into the grid; None if non-finite."""
+        """월드 좌표에 대응하는 셀 인덱스를 그리드 안으로 클램프한 값; 유한하지 않으면 None."""
         grid = self.grid_map.config
         point = np.asarray(position, dtype=float)
         if point.shape != (2,) or not np.all(np.isfinite(point)):
@@ -191,18 +191,19 @@ class HerdingCore:
         return self._cell_or_none(np.array([x, y]))
 
     def _current_roles(self) -> tuple[int, int]:
-        """The role assignment currently latched in the RoleAssigner."""
+        """RoleAssigner에 현재 고정(latch)되어 있는 역할 배정."""
         driver_id = self.role_assigner._driver_id
         return driver_id, (2 if driver_id == 1 else 1)
 
     def _nominal_driving_point(self, target_pos: np.ndarray, target_vel: np.ndarray) -> np.ndarray:
-        """The driving point ignoring panic-retreat, used as a robot-neutral role-assignment candidate.
+        """panic-retreat를 무시한 driving point로, 로봇에 무관한 역할 배정 후보로 사용된다.
 
-        compute_driving_point() returns a *retreat* point hugging robot_pos when that robot is
-        inside panic_distance_m. Feeding the role assigner a candidate computed from one specific
-        robot would therefore bias the assignment toward whichever robot happened to be close.
-        Evaluating from a reference position guaranteed to be outside panic distance yields the
-        geometric driving point, which is identical for both robots.
+        compute_driving_point()는 해당 로봇이 panic_distance_m 이내에 있을 때
+        robot_pos에 밀착하는 *retreat* 지점을 반환한다. 따라서 특정 로봇을
+        기준으로 계산한 후보를 role assigner에 넘기면, 우연히 가까이 있던
+        로봇 쪽으로 배정이 편향될 것이다. panic distance 밖에 있음이 보장된
+        기준 위치에서 평가하면 두 로봇 모두에게 동일한 기하학적 driving
+        point를 얻을 수 있다.
         """
         away = target_pos - self.goal_pos
         norm = float(np.linalg.norm(away))
@@ -213,29 +214,29 @@ class HerdingCore:
         ).point
 
     def _reset_occlusion_memory(self) -> None:
-        """Forget the LOST-episode seed so the next episode seeds fresh."""
+        """LOST 에피소드의 시드를 초기화하여 다음 에피소드가 새로 시드되도록 한다."""
         self._last_known_cell = None
         self._last_known_point = None
         self._occlusion_seeded = False
 
     def _search_point(self, fallback: np.ndarray) -> np.ndarray:
-        """Best-guess re-search point from the occlusion belief grid."""
+        """occlusion belief grid로부터 얻은 최선 추정 재탐색 지점."""
         if float(self.occlusion_grid.belief.max()) > 0.0:
             row, col = self.occlusion_grid.best_guess_cell()
             return np.array(self.grid_map.cell_to_world(row, col), dtype=float)
-        # Belief mass decayed to zero (or the seed cell was an obstacle): argmax
-        # would return cell (0, 0), an arbitrary grid corner. Search the last
-        # known target location instead.
+        # belief 질량이 0으로 감쇠했거나(또는 시드 셀이 장애물이었던 경우):
+        # argmax는 임의의 그리드 모서리인 셀 (0, 0)을 반환하게 된다. 그 대신
+        # 마지막으로 알려진 타겟 위치를 탐색한다.
         if self._last_known_point is not None:
             return self._last_known_point.copy()
         return np.asarray(fallback, dtype=float).copy()
 
     # ------------------------------------------------------------------ #
-    # Main cycle                                                          #
+    # 메인 사이클                                                          #
     # ------------------------------------------------------------------ #
 
     def step(self, observation: Observation) -> HerdingOutput:
-        """Run one full control cycle and return goals + telemetry."""
+        """제어 주기 전체를 한 번 실행하고 목표점과 텔레메트리를 반환한다."""
         start = time.perf_counter()
 
         if observation.occupancy is not None:
@@ -259,9 +260,9 @@ class HerdingCore:
         target_state = self.estimator.get_state()
         kf_converged = self._first_observation_seen and not target_state.is_lost
 
-        # The escape model indexes the grid at the target's cell, so it can only run
-        # once the estimator holds a real, on-grid estimate. Before the first
-        # observation the KF state is all-zero and meaningless.
+        # escape model은 타겟이 위치한 셀을 기준으로 그리드를 조회하므로,
+        # estimator가 그리드 위의 실제 추정값을 가지고 있을 때만 실행할 수
+        # 있다. 최초 관측 이전에는 KF 상태가 전부 0이며 의미가 없다.
         escape_estimate = None
         if kf_converged and self._cell_or_none(target_state.position) is not None:
             escape_estimate = self.escape_model.compute(
@@ -289,8 +290,9 @@ class HerdingCore:
         role_swapped = False
 
         if fsm_state == FSMState.LOST:
-            # The occlusion grid is used ONLY in LOST: no escape model, planner, or
-            # role assignment runs here, the two robots just sweep the belief peak.
+            # occlusion grid는 오직 LOST 상태에서만 사용된다: 여기서는 escape
+            # model, planner, role assignment 어느 것도 실행되지 않으며, 두
+            # 로봇은 그저 belief의 최고점을 훑고 지나간다.
             if not self._occlusion_seeded:
                 self._last_known_point = np.asarray(target_state.position, dtype=float).copy()
                 self._last_known_cell = self._clamped_cell_or_none(target_state.position)
@@ -300,8 +302,8 @@ class HerdingCore:
             self.occlusion_grid.step(observation.dt)
             search_point = self._search_point(target_state.position)
             driver_id, blocker_id = self._current_roles()
-            # Both robots converge on the same belief peak; offset the second goal so
-            # they do not fight for one point.
+            # 두 로봇 모두 동일한 belief 최고점으로 수렴하므로, 하나의 지점을
+            # 두고 다투지 않도록 두 번째 목표를 오프셋한다.
             offset_point = resolve_separation(search_point, search_point, self.role_assigner_config)
             if driver_id == 1:
                 robot1_goal, robot2_goal = search_point, offset_point
@@ -317,8 +319,8 @@ class HerdingCore:
                     observation.robot1_heading, observation.robot2_heading,
                     candidate, observation.sim_time_sec,
                 )
-                # The very first assign() bootstraps the driver rather than swapping
-                # away from a previously computed assignment, so it is not a swap.
+                # 최초의 assign() 호출은 이전에 계산된 배정으로부터 교체하는
+                # 것이 아니라 driver를 부트스트랩하는 것이므로 swap이 아니다.
                 role_swapped = previous_driver is not None and driver_id != previous_driver
                 self._roles_ever_assigned = True
 
@@ -339,8 +341,9 @@ class HerdingCore:
                         driving.point, blocking_point, self.role_assigner_config
                     )
                 else:
-                    # Target estimate is off-grid, so there is no escape distribution and
-                    # no meaningful blocking point. Keep driving, hold the blocker.
+                    # 타겟 추정치가 그리드 밖에 있어 escape distribution이
+                    # 없고 의미 있는 blocking point도 없다. driving은
+                    # 계속하고 blocker는 제자리를 유지한다.
                     blocking_point = np.asarray(blocker_pos, dtype=float).copy()
 
                 if driver_id == 1:
@@ -348,7 +351,7 @@ class HerdingCore:
                 else:
                     robot1_goal, robot2_goal = blocking_point, driving.point
             else:
-                # IDLE / SEARCH / TRACK / CAPTURED: hold position.
+                # IDLE / SEARCH / TRACK / CAPTURED: 위치를 유지한다.
                 robot1_goal = np.asarray(observation.robot1_pos, dtype=float).copy()
                 robot2_goal = np.asarray(observation.robot2_pos, dtype=float).copy()
                 driver_id, blocker_id = self._current_roles()
