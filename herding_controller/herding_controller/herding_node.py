@@ -2,8 +2,9 @@
 """rclpy adapter: the only file in this package that imports ROS. Wraps HerdingCore.
 
 Every function that does not need a live ROS node (config→dict mapping, JSON
-payload construction, belief-grid quantization) is kept as a plain function so
-it can be unit tested without spinning up rclpy machinery.
+payload construction, escape-probability rasterization, quaternion-to-heading
+conversion) is kept as a plain function so it can be unit tested without
+spinning up rclpy machinery.
 """
 import json
 
@@ -15,6 +16,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, String
 
+from herding_controller.grid_map import GridMap
 from herding_controller.herding_core import HerdingConfig, HerdingCore, HerdingOutput, Observation
 from herding_controller.state_machine import FSMState
 
@@ -88,15 +90,57 @@ def _serialize_state(output: HerdingOutput) -> dict:
     }
 
 
-def _belief_to_flat_int8(belief: np.ndarray) -> list:
-    """Quantize a [0, 1] belief grid to a flat, row-major list of int8 in [0, 100].
+def _prob_grid_to_flat_int8(grid: np.ndarray) -> list:
+    """Quantize a [0, 1] probability grid to a flat, row-major list of int8 in [0, 100].
 
     Row-major (C order) matches how `_on_map` reshapes an incoming
     OccupancyGrid.data back into (height, width): `np.array(data).reshape(h, w)`
     is the exact inverse of `.flatten(order="C")` here.
     """
-    scaled = np.clip(belief, 0.0, 1.0) * 100.0
+    scaled = np.clip(grid, 0.0, 1.0) * 100.0
     return scaled.astype(np.int8).flatten(order="C").tolist()
+
+
+def _rasterize_escape_probabilities(
+    target_position: np.ndarray,
+    directions: np.ndarray,
+    probabilities: np.ndarray,
+    grid_map: GridMap,
+    cells_per_ray: int = 3,
+) -> np.ndarray:
+    """Paint the 8-direction escape distribution onto a (height, width) grid.
+
+    For each of the 8 compass directions, a short ray of `cells_per_ray` cells
+    extending from the target's own grid cell is painted with that direction's
+    probability (rays stop early at the grid edge). Cells reachable from more
+    than one ray keep the max, not the sum, so overlapping rays don't produce
+    an out-of-range value. Returns an all-zero grid if the target position is
+    off-grid (mirrors HerdingCore's own off-grid handling rather than raising).
+    """
+    height, width = grid_map.config.height_cells, grid_map.config.width_cells
+    grid = np.zeros((height, width))
+    try:
+        row0, col0 = grid_map.world_to_cell(float(target_position[0]), float(target_position[1]))
+    except (ValueError, TypeError):
+        return grid
+    for (dx, dy), probability in zip(directions, probabilities):
+        for step in range(1, cells_per_ray + 1):
+            row = row0 + int(round(dy * step))
+            col = col0 + int(round(dx * step))
+            if not grid_map.in_bounds(row, col):
+                break
+            grid[row, col] = max(grid[row, col], float(probability))
+    return grid
+
+
+def _quaternion_to_heading(x: float, y: float, z: float, w: float) -> np.ndarray:
+    """Extract planar (2D) yaw from a quaternion and return it as a unit heading vector.
+
+    Standard quaternion-to-yaw for a rotation about the Z axis:
+    yaw = atan2(2*(w*z + x*y), 1 - 2*(y*y + z*z)).
+    """
+    yaw = np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    return np.array([np.cos(yaw), np.sin(yaw)])
 
 
 class HerdingNode(Node):
@@ -112,6 +156,12 @@ class HerdingNode(Node):
         self._robot2_pos = np.zeros(2)
         self._robot1_heading = np.array([1.0, 0.0])
         self._robot2_heading = np.array([1.0, 0.0])
+        # Until a real pose arrives for each robot, robotN_pos is a meaningless
+        # (0, 0) placeholder. Goal publishing is withheld (see _publish) until
+        # both flip True, so the robots are never commanded toward the grid
+        # origin before they have ever reported where they actually are.
+        self._robot1_pose_received = False
+        self._robot2_pose_received = False
         self._occupancy = None
         self._sim_time = 0.0
 
@@ -134,9 +184,15 @@ class HerdingNode(Node):
 
     def _on_robot1_pose(self, msg: PoseStamped) -> None:
         self._robot1_pos = np.array([msg.pose.position.x, msg.pose.position.y])
+        q = msg.pose.orientation
+        self._robot1_heading = _quaternion_to_heading(q.x, q.y, q.z, q.w)
+        self._robot1_pose_received = True
 
     def _on_robot2_pose(self, msg: PoseStamped) -> None:
         self._robot2_pos = np.array([msg.pose.position.x, msg.pose.position.y])
+        q = msg.pose.orientation
+        self._robot2_heading = _quaternion_to_heading(q.x, q.y, q.z, q.w)
+        self._robot2_pose_received = True
 
     def _on_map(self, msg: OccupancyGrid) -> None:
         # msg.data always has exactly height*width entries per the OccupancyGrid
@@ -158,14 +214,21 @@ class HerdingNode(Node):
         self._publish(output)
 
     def _publish(self, output: HerdingOutput) -> None:
-        self.robot1_goal_pub.publish(self._to_pose(output.robot1_goal))
-        self.robot2_goal_pub.publish(self._to_pose(output.robot2_goal))
+        # Before both robots have ever reported a real pose, robotN_pos is
+        # still the (0, 0) placeholder set in __init__, and HerdingCore (in
+        # IDLE/SEARCH/TRACK/CAPTURED) echoes robot_pos straight back as the
+        # goal -- publishing it here would actively drive both robots toward
+        # the grid origin. Withhold goal publishing until we have a real fix
+        # on both.
+        if self._robot1_pose_received and self._robot2_pose_received:
+            self.robot1_goal_pub.publish(self._to_pose(output.robot1_goal))
+            self.robot2_goal_pub.publish(self._to_pose(output.robot2_goal))
 
         state_msg = String()
         state_msg.data = json.dumps(_serialize_state(output))
         self.state_pub.publish(state_msg)
 
-        self.escape_prob_pub.publish(self._to_escape_grid())
+        self.escape_prob_pub.publish(self._to_escape_grid(output))
 
         capture_msg = Bool()
         capture_msg.data = output.fsm_state == FSMState.CAPTURED
@@ -180,16 +243,17 @@ class HerdingNode(Node):
         msg.pose.orientation.w = 1.0
         return msg
 
-    def _to_escape_grid(self) -> OccupancyGrid:
-        """Publish the LOST-recovery belief grid as the escape-probability map.
+    def _to_escape_grid(self, output: HerdingOutput) -> OccupancyGrid:
+        """Rasterize the current escape-direction distribution onto the map grid.
 
-        HerdingOutput carries only the 8-direction escape distribution and its
-        top-K candidate points (see escape_top3 in the state JSON) -- there is
-        no full grid-shaped escape probability anywhere in HerdingCore. The
-        occlusion belief grid (core.occlusion_grid.belief) is the one array
-        that actually spans the whole map at grid resolution, so it is what
-        gets published here: a live view of "where the target is believed to
-        be" that is most informative exactly when the target is LOST.
+        `output.escape_directions`/`escape_probabilities` are populated by
+        HerdingCore only when the escape model actually ran this cycle (i.e.
+        the KF has converged and the target's cell is on-grid -- see
+        HerdingCore.step()). In every other state (SEARCH/TRACK before
+        convergence, LOST) there genuinely is no escape distribution, so an
+        honest all-zero grid is published rather than repurposing an unrelated
+        array (e.g. the occlusion belief, which represents "where the target
+        might be while hidden", not "which way it's likely to flee").
         """
         msg = OccupancyGrid()
         msg.header.frame_id = self.config.frame_id
@@ -200,7 +264,14 @@ class HerdingNode(Node):
         msg.info.origin.position.x = float(self.config.grid_origin_x_m)
         msg.info.origin.position.y = float(self.config.grid_origin_y_m)
         msg.info.origin.orientation.w = 1.0
-        msg.data = _belief_to_flat_int8(self.core.occlusion_grid.belief)
+        if output.escape_directions is not None and output.escape_probabilities is not None:
+            grid = _rasterize_escape_probabilities(
+                output.target_position, output.escape_directions, output.escape_probabilities,
+                self.core.grid_map,
+            )
+        else:
+            grid = np.zeros((self.config.grid_height_cells, self.config.grid_width_cells))
+        msg.data = _prob_grid_to_flat_int8(grid)
         return msg
 
 

@@ -88,6 +88,8 @@ class HerdingOutput:
     target_position: np.ndarray
     target_velocity: np.ndarray
     escape_top3: list = field(default_factory=list)
+    escape_directions: np.ndarray | None = None
+    escape_probabilities: np.ndarray | None = None
     latency_ms: float = 0.0
     panic: bool = False
     role_swapped: bool = False
@@ -333,5 +335,7 @@ class HerdingCore:
             driver_id=driver_id, blocker_id=blocker_id, target_position=target_state.position,
             target_velocity=target_state.velocity,
             escape_top3=list(escape_estimate.top_k_routes) if escape_estimate else [],
+            escape_directions=escape_estimate.directions if escape_estimate else None,
+            escape_probabilities=escape_estimate.probabilities if escape_estimate else None,
             latency_ms=latency_ms, panic=panic, role_swapped=role_swapped,
         )
