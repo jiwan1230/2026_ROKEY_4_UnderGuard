@@ -32,7 +32,8 @@ herding_controller:
     escape_concentration_threshold: 0.5
 
     # --- Herding Control ---
-    # Task 15 tuning. Two hard geometric constraints drive these values:
+    # Task 15 tuning. THESE THREE VALUES ARE INTERDEPENDENT -- do not change one in
+    # isolation. Two hard geometric constraints drive them:
     #   (1) drive_distance_m * drive_distance_ease_factor MUST stay below
     #       flee_reaction_distance_m. The Driver converges onto its driving point and
     #       stops there; if that point sits outside the target's reaction radius the
@@ -49,15 +50,24 @@ herding_controller:
     panic_distance_m: 0.35
     alignment_threshold: 0.7
     drive_distance_ease_factor: 1.15
-    # Raised 1.2 -> 3.0: this was by far the most sensitive parameter measured.
-    # At 1.2 the Blocker parked just outside the target's 1.0 m reaction radius and
-    # directly on the target's anti-goal escape bearing -- close enough to distort the
-    # flee vector away from the goal, too far to apply useful pressure. Flanking wide
-    # keeps the Blocker cutting off the escape corridor without polluting the Driver's
-    # push. Measured on reactive_flee: 1.2 -> 25%, 2.0 -> 62%, 3.0 -> 82%. Beyond ~6 m
-    # every candidate bearing leaves the 10x10 m grid, compute_blocking_point falls
-    # through to target_pos, and the Blocker rams the target (12.0 -> 82% panic rate),
-    # so 3.0 is an interior optimum, not a "disable the Blocker" degenerate value.
+    # Raised 1.2 -> 3.0: the highest-leverage parameter measured, BUT only once
+    # constraint (1) above holds. Applying this change alone, on a config that still
+    # violates (1), takes the success rate from 20% DOWN to 2.5%. Fix the ratio first.
+    #
+    # Mechanism: NOT "distorting the flee vector" -- ReactiveFlee gates on a hard
+    # cutoff at flee_reaction_distance_m, so a robot at 1.2 m (or 3.0 m) contributes
+    # exactly zero to the flee sum. What actually changes is TRANSIT interference: the
+    # Blocker continuously chases a goal that moves with the target, and at a short
+    # lookahead its path repeatedly crosses inside the 1.0 m radius, injecting flee
+    # impulses that fight the Driver's push. Measured fraction of HERD/CORNER cycles
+    # with a robot inside the reaction radius: 34.9% at bl=1.2 -> 21.0% at bl=3.0.
+    # The Blocker's role in this regime is geometric containment, not applied force.
+    #
+    # Measured on reactive_flee (holding drive_distance_m=0.7, ease=1.0):
+    # 1.2 -> 25%, 2.0 -> 62%, 3.0 -> 82%. Beyond ~6 m every candidate bearing leaves
+    # the 10x10 m grid, compute_blocking_point falls through to target_pos, and the
+    # Blocker rams the target (12.0 -> 82% panic rate), so 3.0 is an interior optimum,
+    # not a "disable the Blocker" degenerate value.
     # NOTE: 3.0 m is scaled to the 10 x 10 m validation arena. Re-tune for a smaller
     # field -- roughly a third of the arena's shorter side.
     block_lookahead_m: 3.0

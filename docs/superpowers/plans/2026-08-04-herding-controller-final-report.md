@@ -56,14 +56,14 @@ Two caveats on that number, both of which push the honest field expectation *bel
 **`random_walk` scoring 0% is expected, not a defect.** It is the spec's designated
 control model (대조군): it ignores the robots entirely, so a reaction-driven herding
 scheme has nothing to push against. A `random_walk` target is only ever captured by
-coincidence. This is worth confirming with the spec owner (see §7).
+coincidence. This is worth confirming with the spec owner (see §8).
 
 **Trivial successes:** exactly 1 of each model's successes was a target that spawned
 already inside the capture zone and was scored a success after `capture_hold_sec` with
 the robots never moving. These are counted in the headline rate (Task 12 deliberately
 left the call to Task 15; I kept them for continuity with the baseline). Excluding them,
 `reactive_flee` is 82.0% and `noisy_human` 89.0% — still comfortably over the bar, so
-the verdict does not depend on the choice. See §7, item C-6.
+the verdict does not depend on the choice. See §8, item C-6.
 
 ---
 
@@ -166,7 +166,13 @@ sensitive knobs. Measurement says that was half right:
 | `drive_distance_m` | 0.4 → 1.2 | 2% → 36% | Real lever, but ceilings at ~36% alone |
 | `robot_repulsion_weight` | 0.5 → 4.0 (8×) | 27.5% → 35% | **Essentially inert** |
 | `alignment_threshold` | 0.3 → 1.01 | 35% → 35% | **Exactly inert** |
-| `block_lookahead_m` | 1.2 → 3.0 | **25% → 82.5%** | **Dominant — not predicted by the plan** |
+| `block_lookahead_m` | 1.2 → 3.0 | **25% → 82.5%** \* | **Highest-leverage — not predicted by the plan** |
+
+\* **Only once the ratio constraint in §4.4 is satisfied.** This span was measured
+holding `drive_distance_m` = 0.7 and `drive_distance_ease_factor` = 1.0. On a config
+that violates the constraint, the *same* `block_lookahead_m` change runs 20% → 2.5%
+instead. "Highest-leverage" here means "biggest effect once the system is in a working
+regime," **not** "safe to change on its own." See the warning box in §4.4.
 
 `robot_repulsion_weight` only feeds the escape distribution, which only selects the
 Blocker's *bearing*. It never touches the Driver — and the Driver was what deadlocked.
@@ -177,13 +183,78 @@ rather than changed for the sake of changing something.
 
 All three changes are in `herding_controller/config/herding_params.yaml`.
 
+> ### ⚠️ The three changes are NOT independent. Do not apply them separately.
+>
+> There is a **necessary condition** on the parameter set:
+>
+> ```
+> drive_distance_m × drive_distance_ease_factor  <  flee_reaction_distance_m
+> ```
+>
+> The Driver converges *onto* its driving point and stops there. If the eased drive
+> distance is not strictly inside the target's reaction radius, the Driver parks where
+> the target does not react, no pressure is ever applied, and the system deadlocks
+> everywhere. **The pre-tuning config violated this** (0.8 × 1.3 = 1.04 ≥ 1.0).
+>
+> Raising `block_lookahead_m` on its own — treating it as "the dominant lever" — makes
+> things **much worse**, not better. Measured directly (N=40, `reactive_flee`):
+>
+> | Configuration | eased distance | Success |
+> |---|---|---|
+> | pre-tuning (dd 0.8, ease 1.3, bl 1.2) | 1.04 ✗ | 20.0% |
+> | **`block_lookahead_m` → 3.0 alone** (dd 0.8, ease 1.3) | 1.04 ✗ | **2.5%** |
+> | ratio fixed alone (dd 0.75, ease 1.15, bl 1.2) | 0.86 ✓ | 25.0% |
+> | **both together** (dd 0.75, ease 1.15, bl 3.0) | 0.86 ✓ | **82.5%** |
+>
+> Neither change is worth much alone (20% → 2.5% or 25%); together they give 82.5%.
+> This is a strong interaction, not a sum of two independent effects. **Satisfy the
+> ratio constraint first, then tune `block_lookahead_m`** — see C-1 for the arena
+> re-tuning procedure.
+
 | Parameter | Before | After | Rationale |
 |---|---|---|---|
-| `block_lookahead_m` | 1.2 | **3.0** | Dominant lever. At 1.2 m the Blocker sat just *outside* the target's 1.0 m reaction radius and directly *on* its anti-goal escape bearing — too far to apply useful pressure, close enough to rotate the summed flee vector off the goal line. Flanking wide cuts the escape corridor without polluting the Driver's push. |
+| `block_lookahead_m` | 1.2 | **3.0** | Reduces how often either robot **transits through** the target's 1.0 m reaction radius on its way to its goal (see mechanism below). Only effective once the ratio constraint above holds. |
 | `drive_distance_m` | 0.8 | **0.75** | Mid-plateau of the measured 0.70–0.80 optimum (80–87%), so it is a robust pick rather than a sweep maximum. Keeps clearance over `panic_distance_m` = 0.35 — at 0.4 the panic rate hits 62%. |
-| `drive_distance_ease_factor` | 1.3 | **1.15** | 1.0 / 1.15 / 1.3 measured identically, but this buys deadlock margin: 0.75 × 1.15 = 0.86 sits 14% under `flee_reaction_distance_m` = 1.0, where 0.75 × 1.3 = 0.98 leaves 2%. The system fails hard the moment that product crosses 1.0 (measured: eased distance 1.05 → 2.5% success). |
+| `drive_distance_ease_factor` | 1.3 | **1.15** | Brings the eased drive distance back inside the reaction radius: 0.75 × 1.15 = 0.86, comfortably under 1.0, where the old 0.8 × 1.3 = 1.04 **violated** the constraint. This is the change that makes the other two work. |
 
-Supporting sweeps for `block_lookahead_m` (N=40, `reactive_flee`):
+#### Mechanism: what `block_lookahead_m` actually does
+
+An earlier draft of this report claimed the Blocker at 1.2 m was "close enough to rotate
+the summed flee vector off the goal line." **That was wrong**, and the correction
+matters for anyone re-tuning. `ReactiveFlee.step()` gates on a **hard cutoff**, not a
+soft falloff:
+
+```python
+if dist < self.flee_reaction_distance_m and dist > 1e-6:
+    flee_dir += (away / dist) * (self.flee_reaction_distance_m - dist)
+```
+
+A robot at 1.2 m contributes **exactly zero** to the flee sum. A Blocker parked at 3.0 m
+likewise cannot influence an agent that only reacts within 1.0 m — so "flanking wide to
+cut the escape corridor" is *not* the mechanism either.
+
+The real mechanism is **removal of transit interference**. The Blocker is not static; it
+is continuously chasing a goal that moves with the target, and at a short lookahead its
+path repeatedly crosses *inside* the reaction radius, injecting flee impulses that fight
+the Driver's push. Measured over N=40 (fraction of HERD/CORNER cycles with at least one
+robot inside the 1.0 m radius):
+
+| Configuration | steps with a robot inside the reaction radius |
+|---|---|
+| pre-tuning (bl 1.2) | 34.9% |
+| tuned (bl 3.0) | **21.0%** |
+
+Raising the lookahead parks the Blocker outside the interaction zone entirely, leaving
+the Driver as the sole source of pressure and making the target's flee direction a clean
+function of the Driver's bearing. **The Blocker's contribution in this regime is
+geometric containment of where the target can be pushed, not force applied to it.**
+
+#### Supporting sweep
+
+`block_lookahead_m` sweep, N=40, `reactive_flee`, **holding `drive_distance_m` = 0.7 and
+`drive_distance_ease_factor` = 1.0 fixed** (eased distance 0.70, i.e. the ratio
+constraint already satisfied — these numbers do **not** transfer to a config that
+violates it, per the warning box above):
 
 | `block_lookahead_m` | 0.6 | 0.8 | 1.0 | **1.2 (old)** | 1.5 | 2.0 | 2.5 | **3.0 (new)** | 4.0 | 6.0 | 8.0 | 12.0 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -195,6 +266,13 @@ Past ~8 m every candidate bearing leaves the 10×10 m grid, `compute_blocking_po
 exhausts both of its loops and falls through to `return target_pos.copy()`, so the
 Blocker drives *straight at the target* — the panic rate jumps to 82.5% and success
 collapses. The optimum is bounded on both sides.
+
+**A warning about proxy metrics.** The `block_lookahead_m` → 3.0-alone config (2.5%
+success) actually scores *better* than the shipping config on both geometric proxies —
+10.4% transit interference and 17.4% invalid Driver goals, versus 21.0% and 22.8%
+shipping. Neither proxy predicts success on its own, because both are irrelevant when
+the ratio constraint is violated and no pressure is applied at all. Do not tune against
+these numbers directly; tune against the success rate.
 
 ### 4.5 Before / after
 
@@ -273,18 +351,36 @@ threshold, so I re-measured at 300 episodes:
    | `decay_factor` | 0.5 → 1.0 | 76.4% at *every* value |
    | `min_robot_separation_m` | 0.6 → 5.0 | 76.4% at *every* value |
 
-   Identical to three significant figures across the entire range — these knobs are
-   provably inert.
+   Identical to three significant figures across the entire range.
+
+**Episode-selection bias — read before comparing the two configs.**
+`_simulate_occlusion_episode()` returns `None` (discarding the episode) when the target
+is captured *before* the blackout matters, and those episodes are excluded from the
+denominator. The better-herding tuned config therefore discards **more** episodes than
+the baseline (29/33 usable vs 31/33): the trials it throws away are precisely the easy
+ones it herded home quickly. **The tuned config's surviving sample is systematically
+harder than the baseline's**, so the baseline-vs-tuned comparison above is not
+apples-to-apples and, if anything, understates the tuned config. This does not change
+the conclusion — both fail at ~70% over 300 episodes — but it does mean the ~1.4 %p gap
+should not be read as "tuning slightly hurt recovery."
 
 **Structural root cause.** `OcclusionGrid.step()` applies isotropic, mass-conserving
-4-neighbour diffusion plus uniform decay. Isotropic diffusion preserves the argmax at
-the seed cell, so **`best_guess_cell()` returns the target's last-known cell forever,
-no matter how the diffusion and decay rates are set.** There is no motion model: the
-belief never drifts toward where the target actually went, even though the KF holds a
-perfectly good last-known velocity. The LOST search therefore degenerates to "both
-robots drive to where you last saw it and wait." Because the target moves at 0.4 m/s and
-the robots at 0.3 m/s, once it leaves that neighbourhood it cannot be re-acquired. The
-~70% that *do* recover are the episodes where the target happened to stay nearby.
+4-neighbour diffusion plus uniform decay. Under normal settings isotropic diffusion
+preserves the argmax at the seed cell, so **`best_guess_cell()` returns the target's
+last-known cell, essentially regardless of how the diffusion and decay rates are set.**
+There is no motion model: the belief never drifts toward where the target actually went,
+even though the KF holds a perfectly good last-known velocity. The LOST search therefore
+degenerates to "both robots drive to where you last saw it and wait." Because the target
+moves at 0.4 m/s and the robots at 0.3 m/s, once it leaves that neighbourhood it cannot
+be re-acquired. The ~70% that *do* recover are the episodes where the target happened to
+stay nearby.
+
+*Precision note:* "the argmax never moves" is the practical behaviour, not an airtight
+theorem. The retained centre weight is `1 − 4·min(diffusion_rate·dt, 0.25)`, which
+reaches exactly zero at the clamp, so at extreme `diffusion_rate × dt` the argmax can
+tie and jump to a neighbouring cell. That is a one-cell (0.25 m) wobble, not a motion
+model, which is why the measured recovery rate is unchanged across the whole swept
+range — but the claim is "no useful motion model," not "mathematically pinned forever."
 
 **A knob that moves the number, and why I did not turn it.** `occlusion_timeout_sec`
 does shift the result (1.0 s → 72.9%, 2.0 s → 75.5%, 5.0 s → 81.0%, i.e. a "PASS" at
@@ -304,7 +400,7 @@ target rather than marking its grave. Alternatively, have the two robots sweep o
 from the seed instead of both converging on one cell.
 
 Note also that ALGO-006's measured value depends on `OCCLUSION_SENSOR_RANGE_M = 1.5`, a
-**harness assumption, not a spec parameter** — see §7, item C-4.
+**harness assumption, not a spec parameter** — see §8, item C-4.
 
 ---
 
@@ -330,8 +426,30 @@ topics are node-relative and resolve inside this node's namespace.
 | `~/robot1_goal` | `geometry_msgs/PoseStamped` | **Mission manager → Nav2** | Withheld until that robot's pose has been received at least once. |
 | `~/robot2_goal` | `geometry_msgs/PoseStamped` | **Mission manager → Nav2** | As above. |
 | `~/herding_state` | `std_msgs/String` | Mission manager / operator HMI | FSM state name: `IDLE`/`SEARCH`/`TRACK`/`HERD`/`CORNER`/`CAPTURED`/`LOST`. |
-| `~/escape_probability` | `nav_msgs/OccupancyGrid` | Operator HMI / RViz | **Read C-2 below before consuming this.** |
+| `~/escape_probability` | `nav_msgs/OccupancyGrid` | Operator HMI / RViz | **Read C-9 below before consuming this.** |
 | `~/capture_result` | `std_msgs/Bool` | Mission manager | Capture success signal. |
+
+### ⚠️ Do not forward goal poses to Nav2 without validating them
+
+**The mission manager MUST validate/clamp `~/robot1_goal` and `~/robot2_goal` against
+the occupancy grid before passing them to Nav2.**
+
+Goal validity is asymmetric by design in this package:
+
+- **Blocker goals are obstacle-checked.** `compute_blocking_point()` tests
+  `grid_map.is_obstacle()` and falls through to the next-best escape bearing.
+- **Driver goals are NOT checked at all.** `compute_driving_point()` returns
+  `target_pos + drive_distance_m · unit(target − goal)` unconditionally.
+
+Measured on the shipping config, **~23–28% of published Driver goals fall inside an
+occupied cell or off-grid** (C-3). Forwarded straight to Nav2, those become rejected or
+aborted navigation requests — the failure will look like flaky navigation, not like a
+herding bug, so it is worth knowing where it comes from.
+
+Recommended handling: project an invalid goal to the nearest free cell (or hold the
+robot's previous goal) and count the occurrences. Which robot is the Driver on any given
+cycle is visible from `~/herding_state` plus the goal topics, but the safe assumption is
+that **either** goal may be invalid.
 
 ### Wiring preconditions
 
@@ -363,18 +481,51 @@ carried forward from the project ledger
   degenerate regime. Same check applies to `capture_zone_x_m`/`capture_zone_y_m` (3.0,
   3.0) and the 40×40-cell grid, which are all still validation-arena values.
 
+  **Re-tuning procedure — follow this order, the parameters interact:**
+
+  1. **First**, establish the real target's reaction distance and set
+     `flee_reaction_distance_m` to it.
+  2. **Then** check the necessary condition
+     `drive_distance_m × drive_distance_ease_factor < flee_reaction_distance_m`,
+     with margin (the shipping config leaves ~14%). If this is violated, nothing else
+     you tune will matter — the Driver parks outside the reaction radius and applies no
+     pressure at all.
+  3. **Only then** sweep `block_lookahead_m`. Changing it first, or alone, is how you
+     get 2.5% instead of 82.5% (§4.4).
+  4. Keep `drive_distance_m` comfortably above `panic_distance_m` — at 0.4 vs 0.35 the
+     panic rate hit 62%.
+
 - **C-2. `CAPTURE_ZONE_CANDIDATES` in `test/field_logger.py` is 4 placeholder
   coordinates.** The field protocol's blinding depends on randomizing over the *real*
   four candidate zones. Ship with placeholders and the blinding is void.
 
-- **C-3. The Driving Point has no obstacle check. [new]**
+- **C-3. Driver goals are never obstacle-checked — ~23–28% of published
+  `~/robot1_goal`/`~/robot2_goal` poses land inside occupied cells. [new]**
   `compute_driving_point()` returns its point unconditionally;
-  `compute_blocking_point()` tests `is_obstacle()` and falls back. This asymmetry caused
-  62.5% of the pre-tuning failures. **Tuning only reduced the odds of hitting it — it is
-  not fixed.** The validation arena is a bare boundary ring; a real room with interior
-  obstacles (furniture, pillars) will hit this far more often and deadlock. Strongly
-  recommend giving `compute_driving_point()` the same obstacle-aware fallback its
-  sibling already has before any field trial.
+  `compute_blocking_point()` tests `is_obstacle()` and falls back. Instrumenting the
+  actual returned points against the live obstacle mask across the N=40 runs:
+
+  | Config | Driver goals inside an obstacle / off-grid |
+  |---|---|
+  | pre-tuning | ~51–56% of HERD/CORNER cycles |
+  | **tuned (shipping)** | **~23–28% of HERD/CORNER cycles** |
+
+  (Two independent measurements bracket each figure — they differ on whether off-grid
+  points and non-HERD cycles are counted — but agree that tuning roughly halved it and
+  that the residual is **not rare**. Adding interior clutter barely moves it, 25–27%.)
+
+  **The real risk is ROS integration, not simulator deadlock.** In simulation these bad
+  goals mostly waste a cycle, because bare point-mass robots slide up to the wall and
+  stop. On real hardware a Nav2-routed robot handed a goal pose inside an occupied cell
+  will **reject or abort the navigation request** — and roughly a quarter of this
+  package's published Driver goals are in that category. See the §7 warning: the mission
+  manager must validate/clamp goals rather than forwarding them blindly.
+
+  A prototype of the obvious fix (giving `compute_driving_point()` the same
+  obstacle-aware fallback its sibling has) was measured to move **no ALGO metric**
+  (+1.6 pp, inside noise), which is why no code change was made in this pass. The fix is
+  still worth doing — its value is in goal *validity* for the ROS integration, not in
+  the simulated success rate, so do not judge it by the acceptance numbers.
 
 - **C-4. ALGO-006's sensor model is a harness assumption, not a spec parameter.**
   `OCCLUSION_SENSOR_RANGE_M = 1.5` in `run_validation.py` was invented by the test
@@ -428,6 +579,23 @@ carried forward from the project ledger
   apart with no test catching it. Given ALGO-006 is the failing gate, this is worth a
   regression test.
 
+- **C-17. `herding_node.py`'s `_sim_time` is a synthetic dt-counter, not the ROS clock.**
+  It increments by a fixed `1 / control_rate_hz` each timer callback rather than reading
+  the actual clock, so it drifts from wall time whenever the timer jitters or a callback
+  runs long. **This directly affects the one failing gate:** `occlusion_timeout_sec` —
+  the LOST-entry threshold — is measured against this counter in the live node. Under
+  real ROS timer jitter the node's idea of "3 seconds without a detection" will not
+  match 3 real seconds, so field occlusion-recovery behaviour can differ from the
+  simulated ALGO-006 number in either direction. Should be switched to the ROS clock
+  before drawing field conclusions about occlusion handling.
+
+- **C-18. `mean_recovery_sec` averages only the episodes that recovered.** The generated
+  report line reads `re-acquired <= 5s: 79.3% | mean recovery: 0.79 s`, and the 0.79 s is
+  computed over the recovered 79.3% only — the ~21% that never recovered are excluded,
+  not counted as slow. Read naively, "79.3% recovered, mean 0.79 s" suggests a system
+  that is nearly always fast; the honest reading is "when it works it is fast (0.79 s),
+  and one episode in five it never works at all." Worth relabelling in the generator.
+
 ### Minor — bookkeeping
 
 - **C-13.** `test/evasion_models/` file-list mismatch between spec §3-1 and §3-2,
@@ -457,6 +625,14 @@ pre-existing structural limitation that was masked by the suite's 33-episode sam
 not a regression from tuning, and not reachable by any parameter. It needs a motion
 model in the occlusion belief grid.
 
-The largest residual risk is **C-3**: the Driving Point's missing obstacle check. The
-tuned parameters make the resulting deadlock rare in a bare-walled arena, but the defect
-is still present and will resurface in a cluttered real room.
+Two things must not get lost on the way to the field:
+
+- **The three tuned parameters are interdependent (§4.4).** `drive_distance_m ×
+  drive_distance_ease_factor` must stay below `flee_reaction_distance_m`, or the Driver
+  applies no pressure at all. Applying the highest-leverage change
+  (`block_lookahead_m` → 3.0) *without* that constraint holding drops success to 2.5%.
+  Anyone re-tuning for a different arena must fix the ratio first.
+- **C-3: Driver goals are never obstacle-checked.** Roughly 23–28% of published
+  `~/robot1_goal`/`~/robot2_goal` poses land inside occupied cells. This is largely
+  invisible in simulation but becomes rejected/aborted Nav2 requests on real hardware,
+  so the mission manager must validate goals before forwarding them (§7).
