@@ -32,12 +32,35 @@ herding_controller:
     escape_concentration_threshold: 0.5
 
     # --- Herding Control ---
-    drive_distance_m: 0.8
+    # Task 15 tuning. Two hard geometric constraints drive these values:
+    #   (1) drive_distance_m * drive_distance_ease_factor MUST stay below
+    #       flee_reaction_distance_m. The Driver converges onto its driving point and
+    #       stops there; if that point sits outside the target's reaction radius the
+    #       target never flees and the whole system deadlocks with zero progress.
+    #       0.75 * 1.15 = 0.86 < 1.0 leaves ~14% margin. (Measured: at an eased
+    #       distance of 1.05 the reactive_flee success rate collapses to 2.5%.)
+    #   (2) drive_distance_m must exceed panic_distance_m by enough that normal
+    #       tracking overshoot does not trip the panic retreat. 0.75 vs 0.35 measured
+    #       a 5% panic rate; dropping to 0.4 pushed it to 62%.
+    # 0.75 sits mid-plateau (0.70/0.75/0.80 all score 80-87%), so it is a robust
+    # choice rather than a sweep maximum.
+    drive_distance_m: 0.75
     flee_reaction_distance_m: 1.0
     panic_distance_m: 0.35
     alignment_threshold: 0.7
-    drive_distance_ease_factor: 1.3
-    block_lookahead_m: 1.2
+    drive_distance_ease_factor: 1.15
+    # Raised 1.2 -> 3.0: this was by far the most sensitive parameter measured.
+    # At 1.2 the Blocker parked just outside the target's 1.0 m reaction radius and
+    # directly on the target's anti-goal escape bearing -- close enough to distort the
+    # flee vector away from the goal, too far to apply useful pressure. Flanking wide
+    # keeps the Blocker cutting off the escape corridor without polluting the Driver's
+    # push. Measured on reactive_flee: 1.2 -> 25%, 2.0 -> 62%, 3.0 -> 82%. Beyond ~6 m
+    # every candidate bearing leaves the 10x10 m grid, compute_blocking_point falls
+    # through to target_pos, and the Blocker rams the target (12.0 -> 82% panic rate),
+    # so 3.0 is an interior optimum, not a "disable the Blocker" degenerate value.
+    # NOTE: 3.0 m is scaled to the 10 x 10 m validation arena. Re-tune for a smaller
+    # field -- roughly a third of the arena's shorter side.
+    block_lookahead_m: 3.0
 
     # --- Role Assignment ---
     role_swap_margin: 0.5

@@ -79,9 +79,18 @@ OCCLUSION_SENSOR_RANGE_M = 1.5
 # genuinely independent.
 MODEL_RNG_STREAM = 1
 
-# Parameter sweeps for the sensitivity plot; the baseline value is inside each list.
+# Parameter sweeps for the sensitivity plot; the baseline value is inside each list
+# (the plot marks it, so a list that misses the configured value renders an unlabelled
+# chart -- keep these in step with config/herding_params.yaml).
+#
+# block_lookahead_m was added in Task 15. The original two entries came from the spec's
+# prediction of the most sensitive parameters, but measurement disagreed: sweeping
+# robot_repulsion_weight over an 8x range moves the success rate by a few points, while
+# block_lookahead_m moves it from 25% to 82%. Leaving it out of the sensitivity figure
+# would have hidden the one parameter this system is genuinely sensitive to.
 SENSITIVITY_SWEEPS = {
-    "drive_distance_m": (0.6, 0.8, 1.0, 1.2),
+    "drive_distance_m": (0.6, 0.75, 0.9, 1.05),
+    "block_lookahead_m": (1.2, 2.0, 3.0, 4.0),
     "robot_repulsion_weight": (0.5, 1.0, 1.5, 2.0),
 }
 
