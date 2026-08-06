@@ -137,9 +137,12 @@ class RobotAgent(Node):
             # TODO(팀원): dock 스테이션 이동 + Dock 액션. 완료되면 state=DOCKED.
 
     def target_cb(self, msg):
-        # TODO(팀원): 받은 목표 좌표로 Nav2 navigate_to_pose 전송 (TRACK/HERD 주행).
+        # TRACK/HERD 중 순찰 waypoint를 순회 중이었다면 먼저 멈추고 목표로 향한다.
+        if self.patrolling:
+            self.stop_patrol()
+        self.nav.goToPose(msg)
         self.get_logger().info(
-            f'목표 좌표 수신: ({msg.pose.position.x:.2f}, {msg.pose.position.y:.2f})',
+            f'목표 좌표 수신 — 주행: ({msg.pose.position.x:.2f}, {msg.pose.position.y:.2f})',
             throttle_duration_sec=1.0)
 
     def report(self):
