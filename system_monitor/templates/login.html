@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Warehouse Pest Control · Login</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <div class="brand-mark">W</div>
+    <p class="eyebrow">ROBOT OPERATIONS</p>
+    <h1>Warehouse Pest Control</h1>
+    <p class="muted">다중 터틀봇 방제 관제 시스템</p>
+    <form method="post" class="login-form">
+      <label>아이디<input name="username" autocomplete="username" required value="admin"></label>
+      <label>비밀번호<input type="password" name="password" autocomplete="current-password" required value="admin123"></label>
+      {% if error %}<p class="form-error">{{ error }}</p>{% endif %}
+      <button class="primary-button" type="submit">관제 시스템 접속</button>
+    </form>
+    <p class="login-hint">초기 계정: admin / admin123 · 시연 전 변경 필요</p>
+  </main>
+</body>
+</html>
