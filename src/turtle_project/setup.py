@@ -13,6 +13,7 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob.glob('launch/*.launch.py')),
+        ('share/' + package_name + '/rviz', glob.glob('rviz/*.rviz')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
