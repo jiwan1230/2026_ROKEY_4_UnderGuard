@@ -90,13 +90,24 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
     for spine in ax.spines.values():
         spine.set_color(LINE)
     if is_real_map:
-        # extent의 bottom/top이 (ylim[1], ylim[0])로 "뒤집힌" 순서인 게 맞다 -- 실수로
-        # (ylim[0], ylim[1])로 "정상화"했다가 로봇이 지도 벽 위에 찍히는 버그를 낸 적이
-        # 있다. ax.set_ylim(*ylim)으로 정상(비반전) 축을 쓰는 상태에서, 이 이미지는
-        # world_to_plot()과 같은 회전 변환으로 만들어졌기 때문에 세로축이 함께
-        # 뒤집혀야 장애물 픽셀과 실제 좌표(로봇/트랩 등)가 맞아떨어진다. 바꾸기 전에
-        # 반드시 장애물 좌표를 점으로 겹쳐 그려서 지도와 정렬되는지 확인할 것.
-        ax.imshow(map_img, extent=[xlim[0], xlim[1], ylim[1], ylim[0]], origin="upper")
+        # extent는 정상 순서 (bottom=ylim[0], top=ylim[1])여야 한다.
+        #
+        # 이 한 줄을 두 번 반대로 고쳤었다 -- 둘 다 "장애물 좌표를 겹쳐 그려서
+        # 검증"까지 해놓고도 틀렸는데, 원인은 검증에 쓴 ground truth 배열이
+        # 잘못됐기 때문이었다: `real_map_sim.py`의 grid_map.obstacle_mask는
+        # `np.flipud(~free)`로, 물리 연산(world_to_cell 등)의 row0=하단 규약을
+        # 맞추려고 pgm 원본에 위아래 반전이 이미 한 번 들어가 있다. 그 배열
+        # 기준으로 겹쳐그리기 검증을 하면 "자기 자신과는" 잘 맞아떨어지므로
+        # 통과하지만, 실제 눈에 보이는 방(사용자가 확인해준 회전 방향)과는
+        # 반대 결론을 내리게 된다.
+        #
+        # 진짜 ground truth는 pgm에서 바로 뽑은 `free`/`~free`를 회전만 시킨
+        # 배열이다 (grid_map 규약의 추가 반전이 섞이지 않은 것). 이 배열을
+        # 기본 imshow(추가 옵션 없이)로 그린 모양이 사용자가 직접 확인해준
+        # "우리 진짜 월드맵" 모양과 정확히 일치하며, 그 배열을 이 extent로
+        # 배치했을 때만 로봇 스폰 좌표도 자유공간에 올바르게 찍힌다.
+        # (검증 스크립트는 커밋 메시지 참고 -- 다시 만들 필요 없이 재사용할 것.)
+        ax.imshow(map_img, extent=[xlim[0], xlim[1], ylim[0], ylim[1]], origin="upper")
     else:
         wx0, wx1 = data["wall"]["x"]
         wy0, wy1 = data["wall"]["y"]
