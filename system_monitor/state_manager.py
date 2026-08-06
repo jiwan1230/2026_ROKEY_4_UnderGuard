@@ -113,9 +113,13 @@ class StateManager:
         self._lock = threading.RLock()
         self._offline_timeout_sec = offline_timeout_sec
         self._low_battery_threshold = low_battery_threshold
+        self._initial_robots = tuple(robots)
+        self._reset_unlocked()
+
+    def _reset_unlocked(self) -> None:
         self._robots = {
             robot_id: RobotState(robot_id=robot_id, role=role)
-            for robot_id, role in robots
+            for robot_id, role in self._initial_robots
         }
         self._events: list[Event] = []
         self._detections: list[dict[str, Any]] = []
@@ -130,6 +134,29 @@ class StateManager:
             "tracker_robot_id": None,
             "support_robot_ids": [],
         }
+
+    def reset(self) -> None:
+        """로봇·임무·탐지·사건·트랩을 생성 직후 상태로 되돌린다.
+
+        입력과 출력은 없다. 관리자용 Mock 초기화에서 DB 삭제 후 사용하며,
+        잠금 안에서 전체 상태를 교체해 폴링 요청이 중간 상태를 보지 않게 한다.
+        """
+
+        with self._lock:
+            self._reset_unlocked()
+
+    def clear_operational_history(self) -> None:
+        """현재 로봇·임무 상태는 유지하고 수집 이력만 비운다.
+
+        입력과 출력은 없다. ROS 운영 데이터 초기화에서 탐지·사건·트랩의
+        메모리 사본을 DB와 함께 비우되 마지막 ROS 위치와 연결은 보존한다.
+        """
+
+        with self._lock:
+            self._events.clear()
+            self._detections.clear()
+            self._traps.clear()
+            self._next_event_id = 1
 
     def update_robot(self, robot_id: str, **changes: Any) -> None:
         """로봇 상태 일부를 갱신하고 통신 시각을 기록한다.

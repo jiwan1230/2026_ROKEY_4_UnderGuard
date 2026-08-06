@@ -92,6 +92,30 @@ class DatabaseTest(unittest.TestCase):
         self.assertEqual((trap["map_x"], trap["map_y"]), (1.25, 2.5))
         self.assertEqual(trap["status"], "INSTALLED")
 
+    def test_clear_operational_data_keeps_users_and_resets_tables(self):
+        self.db.insert_detection(
+            {"robot_id": "robot4", "object_type": "LIVE_RODENT"}
+        )
+        self.db.insert_event(
+            {"robot_id": "robot4", "event_type": "DETECTION", "message": "탐지"}
+        )
+        self.db.insert_trap(
+            {"robot_id": "robot4", "map_x": 1.0, "map_y": 2.0}
+        )
+
+        deleted = self.db.clear_operational_data()
+
+        self.assertEqual(deleted, {"detections": 1, "events": 1, "traps": 1})
+        self.assertEqual(self.db.search_detections(), [])
+        self.assertEqual(self.db.search_traps(), [])
+        self.assertIsNotNone(self.db.find_user("admin"))
+        self.assertEqual(
+            self.db.insert_detection(
+                {"robot_id": "robot4", "object_type": "LIVE_RODENT"}
+            ),
+            1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -77,6 +77,51 @@ class StateManagerTest(unittest.TestCase):
         state.apply_command("robot4", "START_SEARCH")
         state.apply_command("robot5", "START_TRACKING")
 
+    def test_reset_restores_initial_roles_and_clears_runtime_state(self):
+        self.state.update_robot("robot4", state="TRACKING", battery=75)
+        self.state.add_detection({"robot_id": "robot4", "object_type": "LIVE_RODENT"})
+        self.state.add_event("탐지", robot_id="robot4", event_type="DETECTION")
+        self.state.add_trap({"robot_id": "robot4", "map_x": 1.0, "map_y": 2.0})
+        self.state.set_mission(status="RUNNING", progress=60)
+
+        self.state.reset()
+        snapshot = self.state.snapshot()
+
+        self.assertEqual(snapshot["robots"][0]["role"], "RAT_TRACKER")
+        self.assertEqual(snapshot["robots"][0]["state"], "OFFLINE")
+        self.assertEqual(snapshot["mission"]["status"], "READY")
+        self.assertEqual(snapshot["mission"]["progress"], 0)
+        self.assertEqual(snapshot["events"], [])
+        self.assertEqual(snapshot["detections"], [])
+        self.assertEqual(snapshot["traps"], [])
+
+    def test_clear_operational_history_preserves_live_robot_and_mission(self):
+        self.state.update_robot(
+            "robot4",
+            state="TRACKING",
+            battery=75,
+            position={"x": 1.2, "y": 3.4},
+        )
+        self.state.add_detection(
+            {"robot_id": "robot4", "object_type": "LIVE_RODENT"}
+        )
+        self.state.add_event("탐지", robot_id="robot4", event_type="DETECTION")
+        self.state.add_trap(
+            {"robot_id": "robot4", "map_x": 1.2, "map_y": 3.4}
+        )
+        self.state.set_mission(status="RUNNING", progress=40)
+
+        self.state.clear_operational_history()
+        snapshot = self.state.snapshot()
+
+        self.assertEqual(snapshot["events"], [])
+        self.assertEqual(snapshot["detections"], [])
+        self.assertEqual(snapshot["traps"], [])
+        self.assertEqual(snapshot["robots"][0]["state"], "TRACKING")
+        self.assertEqual(snapshot["robots"][0]["position"]["x"], 1.2)
+        self.assertEqual(snapshot["mission"]["status"], "RUNNING")
+        self.assertEqual(snapshot["mission"]["progress"], 40)
+
 
 if __name__ == "__main__":
     unittest.main()

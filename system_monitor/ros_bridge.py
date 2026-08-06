@@ -53,6 +53,9 @@ class RosBridge:
         self.interface = interface or RosInterfaceConfig()
         self._thread: threading.Thread | None = None
         self._node = None
+        # 초기화와 ROS 콜백 저장이 교차해 삭제 직후 이전 기록이 되살아나는
+        # 일을 막는다. 위치 heartbeat처럼 DB를 쓰지 않는 콜백은 계속 동작한다.
+        self._data_lock = threading.RLock()
         self._last_live_rodent_at: dict[str, float] = {}
         self._target_lost_reported: set[str] = set()
         self._low_battery_reported: set[str] = set()
@@ -124,6 +127,22 @@ class RosBridge:
             ),
         }
 
+    def reset_operational_data(self) -> dict[str, int]:
+        """ROS 수집기는 유지하고 저장·화면 이력만 초기화한다.
+
+        입력: 없음. 출력: 탐지·사건·트랩 테이블별 삭제 건수다.
+        사용: 관리자용 운영 데이터 초기화 API가 ROS 모드일 때 호출한다.
+        현재 로봇 위치·연결·임무는 보존하며 다음 토픽부터 다시 기록한다.
+        """
+
+        with self._data_lock:
+            deleted = self.db.clear_operational_data()
+            self.state.clear_operational_history()
+            self._last_live_rodent_at.clear()
+            self._target_lost_reported.clear()
+            self._low_battery_reported.clear()
+            return deleted
+
     def _spin(self) -> None:
         """로봇별 ROS 구독을 생성하고 종료 요청까지 콜백을 처리한다.
 
@@ -187,23 +206,28 @@ class RosBridge:
         사용: webcam/oakd detection 구독 콜백으로 등록한다.
         """
 
-        self.state.mark_heartbeat(robot_id)
-        for detection_msg in msg.detections:
-            data = self._to_detection_data(robot_id, source, msg, detection_msg)
-            if data is None:
-                continue
-            item = process_detection(
-                self.state,
-                self.db,
-                data,
-                event_message=f"{source}에서 {data['object_type']}를 탐지했습니다.",
-                fallback_state="APPROACHING" if source != "OAK-D" else "SEARCHING",
-                fallback_task=f"{data['object_type']} 탐지 확인 중",
-                camera_status="NORMAL",
-            )
-            if source.upper() == "OAK-D" and is_live_rodent(item["object_type"]):
-                self._last_live_rodent_at[robot_id] = time.monotonic()
-                self._target_lost_reported.discard(robot_id)
+        with self._data_lock:
+            self.state.mark_heartbeat(robot_id)
+            for detection_msg in msg.detections:
+                data = self._to_detection_data(robot_id, source, msg, detection_msg)
+                if data is None:
+                    continue
+                item = process_detection(
+                    self.state,
+                    self.db,
+                    data,
+                    event_message=f"{source}에서 {data['object_type']}를 탐지했습니다.",
+                    fallback_state=(
+                        "APPROACHING" if source != "OAK-D" else "SEARCHING"
+                    ),
+                    fallback_task=f"{data['object_type']} 탐지 확인 중",
+                    camera_status="NORMAL",
+                )
+                if source.upper() == "OAK-D" and is_live_rodent(
+                    item["object_type"]
+                ):
+                    self._last_live_rodent_at[robot_id] = time.monotonic()
+                    self._target_lost_reported.discard(robot_id)
 
     def _to_detection_data(
         self,
@@ -281,25 +305,30 @@ class RosBridge:
             return
         value = percentage * 100 if percentage <= 1.0 else percentage
         value = round(max(0.0, min(100.0, value)), 3)
-        if value < self.low_battery_threshold and robot_id not in self._low_battery_reported:
-            record_low_battery(self.state, self.db, robot_id, value)
-            self._low_battery_reported.add(robot_id)
-            return
+        with self._data_lock:
+            if (
+                value < self.low_battery_threshold
+                and robot_id not in self._low_battery_reported
+            ):
+                record_low_battery(self.state, self.db, robot_id, value)
+                self._low_battery_reported.add(robot_id)
+                return
 
-        self.state.update_robot(robot_id, battery=value)
-        if value >= self.low_battery_threshold + 2:
-            self._low_battery_reported.discard(robot_id)
+            self.state.update_robot(robot_id, battery=value)
+            if value >= self.low_battery_threshold + 2:
+                self._low_battery_reported.discard(robot_id)
 
     def _check_target_timeouts(self) -> None:
         """OAK-D 쥐 탐지가 끊긴 추적 로봇을 한 번만 대상 유실로 전환한다."""
 
-        now = time.monotonic()
-        for robot_id, last_seen in tuple(self._last_live_rodent_at.items()):
-            timed_out = now - last_seen >= self.target_loss_timeout_sec
-            if not timed_out or robot_id in self._target_lost_reported:
-                continue
-            robot = self.state.get_robot(robot_id)
-            if robot["state"] != "TRACKING":
-                continue
-            record_target_lost(self.state, self.db, robot_id)
-            self._target_lost_reported.add(robot_id)
+        with self._data_lock:
+            now = time.monotonic()
+            for robot_id, last_seen in tuple(self._last_live_rodent_at.items()):
+                timed_out = now - last_seen >= self.target_loss_timeout_sec
+                if not timed_out or robot_id in self._target_lost_reported:
+                    continue
+                robot = self.state.get_robot(robot_id)
+                if robot["state"] != "TRACKING":
+                    continue
+                record_target_lost(self.state, self.db, robot_id)
+                self._target_lost_reported.add(robot_id)

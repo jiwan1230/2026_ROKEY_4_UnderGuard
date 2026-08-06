@@ -148,7 +148,11 @@ def create_app(settings: Settings | None = None) -> Flask:
     @app.get("/detections")
     @login_required
     def detections_page():
-        return render_template("detections.html", user=session["user"])
+        return render_template(
+            "detections.html",
+            mode=settings.mode,
+            user=session["user"],
+        )
 
     @app.get("/api/health")
     def health():
@@ -240,6 +244,40 @@ def create_app(settings: Settings | None = None) -> Flask:
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify({"updated": True})
+
+    @app.post("/api/admin/reset-operational-data")
+    @login_required
+    def reset_operational_data():
+        """현재 모드의 운영 데이터와 화면 이력을 관리자 확인 후 초기화한다.
+
+        입력: JSON ``confirmation=RESET_OPERATIONAL_DATA``.
+        출력: 모드, 테이블별 삭제 건수와 수집기 실행 상태다.
+        사용: 탐지 DB 화면의 관리자 전용 초기화 대화상자에서 호출한다.
+        Mock은 임무까지 대기시키고 ROS는 현재 연결·위치와 수집기를 유지한다.
+        """
+
+        if session["user"].get("role") != "ADMIN":
+            return jsonify({"error": "admin_required"}), 403
+        payload = request.get_json(silent=True) or {}
+        if payload.get("confirmation") != "RESET_OPERATIONAL_DATA":
+            return jsonify({"error": "reset_confirmation_required"}), 400
+
+        if settings.mode == "mock":
+            deleted = mock.reset_demo()
+            scenario_active: bool | None = False
+        else:
+            deleted = ros.reset_operational_data()
+            scenario_active = None
+
+        return jsonify(
+            {
+                "reset": True,
+                "mode": settings.mode,
+                "deleted": deleted,
+                "scenario_active": scenario_active,
+                "collector_running": runtime.running,
+            }
+        )
 
     @app.post("/api/commands")
     @login_required

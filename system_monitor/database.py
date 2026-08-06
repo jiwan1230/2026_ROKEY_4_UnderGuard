@@ -270,3 +270,29 @@ class Database:
                 (max(1, min(limit, 1000)),),
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def clear_operational_data(self) -> dict[str, int]:
+        """사용자와 스키마는 유지하고 수집된 운영 데이터만 삭제한다.
+
+        입력: 없음. 출력: 탐지·사건·트랩별 삭제 건수다.
+        사용: 관리자용 Mock/ROS 데이터 초기화 경계에서 호출한다.
+        세 테이블 삭제와 ID 시퀀스 초기화는 한 트랜잭션으로 처리된다.
+        """
+
+        tables = {
+            "detections": "detections",
+            "events": "system_events",
+            "traps": "traps",
+        }
+        with self.connect() as conn:
+            deleted = {
+                label: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+                for label, table in tables.items()
+            }
+            for table in tables.values():
+                conn.execute(f"DELETE FROM {table}")
+            conn.execute(
+                "DELETE FROM sqlite_sequence WHERE name IN (?, ?, ?)",
+                tuple(tables.values()),
+            )
+            return deleted

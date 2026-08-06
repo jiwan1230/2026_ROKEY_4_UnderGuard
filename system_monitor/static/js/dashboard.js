@@ -52,6 +52,13 @@ const roleLabels = {
   SURVEY_TRAP : '쥐구멍 탐색·트랩 설치',
   UNASSIGNED : '역할 미지정'
 };
+// 좁은 로봇 선택 탭에는 역할의 핵심만 표시하고 상세 카드에는 전체명을 쓴다.
+const shortRoleLabels = {
+  SCOUT : '공동 탐색',
+  RAT_TRACKER : '쥐 추적',
+  SURVEY_TRAP : '쥐구멍 탐색',
+  UNASSIGNED : '역할 대기'
+};
 const objectLabels = {
   LIVE_RODENT : '쥐',
   ENTRY_POINT : '쥐구멍',
@@ -67,6 +74,14 @@ const detectionColors = {
   rc_car : '#ff6b6b',
   rat_hole : '#b58cff',
   droppings : '#e2ad4f'
+};
+const detectionClassNames = {
+  LIVE_RODENT : 'target-rodent',
+  rc_car : 'target-rodent',
+  ENTRY_POINT : 'target-entry-point',
+  rat_hole : 'target-entry-point',
+  DROPPINGS : 'target-droppings',
+  droppings : 'target-droppings'
 };
 const localizeObjectText = value => String(value ?? '')
                                         .replaceAll('LIVE_RODENT', '쥐')
@@ -129,26 +144,75 @@ function drawMapLabel(ctx, text, point, color, occupied, viewport) {
   const width = Math.ceil(ctx.measureText(text).width) + 12;
   const height = 22;
   const candidates = [
-    {x : point.x + 9, y : point.y - height - 7},
-    {x : point.x + 9, y : point.y + 7},
-    {x : point.x - width - 9, y : point.y - height - 7},
-    {x : point.x - width - 9, y : point.y + 7}
+    {x : point.x + 12, y : point.y - height - 10},
+    {x : point.x + 12, y : point.y + 10},
+    {x : point.x - width - 12, y : point.y - height - 10},
+    {x : point.x - width - 12, y : point.y + 10},
+    {x : point.x - width / 2, y : point.y - height - 18},
+    {x : point.x - width / 2, y : point.y + 18},
+    {x : point.x + 34, y : point.y - height / 2},
+    {x : point.x - width - 34, y : point.y - height / 2},
+    {x : point.x + 38, y : point.y - height - 28},
+    {x : point.x + 38, y : point.y + 28},
+    {x : point.x - width - 38, y : point.y - height - 28},
+    {x : point.x - width - 38, y : point.y + 28}
   ];
-  const overlaps = candidate =>
-      occupied.some(item => candidate.x < item.x + item.width + 3 &&
-                            candidate.x + candidate.width + 3 > item.x &&
-                            candidate.y < item.y + item.height + 3 &&
-                            candidate.y + candidate.height + 3 > item.y);
-  const rectangles = candidates.map(
-      candidate => ({
-        x : Math.max(6, Math.min(candidate.x, viewport.width - width - 6)),
-        y : Math.max(6, Math.min(candidate.y, viewport.height - height - 6)),
-        width,
-        height
-      }));
-  const box =
-      rectangles.find(candidate => !overlaps(candidate)) || rectangles[0];
+  const intersectionArea = (left, right) => {
+    const overlapWidth =
+        Math.max(0, Math.min(left.x + left.width, right.x + right.width) -
+                        Math.max(left.x, right.x));
+    const overlapHeight =
+        Math.max(0, Math.min(left.y + left.height, right.y + right.height) -
+                        Math.max(left.y, right.y));
+    return overlapWidth * overlapHeight;
+  };
+  const rectangles = candidates
+                         .map(candidate => ({
+                                x : Math.max(
+                                    6, Math.min(candidate.x,
+                                                viewport.width - width - 6)),
+                                y : Math.max(
+                                    6, Math.min(candidate.y,
+                                                viewport.height - height - 6)),
+                                width,
+                                height
+                              }))
+                         .filter((candidate, index, all) =>
+                                     all.findIndex(item =>
+                                                       item.x === candidate.x &&
+                                                       item.y === candidate.y) ===
+                                     index);
+  // 빈 위치가 없을 때도 첫 후보로 되돌아가지 않고 겹치는 면적이 가장 작은
+  // 위치를 택한다. 밀집된 탐지에서도 라벨이 한곳에 포개지는 현상을 줄인다.
+  const box = rectangles
+                  .map(candidate => ({
+                         ...candidate,
+                         overlap : occupied.reduce(
+                             (sum, item) =>
+                                 sum + intersectionArea(candidate, item),
+                             0),
+                         distance : Math.hypot(
+                             candidate.x + candidate.width / 2 - point.x,
+                             candidate.y + candidate.height / 2 - point.y)
+                       }))
+                  .sort((left, right) =>
+                            left.overlap - right.overlap ||
+                            left.distance - right.distance)[0];
   occupied.push(box);
+  const labelAnchor = {
+    x : Math.max(box.x, Math.min(point.x, box.x + box.width)),
+    y : Math.max(box.y, Math.min(point.y, box.y + box.height))
+  };
+  if (Math.hypot(labelAnchor.x - point.x, labelAnchor.y - point.y) > 4) {
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = .5;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(point.x, point.y);
+    ctx.lineTo(labelAnchor.x, labelAnchor.y);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
   ctx.fillStyle = 'rgba(8,13,18,.88)';
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
@@ -157,6 +221,21 @@ function drawMapLabel(ctx, text, point, color, occupied, viewport) {
   ctx.fillStyle = color;
   ctx.fillText(text, box.x + 6, box.y + height / 2 + .5);
   ctx.restore();
+}
+
+/**
+ * 라벨이 로봇·탐지 마커를 가리지 않도록 화면상의 마커 영역을 예약한다.
+ * 입력: 사용 중인 영역 배열, Canvas 좌표와 마커 주위 여백이다.
+ * 출력: 없음. drawMapLabel이 피해야 할 사각형을 occupied에 추가한다.
+ * 사용: 한 프레임의 라벨을 그리기 전에 표시 가능한 모든 마커를 등록한다.
+ */
+function reserveMapMarkerArea(occupied, point, radius = 8) {
+  occupied.push({
+    x : point.x - radius,
+    y : point.y - radius,
+    width : radius * 2,
+    height : radius * 2
+  });
 }
 
 /**
@@ -316,32 +395,7 @@ async function request(url, options = {}) {
  */
 function render(snapshot) {
   lastSnapshot = snapshot;
-  $('#server-dot').classList.add('online');
-  $('#server-state').textContent = '정상 수신';
-  $('#server-time').textContent = `${formatTime(snapshot.server_time)} 기준`;
-  $('#kpi-online').textContent =
-      `${snapshot.summary.robots_online}/${snapshot.summary.robots_total}`;
-  $('#kpi-total').textContent = `전체 ${snapshot.summary.robots_total}대`;
-  const progressAvailable =
-      snapshot.runtime?.mission_progress_available !== false;
-  const progress = Number(snapshot.mission.progress || 0);
-  $('#kpi-progress').textContent = progressAvailable ? `${progress}%` : '—';
-  $('#progress-bar').style.width = `${progressAvailable ? progress : 0}%`;
-  $('#kpi-detections').textContent = snapshot.summary.detections;
-  $('#kpi-alerts').textContent = snapshot.summary.active_alerts;
-  $('#kpi-alerts')
-      .closest('article')
-      .classList.toggle('has-alerts',
-                        Number(snapshot.summary.active_alerts) > 0);
-  const waitingForRoleAssignment =
-      snapshot.mission.role_assignment_status === 'WAITING' &&
-      [ 'READY', 'RUNNING' ].includes(snapshot.mission.status);
-  $('#mission-status').textContent =
-      waitingForRoleAssignment
-          ? '역할 배정 전'
-          : (missionLabels[snapshot.mission.status] || snapshot.mission.status);
-  $('#mission-status').className =
-      `status-pill state-${String(snapshot.mission.status).toLowerCase()}`;
+  renderOperationsStatus(snapshot);
 
   snapshot.robots.forEach(robot => {
     const trail = robotTrails.get(robot.robot_id) || [];
@@ -361,12 +415,64 @@ function render(snapshot) {
 
   if (!selectedRobot && snapshot.robots.length)
     selectedRobot = snapshot.robots[0].robot_id;
-  renderRobots(snapshot.robots, snapshot.runtime);
+  renderRobots(snapshot.robots, snapshot.runtime, snapshot.mission);
   renderFleetStopControl(snapshot.robots, snapshot.runtime);
-  renderCameras(snapshot.robots, snapshot.server_time,
-                snapshot.detections || []);
+  renderCameras(snapshot.robots, snapshot.server_time);
   renderEvents(snapshot.events);
   drawMap(snapshot);
+}
+
+/**
+ * 정상 상태는 연결 요약으로 축약하고 이상 상태만 상단 배너에 표시한다.
+ * 입력: 로봇·요약·런타임을 포함한 `/api/snapshot` 응답이다.
+ * 출력: 없음. 제목 옆 연결 문구와 예외 배너를 갱신한다.
+ * 사용: 스냅샷을 받을 때마다 `render()`가 호출한다.
+ */
+function renderOperationsStatus(snapshot) {
+  const online = Number(snapshot.summary.robots_online || 0);
+  const total = Number(snapshot.summary.robots_total || 0);
+  const dot = $('#fleet-connection-dot');
+  const state = $('#fleet-connection-state');
+  const banner = $('#operations-alert-banner');
+  const message = $('#operations-alert-message');
+  const allConnected = total > 0 && online === total;
+
+  dot.className = allConnected ? 'online' : (online > 0 ? 'warning' : 'danger');
+  state.textContent =
+      allConnected ? `로봇 ${total}대 연결됨`
+                   : (online > 0 ? `로봇 ${online}/${total}대 연결`
+                                 : '연결된 로봇 없음');
+
+  const warnings = [];
+  const offline = snapshot.robots
+                      .filter(robot => robot.connection === 'OFFLINE')
+                      .map(robot => robot.robot_id);
+  if (offline.length)
+    warnings.push(`${offline.join(', ')} 연결이 끊어졌습니다.`);
+
+  const lowBatteryThreshold = Number(snapshot.runtime?.low_battery_threshold || 15);
+  const lowBattery = snapshot.robots
+                         .filter(robot => robot.connection === 'ONLINE' &&
+                             robot.battery != null &&
+                             Number(robot.battery) < lowBatteryThreshold)
+                         .map(robot => robot.robot_id);
+  if (lowBattery.length)
+    warnings.push(`${lowBattery.join(', ')} 배터리가 부족합니다.`);
+
+  const lostTargets = snapshot.robots
+                          .filter(robot => robot.state === 'TARGET_LOST')
+                          .map(robot => robot.robot_id);
+  if (lostTargets.length)
+    warnings.push(`${lostTargets.join(', ')}이(가) 추적 대상을 유실했습니다.`);
+
+  const errors = snapshot.robots
+                     .filter(robot => robot.state === 'ERROR')
+                     .map(robot => robot.robot_id);
+  if (errors.length)
+    warnings.push(`${errors.join(', ')} 오류 상태를 확인해 주세요.`);
+
+  message.textContent = warnings.join(' · ');
+  banner.classList.toggle('hidden', warnings.length === 0);
 }
 
 /**
@@ -461,11 +567,11 @@ function renderFleetStopControl(robots, runtime = {}) {
 
 /**
  * 선택 로봇의 상태 카드와 역할별 제어 버튼을 렌더링한다.
- * 입력: 로봇 배열과 명령 지원 여부·배터리 기준을 포함한 런타임 상태다.
- * 출력: 없음. 로봇 선택, 상태, 명령 버튼 DOM과 이벤트를 다시 만든다.
+ * 입력: 로봇 배열, 명령 지원 여부를 담은 런타임 상태, 전체 임무 상태다.
+ * 출력: 없음. 로봇 선택, 전체 임무 요약, 상태·명령 DOM을 다시 만든다.
  * 사용: 최초 스냅샷과 로봇 선택·명령 처리 후 `render()`에서 호출한다.
  */
-function renderRobots(robots, runtime = {}) {
+function renderRobots(robots, runtime = {}, mission = {}) {
   const commandsEnabled = runtime.commands_enabled !== false;
   const lowBatteryThreshold = Number(runtime.low_battery_threshold || 15);
   const robot =
@@ -486,11 +592,25 @@ function renderRobots(robots, runtime = {}) {
                            : ''}" data-select-robot="${
                        escapeHtml(item.robot_id)}">
       <span><b>${escapeHtml(item.robot_id)}</b><small>${
-                       escapeHtml(roleLabels[item.role] ||
+                       escapeHtml(shortRoleLabels[item.role] ||
                                   item.role)}</small></span>
       <i class="${item.connection === 'ONLINE' ? '' : 'offline'}"></i>
     </button>`)
               .join('')}</div>`;
+  // 전체 임무 상태는 안전 버튼과 분리해 로봇 선택 탭 바로 아래에서 읽는다.
+  const waitingForRoleAssignment =
+      mission.role_assignment_status === 'WAITING' &&
+      [ 'READY', 'RUNNING' ].includes(mission.status);
+  const missionText = waitingForRoleAssignment
+      ? '역할 배정 전'
+      : (missionLabels[mission.status] || mission.status || '임무 대기');
+  const missionSummary = `
+    <div class="fleet-mission-summary">
+      <span>전체 임무</span>
+      <strong id="mission-status" class="mission-summary-state state-${
+          String(mission.status || 'READY').toLowerCase()}">${
+          escapeHtml(missionText)}</strong>
+    </div>`;
   const detail =
       [ robot ]
           .map(robot => {
@@ -524,13 +644,10 @@ function renderRobots(robots, runtime = {}) {
                 robot.connection === 'ONLINE' ? '' : 'offline'}">${
                 robot.connection === 'ONLINE' ? '온라인'
                                               : '오프라인'}</span></div>
-      <div class="robot-task">${
-                escapeHtml(localizeObjectText(robot.current_task))}</div>
-      <div class="robot-metrics">
-        <div class="metric"><small>상태</small><strong class="state-text state-${
+      <div class="robot-task state-text state-${
                 String(robot.state).toLowerCase()}">${
-                escapeHtml(stateLabels[robot.state] ||
-                           robot.state)}</strong></div>
+                escapeHtml(localizeObjectText(robot.current_task))}</div>
+      <div class="robot-metrics robot-metrics-compact">
         <div class="metric battery-metric"><small>배터리</small><strong>${
                 n(robot.battery, 0)}%</strong><span class="battery-mini ${
                 battery < lowBatteryThreshold
@@ -576,7 +693,7 @@ function renderRobots(robots, runtime = {}) {
     </article>`;
           })
           .join('');
-  $('#robot-list').innerHTML = selector + detail;
+  $('#robot-list').innerHTML = selector + missionSummary + detail;
   document.querySelectorAll('[data-select-robot]')
       .forEach(button => button.addEventListener('click', () => {
         selectedRobot = button.dataset.selectRobot;
@@ -654,28 +771,12 @@ function renderRobots(robots, runtime = {}) {
 }
 
 /**
- * 카메라의 현재 대상과 일치하는 가장 최근 탐지 기록을 찾는다.
- * 입력: 로봇 상태와 최신순 탐지 배열이다.
- * 출력: 촬영 시각·이미지 경로를 가진 탐지 객체이며 없으면 null이다.
- * 사용: 카메라 카드에 촬영 시각과 증거 이미지 저장 여부를 표시한다.
- */
-function findCameraDetection(robot, detections) {
-  const target = robot.target || {};
-  if (!target.object_type)
-    return null;
-  return detections.find(detection =>
-                             detection.robot_id === robot.robot_id &&
-                             detection.object_type === target.object_type) ||
-         null;
-}
-
-/**
- * 로봇별 카메라 카드에 탐지·촬영·증거 저장 상태를 렌더링한다.
- * 입력: 로봇 배열, 서버 시각, 최신순 탐지 배열이다.
- * 출력: 없음. 최대 두 카메라 카드 DOM과 로봇 선택 이벤트를 다시 만든다.
+ * 로봇별 카메라 카드에 탐지 대상과 장치 상태를 렌더링한다.
+ * 입력: 로봇 배열과 연결 갱신 시간을 계산할 서버 시각이다.
+ * 출력: 없음. 로봇 식별색과 대상 탐지색을 분리한 카드 DOM을 다시 만든다.
  * 사용: `/api/snapshot`을 반영하는 `render()`에서 호출한다.
  */
-function renderCameras(robots, serverTime, detections = []) {
+function renderCameras(robots, serverTime) {
   const cameraStack = $('#camera-stack');
   const visibleRobots = robots.slice(0, 2);
   if (!visibleRobots.length) {
@@ -688,36 +789,31 @@ function renderCameras(robots, serverTime, detections = []) {
       visibleRobots
           .map((robot, index) => {
             const target = robot.target || {};
-            const detection = findCameraDetection(robot, detections);
             const hasTarget = Boolean(target.object_type);
             const targetName = objectLabels[target.object_type] ||
                                target.object_type || '대상';
+            const targetClass = hasTarget
+                                    ? (detectionClassNames[
+                                           target.object_type] ||
+                                       'target-unknown')
+                                    : 'waiting';
             const confidence =
                 hasTarget && target.confidence != null
                     ? `${Math.round(Number(target.confidence) * 100)}%`
                     : '—';
-            const captureTime =
-                detection?.timestamp ? formatTime(detection.timestamp) : '—';
-            const evidenceSaved = Boolean(detection?.image_path);
-            const evidenceState =
-                !hasTarget ? '탐지 없음'
-                           : (evidenceSaved ? '저장 완료' : '미저장');
-            const evidenceClass =
-                !hasTarget ? 'idle' : (evidenceSaved ? 'saved' : 'missing');
-            const cameraNormal = robot.connection === 'ONLINE' &&
+            const cameraError = robot.connection !== 'ONLINE' ||
+                                robot.state === 'ERROR';
+            const cameraNormal = !cameraError &&
                                  robot.camera_status === 'NORMAL';
             const updateAge = robot.last_update
                                   ? Math.max(0, Number(serverTime || 0) -
                                                     Number(robot.last_update))
                                   : null;
             const source = target.source || '—';
-            const cameraState = robot.state === 'COMPLETED'
-                                    ? '임무 완료'
-                                    : (stateLabels[robot.state] || robot.state);
             const isSelected = robot.robot_id === selectedRobot;
             return `
       <article class="panel camera-card camera-${
-                index === 0 ? 'tracker' : 'survey'} ${
+                index === 0 ? 'robot-primary' : 'robot-secondary'} ${
                 isSelected ? 'selected' : ''}" data-camera-robot="${
                 escapeHtml(
                     robot
@@ -731,8 +827,12 @@ function renderCameras(robots, serverTime, detections = []) {
             <small>${escapeHtml(roleLabels[robot.role] || robot.role)}</small>
           </div>
           <span class="camera-connection ${
-                cameraNormal ? 'normal' : 'warning'}"><i></i>${
-                cameraNormal ? '정상' : '확인 필요'}${
+                cameraNormal ? 'normal'
+                             : (cameraError ? 'error' : 'warning')}"><i></i>${
+                cameraNormal
+                    ? '정상'
+                    : (robot.connection !== 'ONLINE' ? '연결 끊김'
+                                                     : '확인 필요')}${
                 updateAge == null ? '' : ` · ${updateAge.toFixed(1)}초`}</span>
         </header>
         <div class="camera-placeholder camera-frame">
@@ -742,26 +842,11 @@ function renderCameras(robots, serverTime, detections = []) {
                 cfg.mode === 'mock'
                     ? 'MOCK VIDEO · 실제 영상 아님'
                     : 'ROS CAMERA DATA · 영상 스트림 미연동'}</span>
-          <div class="camera-detection-facts ${hasTarget ? '' : 'idle'}">
-            <span><small>대상 거리</small><strong>${
-                target.distance == null
-                    ? '—'
-                    : `${n(target.distance, 2)} m`}</strong></span>
-            <span><small>촬영 시각</small><strong>${captureTime}</strong></span>
-            <span class="camera-evidence ${evidenceClass}"><i></i>증거 이미지 ${
-                evidenceState}</span>
-          </div>
-          <div class="detection-box ${hasTarget ? '' : 'waiting'}"><span><b>${
+          <div class="detection-box ${targetClass}"><span><b>${
                 hasTarget ? `${escapeHtml(targetName)} 감지`
                           : '대상 대기 중'}</b>${
                 hasTarget ? `<em>${confidence}</em>` : ''}</span></div>
-          <div class="camera-metadata">
-            <div><small>임무 상태</small><strong>${
-                escapeHtml(cameraState)}</strong></div>
-            <div><small>카메라 상태</small><strong>${
-                escapeHtml(robot.camera_status === 'NORMAL'
-                               ? '정상'
-                               : robot.camera_status || '—')}</strong></div>
+          <div class="camera-metadata camera-metadata-compact">
             <div><small>대상 거리</small><strong>${
                 target.distance == null
                     ? '—'
@@ -833,13 +918,16 @@ async function loadMap() {
     mapMetadata = metadata;
     mapImage = image;
     canvasMapWrap().classList.add('has-static-map');
-    label.textContent = `${metadata.name} · ${metadata.resolution} m/px`;
+    label.textContent = '';
+    label.classList.add('hidden');
     if (lastSnapshot)
       drawMap(lastSnapshot);
   } catch (error) {
     mapMetadata = null;
     mapImage = null;
-    label.textContent = '맵 파일 미연결 · 좌표 격자 사용';
+    label.textContent = cfg.mode === 'mock' ? 'MOCK · 좌표 격자'
+                                           : 'ROS · 맵 미연결';
+    label.classList.remove('hidden');
     console.warn(error);
   }
 }
@@ -977,6 +1065,31 @@ function drawMap(snapshot) {
           .slice(0, 5)
           .reverse();
 
+  // 라벨을 그리는 순서와 관계없이 모든 실제 마커 위치를 먼저 보호한다.
+  if (showDetectionHistory)
+    history.forEach(det => {
+      if (det.map_x != null && det.map_y != null)
+        reserveMapMarkerArea(occupiedLabels,
+                             toCanvas(det.map_x, det.map_y));
+    });
+  (snapshot.traps || []).forEach(trap => {
+    if (trap.map_x != null && trap.map_y != null)
+      reserveMapMarkerArea(occupiedLabels,
+                           toCanvas(trap.map_x, trap.map_y));
+  });
+  snapshot.robots.forEach(robot => {
+    if (projection.imageRect && robot.position_frame !== mapFrame)
+      return;
+    reserveMapMarkerArea(
+        occupiedLabels, toCanvas(robot.position.x, robot.position.y),
+        robot.robot_id === selectedRobot ? 24 : 13);
+    const target = robot.target || {};
+    if (targetStates.has(robot.state) && target.map_x != null &&
+        target.map_y != null)
+      reserveMapMarkerArea(occupiedLabels,
+                           toCanvas(target.map_x, target.map_y), 11);
+  });
+
   if (showDetectionHistory)
     history.forEach((det, index, array) => {
       if (det.map_x == null || det.map_y == null)
@@ -1106,8 +1219,11 @@ async function poll() {
   try {
     render(await request('/api/snapshot'));
   } catch (error) {
-    $('#server-dot').classList.remove('online');
-    $('#server-state').textContent = '수신 실패';
+    $('#fleet-connection-dot').className = 'danger';
+    $('#fleet-connection-state').textContent = '관제 서버 수신 실패';
+    $('#operations-alert-message').textContent =
+        '관제 서버 상태와 네트워크 연결을 확인해 주세요.';
+    $('#operations-alert-banner').classList.remove('hidden');
     console.error(error);
   }
 }

@@ -3,6 +3,9 @@ const form = document.querySelector('#filter-form');
 const pageSummary = document.querySelector('#page-summary');
 const previousPage = document.querySelector('#prev-page');
 const nextPage = document.querySelector('#next-page');
+const openDataReset = document.querySelector('#open-data-reset');
+const dataResetDialog = document.querySelector('#data-reset-dialog');
+const confirmDataReset = document.querySelector('#confirm-data-reset');
 
 const pageSize = 10;
 let currentPage = 1;
@@ -196,6 +199,45 @@ async function saveReview(button) {
   }
 }
 
+/**
+ * 관리자 확인 후 현재 모드의 DB 운영 데이터와 화면 이력을 초기화한다.
+ * 입력: 없음. 출력: 서버 초기화 완료까지 기다릴 수 있는 Promise다.
+ * 사용: Mock/ROS 탐지 DB 화면의 관리자 `초기화 실행` 버튼에서 호출한다.
+ */
+async function resetOperationalData() {
+  confirmDataReset.disabled = true;
+  confirmDataReset.textContent = '초기화 중';
+  try {
+    const response = await fetch('/api/admin/reset-operational-data', {
+      method : 'POST',
+      headers : {'Content-Type' : 'application/json'},
+      body : JSON.stringify({confirmation : 'RESET_OPERATIONAL_DATA'}),
+    });
+    if (response.status === 401) {
+      location.href = '/login';
+      return;
+    }
+    const data = await response.json();
+    if (!response.ok)
+      throw new Error(data.error || '초기화 실패');
+
+    dataResetDialog.close();
+    await loadRows();
+    const total =
+        Object.values(data.deleted).reduce((sum, count) => sum + count, 0);
+    const resultMessage =
+        data.mode === 'mock'
+            ? `운영 데이터 ${total}건을 삭제했습니다. 로봇은 임무 대기 상태입니다.`
+            : `ROS 운영 데이터 ${total}건을 삭제했습니다. 새 토픽 수집은 계속됩니다.`;
+    toast(resultMessage);
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    confirmDataReset.disabled = false;
+    confirmDataReset.textContent = '초기화 실행';
+  }
+}
+
 tbody.addEventListener('click', (event) => {
   const button = event.target.closest('.save-review');
   if (button)
@@ -230,5 +272,8 @@ form.addEventListener('submit', (event) => {
   event.preventDefault();
   loadRows();
 });
+
+openDataReset?.addEventListener('click', () => dataResetDialog.showModal());
+confirmDataReset?.addEventListener('click', resetOperationalData);
 
 loadRows();

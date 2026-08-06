@@ -43,6 +43,7 @@ class MockManager:
         self._command_modes: dict[str, str | None] = {
             robot_id: None for robot_id in robot_ids
         }
+        self._scenario_active = True
         self._mission_progress = 0
         self._mission_started_at = time.time()
         self._initial_rat_detector = random.choice(robot_ids)
@@ -84,9 +85,32 @@ class MockManager:
         """Mock 갱신 루프에 종료를 알리고 스레드 정리를 기다린다."""
 
         self._stop.set()
-        if self._thread and self._thread is not threading.current_thread():
-            self._thread.join(timeout=2.0)
+        thread = self._thread
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        if thread and thread.is_alive():
+            raise RuntimeError("Mock 갱신 스레드가 제한 시간 안에 종료되지 않았습니다.")
         self._thread = None
+
+    def reset_demo(self) -> dict[str, int]:
+        """운영 데이터와 Mock 상태를 지우고 자동 시나리오를 대기시킨다.
+
+        입력: 없음. 출력: DB 테이블별 삭제 건수다.
+        사용: 관리자 초기화 API에서 호출한다. Mock 갱신과 같은 잠금을 사용하므로
+        삭제 중 예약 탐지가 다시 저장되지 않으며, 서비스 스레드는 계속 살아 있다.
+        """
+
+        with self._lock:
+            deleted = self.db.clear_operational_data()
+            self.state.reset()
+            self._tick = 0
+            self._command_modes = {robot_id: None for robot_id in self.robot_ids}
+            self._scenario_active = False
+            self._mission_progress = 0
+            self._mission_started_at = time.time()
+            self._initial_rat_detector = random.choice(self.robot_ids)
+            self._initialize_idle_robots()
+            return deleted
 
     def trigger(self, event_type: str, robot_id: str | None = None) -> dict:
         """평가 시연용 사건을 즉시 발생시킨다.
@@ -124,10 +148,13 @@ class MockManager:
         """
 
         with self._lock:
+            was_inactive = not self._scenario_active
             event = self.state.apply_command(robot_id, command)
             if command in {"START_SCOUTING", "START_TRACKING", "START_SEARCH", "RESUME"}:
+                self._scenario_active = True
                 self._command_modes[robot_id] = None
-                if self._mission_progress >= 100:
+                if was_inactive or self._mission_progress >= 100:
+                    self._tick = 0
                     self._mission_progress = 0
                     self._mission_started_at = time.time()
             else:
@@ -153,6 +180,11 @@ class MockManager:
         self._initialize_robots()
         while not self._stop.wait(1.0):
             with self._lock:
+                if not self._scenario_active:
+                    # Mock 연결은 유지하되 위치·진행률·예약 탐지는 갱신하지 않는다.
+                    for robot_id in self.robot_ids:
+                        self.state.update_robot(robot_id, speed=0.0)
+                    continue
                 self._tick += 1
                 for index, robot_id in enumerate(self.robot_ids):
                     self._update_robot_tick(index, robot_id)
@@ -177,6 +209,24 @@ class MockManager:
             "두 로봇이 쥐 공동 탐색을 시작했습니다. "
             "최초 탐지 후 역할을 자동 배정합니다."
         )
+
+    def _initialize_idle_robots(self) -> None:
+        """초기화 직후 두 Mock 로봇을 온라인 임무 대기 상태로 배치한다."""
+
+        for index, robot_id in enumerate(self.robot_ids):
+            self.state.update_robot(
+                robot_id,
+                role="SCOUT",
+                state="IDLE",
+                battery=88 - index * 9,
+                speed=0.0,
+                camera_status="NORMAL",
+                slam_status="NORMAL",
+                nav_status="READY",
+                current_task="데이터 초기화 · 임무 대기",
+                position_frame=self.map_frame,
+                position={"x": 1.2 + index * 1.7, "y": 1.0 + index, "yaw": 0.0},
+            )
 
     def _update_robot_tick(self, index: int, robot_id: str) -> None:
         mode = self._command_modes[robot_id]

@@ -106,6 +106,27 @@ class MockManagerTest(unittest.TestCase):
         self.assertEqual(snapshot["robots"][0]["state"], "COMPLETED")
         self.assertEqual(snapshot["detections"], [])
 
+    def test_reset_demo_clears_mock_progress_and_memory_state(self):
+        self.mock._tick = 31
+        self.mock._mission_progress = 64
+        self.mock._command_modes["robot4"] = "PAUSE"
+        self.state.add_event("초기화 전 사건")
+
+        deleted = self.mock.reset_demo()
+
+        self.assertEqual(deleted, {"detections": 0, "events": 0, "traps": 0})
+        self.assertEqual(self.mock._tick, 0)
+        self.assertEqual(self.mock._mission_progress, 0)
+        self.assertIsNone(self.mock._command_modes["robot4"])
+        snapshot = self.state.snapshot()
+        self.assertEqual(snapshot["events"], [])
+        self.assertEqual(snapshot["robots"][0]["state"], "IDLE")
+        self.assertEqual(snapshot["robots"][0]["connection"], "ONLINE")
+        self.assertFalse(self.mock._scenario_active)
+
+        self.mock.send_command("robot4", "START_SCOUTING")
+        self.assertTrue(self.mock._scenario_active)
+
 
 if __name__ == "__main__":
     unittest.main()

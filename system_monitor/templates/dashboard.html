@@ -22,7 +22,10 @@
     <section class="page-heading">
       <div><p class="eyebrow">LIVE OPERATIONS</p><h1>다중 로봇 통합 관제</h1><p class="muted">공동 탐색 → 최초 발견 로봇 자동 추적 → 다른 로봇 쥐구멍 탐색·트랩 설치 과정을 확인합니다.</p></div>
       <div class="heading-actions">
-        <div class="connection-indicator"><span id="server-dot"></span><div><small>SERVER</small><strong id="server-state">연결 확인 중</strong><em id="server-time">—</em></div></div>
+        <div class="fleet-connection-summary" title="현재 서버에서 상태를 수신 중인 로봇 수">
+          <span id="fleet-connection-dot"></span>
+          <strong id="fleet-connection-state">로봇 연결 확인 중</strong>
+        </div>
         <div class="header-event-actions">
           <button id="open-event-dialog" class="event-summary-button" type="button" title="탐지·역할 배정·명령·경고를 포함한 최근 이벤트">최근 이벤트 <span id="event-count">0</span></button>
           {% if mode == "mock" %}
@@ -35,11 +38,9 @@
       </div>
     </section>
 
-    <section class="kpi-grid">
-      <article title="현재 서버와 통신 중인 로봇 수"><span>온라인 로봇</span><strong id="kpi-online">—</strong><small id="kpi-total">전체 —대</small></article>
-      <article title="두 로봇을 포함한 현재 전체 임무 진행률"><span>전체 임무 진행률</span><strong id="kpi-progress">—%</strong><div class="progress"><i id="progress-bar"></i></div></article>
-      <article title="서버 실행 후 현재 세션에서 누적된 탐지 수"><span>탐지 누적</span><strong id="kpi-detections">—</strong><small>현재 세션</small></article>
-      <article title="오프라인·대상 유실·오류·저전압 상태인 로봇 수"><span>미해결 경고</span><strong id="kpi-alerts">—</strong><small>현재 로봇 상태 기준</small></article>
+    <section id="operations-alert-banner" class="operations-alert-banner hidden" role="alert" aria-live="polite">
+      <span aria-hidden="true">⚠</span>
+      <strong id="operations-alert-message"></strong>
     </section>
 
     <nav class="mobile-tabs" aria-label="관제 화면 섹션">
@@ -51,8 +52,11 @@
 
     <section class="dashboard-grid">
       <aside class="panel robot-panel mobile-active">
-        <!-- 전체 이동 정지는 개별 STOP 명령을 묶는 관제 기능이며 물리 E-Stop이 아니다. -->
-        <div class="panel-title"><div><p class="eyebrow">FLEET</p><h2>로봇 상태</h2></div><div class="fleet-title-actions"><span id="mission-status" class="status-pill">READY</span><button id="stop-all-robots" class="fleet-stop-button" type="button" disabled>전체 이동 정지</button></div></div>
+        <!-- 전체 정지 버튼은 개별 STOP 명령을 묶는 관제 기능이며 물리 E-Stop이 아니다. -->
+        <div class="panel-title fleet-panel-header">
+          <h2>로봇 상태</h2>
+          <button id="stop-all-robots" class="fleet-stop-button" type="button" disabled><span aria-hidden="true">■</span> 전체 정지</button>
+        </div>
         <div id="robot-list" class="robot-list"></div>
       </aside>
 
@@ -84,7 +88,7 @@
               <span><small>좌표</small><b id="map-marker-position">—</b></span>
             </div>
           </aside>
-          <div id="map-grid-label" class="map-grid-label">맵 불러오는 중</div>
+          <div id="map-grid-label" class="map-grid-label">지도 준비 중</div>
         </div>
       </section>
 
