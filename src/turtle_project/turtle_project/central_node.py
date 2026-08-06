@@ -25,6 +25,23 @@ def next_command(new_state):
     return _TRANSITIONS.get(new_state)
 
 
+def coverage_action(robots, waking):
+    """전원 상태로 부트스트랩/복구 판단 -> UNDOCK 시킬 로봇 or None.
+
+    아무도 순찰/복귀/대응(busy) 중이 아니고 깨우는 중(waking)도 아니면, 도크에
+    있는 로봇 하나를 골라 그 이름을 돌려준다(순찰 시작용). 커버리지가 이미
+    있거나 깨우는 중이면 None. 도킹 주행(RETURNING)은 busy로 봐서, 교대 진행
+    중엔 개입하지 않는다 (잠깐의 감시 공백은 정상).
+    """
+    if waking is not None:
+        return None
+    busy = {'PATROLLING', 'TRACKING', 'HERDING', 'RETURNING'}
+    if any(s in busy for s, _ in robots.values()):
+        return None
+    idle = [r for r, (s, _) in robots.items() if s in ('DOCKED', 'IDLE')]
+    return idle[0] if idle else None
+
+
 def assign_roles(patroller, robots):
     """쥐 감지 시 역할 배정 -> (robot_a, robot_b). 못 정하면 None.
 
@@ -45,6 +62,7 @@ class CentralNode(Node):
         super().__init__('central_node')
         self.robots = {}        # robot -> (state, battery)
         self.patroller = None   # 현재 순찰 로봇 (역할 A)
+        self.waking = None      # UNDOCK 보낸 로봇 (순찰 시작할 때까지 중복 방지)
         self.rat_mode = False   # 쥐대응 모드 (중복 트리거 방지)
         self.rat_roles = None   # 쥐대응 중인 (A, B) — 종료 시 복귀 명령에 사용
         self.rat_caught = False  # 마지막 쥐대응 결과 표출 (포획 성공 여부)
@@ -60,13 +78,34 @@ class CentralNode(Node):
         self.robots[robot] = (state, battery)
         if state == 'PATROLLING':
             self.patroller = robot
-        # 교대 핵심 전이: A가 DOCKED되면 B를 undock.
-        cmd = next_command(state)
-        if cmd and (prev is None or prev[0] != state):
-            other = self._other(robot)
-            if other:
-                self.send(other, cmd)
-        # TODO(팀원): PATROL 이어받기, 재도킹, 상태 정합성 등 나머지 시퀀스.
+            if self.waking == robot:
+                self.waking = None      # 깨우라던 로봇이 순찰 시작 — 대기 해제
+        if self.rat_mode:
+            return                      # 쥐대응 중엔 역할 고정 — 조율 개입 안 함
+        # 교대: 순찰하던 A가 DOCKED로 '전이'하면 B를 깨운다. prev is None(첫 status)은
+        # 전이가 아니다 — 그건 부트스트랩(_ensure_coverage)이 처리한다. 안 그러면
+        # 둘 다 DOCKED로 시작할 때 서로를 깨워 둘 다 순찰하게 된다.
+        cmd = next_command(state)       # DOCKED -> UNDOCK
+        if cmd and prev is not None and prev[0] != state:
+            # 이미 다른 로봇이 순찰 중이면(쥐대응 종료 후 B 도킹 등) 깨우지 않는다.
+            if not self._anyone_patrolling():
+                other = self._other(robot)
+                if other:
+                    self.send(other, cmd)
+                    self.waking = other
+            return
+        self._ensure_coverage()         # 전원 대기면 한 대 깨워 순찰 시작(부트스트랩)
+
+    def _ensure_coverage(self):
+        """항상 최소 1대 순찰하도록 보장 (부트스트랩/복구). 판단은 coverage_action."""
+        r = coverage_action(self.robots, self.waking)
+        if r:
+            self.send(r, 'UNDOCK')
+            self.waking = r
+            self.get_logger().info(f'커버리지 확보 — {r} 순찰 시작')
+
+    def _anyone_patrolling(self):
+        return any(s == 'PATROLLING' for s, _ in self.robots.values())
 
     def event_cb(self, msg):
         name, x, y = fleet_msg.parse_event(msg.data)
@@ -77,7 +116,9 @@ class CentralNode(Node):
             self._end_rat(caught=True)
         elif name == 'rat_lost':
             self._end_rat(caught=False)
-        # TODO(팀원): opening_confirmed/trap_ok 등 나머지 이벤트 처리.
+        # opening_confirmed/trap_installed/trap_ok/trap_bad 등은 로봇 로컬에서
+        # 처리(db_node 저장, detector 순찰재개)하므로 central은 위 로그로만 관찰한다
+        # — 설계상 central은 방역 세부를 조율하지 않고 PATROLLING으로만 안다.
 
     def _on_rat(self):
         """쥐 감지 -> 역할 배정 후 A는 TRACK, B는 HERD. 이미 대응 중이면 무시.
@@ -151,6 +192,16 @@ def _self_check():
     assert assign_roles('robot4', {'robot4': ('PATROLLING', 80)}) is None
     # patroller가 목록에 없음 -> 배정 불가
     assert assign_roles('robot9', robots) is None
+
+    # 커버리지/부트스트랩
+    both_docked = {'robot4': ('DOCKED', 100), 'robot6': ('DOCKED', 100)}
+    assert coverage_action(both_docked, None) in ('robot4', 'robot6')  # 전원 도킹 → 한 대 깨움
+    assert coverage_action(both_docked, 'robot4') is None              # 이미 깨우는 중 → 안 함
+    # 누군가 순찰/복귀 중이면 개입 안 함 (커버리지 있음/교대 진행 중)
+    assert coverage_action({'robot4': ('PATROLLING', 80), 'robot6': ('DOCKED', 100)}, None) is None
+    assert coverage_action({'robot4': ('RETURNING', 20), 'robot6': ('DOCKED', 100)}, None) is None
+    assert coverage_action({'robot4': ('IDLE', 50)}, None) == 'robot4'  # 대기뿐 → 후보
+    assert coverage_action({}, None) is None                            # 로봇 없음 → None
     print('central_node self-check ok')
 
 

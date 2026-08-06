@@ -68,7 +68,9 @@ class DetectorNode(Node):
 
     def __init__(self):
         super().__init__('detector_node')
-        self.model_path = self.declare_parameter('model_path', '').value
+        self.model_path = self.declare_parameter(
+            'model_path',
+            '/home/rokey/turtlebot4_ws/src/turtle_project/resource/best.pt').value
         self.conf = self.declare_parameter('conf', 0.6).value
         self.approach_dist = self.declare_parameter('approach_dist', 0.5).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.3).value
@@ -79,6 +81,8 @@ class DetectorNode(Node):
         cap_s = self.declare_parameter('capture_secs', 10.0).value
         lost_s = self.declare_parameter('lost_secs', 5.0).value
         self.reinstall_max = self.declare_parameter('reinstall_max', 3).value
+        # 추적 goal 재발행 주기(초) — 매 프레임 쏘면 Nav2 goal이 폭주한다.
+        self.rat_goal_period = self.declare_parameter('rat_goal_period', 1.0).value
 
         self.model = self._load_model()
         self.bridge = CvBridge()
@@ -95,6 +99,7 @@ class DetectorNode(Node):
         # 쥐 추적 판정기 (포획/놓침). tracking True일 때만 굴린다.
         self.rat = RatTracker(cap_r, cap_s, lost_s)
         self.tracking = False
+        self._last_rat_goal = 0.0   # 마지막 추적 goal 발행 시각 (rat_goal_period 조절용)
 
         self.event_pub = self.create_publisher(String, '/fleet/event', 10)
         # detector는 goal을 직접 안 쏜다. 접근·추적 목표는 target_pose로 발행만
@@ -152,8 +157,7 @@ class DetectorNode(Node):
         depth_frame = depth_msg.header.frame_id
         result = self.model(img, conf=self.conf, verbose=False)[0]
 
-        # TODO(팀원): rat 감지 — 아래 opening과 같은 방식으로 rat 클래스 박스를
-        # 잡아 map 좌표 계산 후 self._emit_rat(x, y) + target_pose 추적 goal.
+        # rat 감지 → 추적 goal/포획 판정 (SEARCHING·TRACK 무관하게 매 프레임 확인).
         self._detect_rat(result, img.shape, depth, depth_frame)
 
         if self.state == 'SEARCHING':
@@ -182,9 +186,16 @@ class DetectorNode(Node):
             self.event_pub.publish(String(data=fleet_msg.event(
                 'rat_detected', *xy)))
             return
-        # 추적 중 — 추적 goal 발행 + 포획 판정.
-        # TODO(팀원): self.pose_pub.publish(추적 target_pose) — 쥐 위치로 접근.
-        if self.rat.seen(xy[0], xy[1], self._now()):
+        # 추적 중 — 쥐 위치로 추적 goal 발행 + 포획 판정. robot_agent가 target_pose를
+        # 받아 실제로 몬다. 매 프레임 쏘면 goal 폭주라 rat_goal_period마다 한 번만.
+        now = self._now()
+        if now - self._last_rat_goal >= self.rat_goal_period:
+            self.pose_pub.publish(make_pose(FRAME, xy[0], xy[1], 0.0))
+            self._last_rat_goal = now
+            self.get_logger().info(
+                f'쥐 ({xy[0]:.2f}, {xy[1]:.2f}) 추적 goal 발행',
+                throttle_duration_sec=1.0)
+        if self.rat.seen(xy[0], xy[1], now):
             self.get_logger().info(f'쥐 포획 판정 ({xy[0]:.2f}, {xy[1]:.2f})')
             self.event_pub.publish(String(data=fleet_msg.event(
                 'rat_captured', *xy)))

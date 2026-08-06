@@ -1,0 +1,11 @@
+# robot6 전용 파라미터 — 로봇마다 다른 것만 담는다.
+# battery_threshold / battery_check_period / waypoints 는 두 대 공통이라
+# 여기 안 넣고 robot_agent.py 코드 기본값을 그대로 쓴다 (필요하면 줄 추가).
+# 실행: ros2 run turtle_project robot_agent --ros-args --params-file <경로>/robot6.yaml
+/**:
+  ros__parameters:
+    namespace: robot6
+    # 도크 '앞' 접근점 (map 절대좌표). 아래는 추측값(0,0 / -x방향) — 실측 후 교체.
+    dock_x: 0.0
+    dock_y: 0.0
+    dock_yaw_deg: 180.0    # -x 방향 = 180도 (추측)
