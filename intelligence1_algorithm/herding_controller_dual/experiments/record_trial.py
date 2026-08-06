@@ -201,11 +201,20 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
         y_positions[key] = y
         y -= 0.095
 
+    # (플랜 B) driver_id가 매 프레임 바뀔 수 있으므로, "Driver/Blocker" 같은
+    # 역할 이름이 아니라 물리 로봇 식별자("로봇 A"/"로봇 B") 기준으로 라벨을
+    # 고정한다 -- 실제로 누가 미는 역할인지는 update()에서 role_a_text/
+    # role_b_text를 프레임마다 다시 써서 보여준다.
+    has_dynamic_roles = driver_key == "driver" and "driver_id" in frames[0]
+    driver_goal_label = "로봇 A 다음 목표" if has_dynamic_roles \
+        else f"{role_a_label.split(chr(8212))[-1].strip()} 다음 목표"
+    blocker_goal_label = "로봇 B 다음 목표" if has_dynamic_roles \
+        else f"{role_b_label.split(chr(8212))[-1].strip()} 다음 목표"
     labels = {
         "state": "상태", "elapsed": "경과 시간", "discover": "발견 상태",
         "role_a": None, "role_b": None,
-        "driver_goal": f"{role_a_label.split(chr(8212))[-1].strip()} 다음 목표",
-        "blocker_goal": f"{role_b_label.split(chr(8212))[-1].strip()} 다음 목표",
+        "driver_goal": driver_goal_label,
+        "blocker_goal": blocker_goal_label,
         "dist": "표적 최근접 거리", "panic": "패닉(과근접)", "capture": "포획 유지 진행도",
     }
     label_texts = {}
@@ -230,10 +239,10 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
     ax_t.add_patch(role_dot_a); ax_t.add_patch(role_dot_b)
     role_dot_a.center = (0.015, y_positions["role_a"] - 0.01)
     role_dot_b.center = (0.015, y_positions["role_b"] - 0.01)
-    ax_t.text(0.05, y_positions["role_a"], role_a_label, color=INK, fontsize=9.5, va="top", ha="left",
-              transform=ax_t.transAxes)
-    ax_t.text(0.05, y_positions["role_b"], role_b_label, color=INK, fontsize=9.5, va="top", ha="left",
-              transform=ax_t.transAxes)
+    role_a_text = ax_t.text(0.05, y_positions["role_a"], role_a_label, color=INK, fontsize=9.5,
+                            va="top", ha="left", transform=ax_t.transAxes)
+    role_b_text = ax_t.text(0.05, y_positions["role_b"], role_b_label, color=INK, fontsize=9.5,
+                            va="top", ha="left", transform=ax_t.transAxes)
 
     bar_y = y_positions["capture"] - 0.045
     bar_bg = Rectangle((0.0, bar_y), 1.0, 0.02, facecolor=LINE, transform=ax_t.transAxes)
@@ -327,6 +336,17 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
         panic_flag = f.get("driver_panic", f.get("herder_panic", False))
         value_texts["driver_goal"].set_text(f"({dgx:.2f}, {dgy:.2f})" + (" ·후퇴" if panic_flag else ""))
         value_texts["blocker_goal"].set_text(f"({bgx:.2f}, {bgy:.2f})")
+
+        if has_dynamic_roles:
+            # 이번 프레임에 실제로 어느 물리 로봇이 미는 역할(Driver)인지에
+            # 맞춰 라벨을 다시 쓴다 -- 색상(점/궤적)은 로봇 정체성 기준으로
+            # 고정해두고, 글자만 바뀐다.
+            if f["driver_id"] == 1:
+                role_a_text.set_text("로봇 A — Driver(미는 역할)")
+                role_b_text.set_text("로봇 B — Blocker(경로 차단)")
+            else:
+                role_a_text.set_text("로봇 A — Blocker(경로 차단)")
+                role_b_text.set_text("로봇 B — Driver(미는 역할)")
 
         value_texts["dist"].set_text(f"{f['dist']:.2f} m")
         value_texts["dist"].set_color(COLORS["warn"] if f.get("panic") else INK)

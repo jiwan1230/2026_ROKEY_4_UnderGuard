@@ -171,6 +171,9 @@ def run_trial(herding_config, grid_map, distance_field, target_model_name, seed,
             )
             output = core.step(observation)
             driver_goal_point, driver_panic = output.robot1_goal, output.panic
+            # (플랜 B) 어느 물리 로봇이 이번 주기에 실제로 "미는 역할"인지는
+            # 고정이 아니라 매 주기 바뀔 수 있다 -- GIF에 그대로 반영한다.
+            role_driver_id = output.driver_id
             # blocker_active=False는 "로봇 B가 아예 없거나 손 놓고 있으면
             # 어떻게 되는가"를 재는 소거(ablation) 실험용 스위치다. 정상
             # 운용에서는 항상 True.
@@ -188,6 +191,7 @@ def run_trial(herding_config, grid_map, distance_field, target_model_name, seed,
             blocker_goal_point = ROBOT_B_SPAWN  # 대기
             state = "SEARCH"
             capture_progress = 0.0
+            role_driver_id = 1  # 발견 전엔 순찰 중인 로봇 A가 그냥 물리적으로 "미는 쪽"
 
         dist_driver = float(np.linalg.norm(target_state[:2] - driver_pos))
         dist_blocker = float(np.linalg.norm(target_state[:2] - blocker_pos))
@@ -201,6 +205,7 @@ def run_trial(herding_config, grid_map, distance_field, target_model_name, seed,
                 "target": [round(float(target_state[0]), 3), round(float(target_state[1]), 3)],
                 "driver": [round(float(driver_pos[0]), 3), round(float(driver_pos[1]), 3)],
                 "blocker": [round(float(blocker_pos[0]), 3), round(float(blocker_pos[1]), 3)],
+                "driver_id": int(role_driver_id),
                 "driver_goal": [round(float(driver_goal_point[0]), 3), round(float(driver_goal_point[1]), 3)],
                 "blocker_goal": [round(float(blocker_goal_point[0]), 3), round(float(blocker_goal_point[1]), 3)],
                 "driver_panic": bool(driver_panic),
