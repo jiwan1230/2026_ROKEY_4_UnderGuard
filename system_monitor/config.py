@@ -41,8 +41,10 @@ class RobotConfig:
 
 @dataclass(frozen=True)
 class RosInterfaceConfig:
-    """로봇 저장소 변경 시 교체할 ROS 입력 경계를 한곳에 모은다."""
+    """main Fleet 계약과 선택적 센서 입력 경계를 한곳에 모은다."""
 
+    fleet_status_topic: str = "/fleet/status"
+    fleet_event_topic: str = "/fleet/event"
     webcam_detections_topic: str = "webcam/detections"
     oakd_detections_topic: str = "oakd/detections"
     odometry_topic: str = "odom"
@@ -52,11 +54,9 @@ class RosInterfaceConfig:
 
 @dataclass(frozen=True)
 class Settings:
-    """서버, 인증, 저장소, 실행 모드를 묶은 런타임 설정."""
+    """실시간 관제 서버, 로봇, 맵과 ROS 실행 설정."""
 
     mode: str
-    secret_key: str
-    database_path: Path
     robots: tuple[RobotConfig, ...]
     offline_timeout_sec: float
     poll_interval_ms: int
@@ -70,11 +70,11 @@ def load_settings() -> Settings:
     """환경 변수에서 실행 설정을 읽는다.
 
     입력: ``MONITOR_MODE``, ``ROBOT_NAMESPACES`` 등 환경 변수다.
-    출력: 두 로봇 설정과 서버/DB 정보를 담은 ``Settings`` 객체다.
+    출력: 두 로봇 설정과 서버/ROS 정보를 담은 ``Settings`` 객체다.
     사용: 일반 실행에서는 ``create_app()``이 자동으로 호출한다.
     """
 
-    namespaces = _csv("ROBOT_NAMESPACES", "robot4,robot5")
+    namespaces = _csv("ROBOT_NAMESPACES", "robot4,robot6")
     roles = _csv("ROBOT_ROLES", ",".join("SCOUT" for _ in namespaces))
     if len(roles) < len(namespaces):
         roles.extend(["UNASSIGNED"] * (len(namespaces) - len(roles)))
@@ -88,10 +88,10 @@ def load_settings() -> Settings:
 
     return Settings(
         mode=os.getenv("MONITOR_MODE", "mock").strip().lower(),
-        secret_key=os.getenv("SECRET_KEY", "dev-secret-change-me"),
-        database_path=Path(os.getenv("DATABASE_PATH", "system_monitor.db")),
         robots=robots,
-        offline_timeout_sec=float(os.getenv("OFFLINE_TIMEOUT_SEC", "3.0")),
+        # main robot_agent의 fleet status 기본 주기(10초)보다 길어야 정상 로봇이
+        # 다음 상태 보고 전에 Offline으로 깜빡이지 않는다.
+        offline_timeout_sec=float(os.getenv("OFFLINE_TIMEOUT_SEC", "15.0")),
         poll_interval_ms=int(os.getenv("POLL_INTERVAL_MS", "1000")),
         target_loss_timeout_sec=float(os.getenv("TARGET_LOSS_TIMEOUT_SEC", "1.5")),
         low_battery_threshold=float(os.getenv("LOW_BATTERY_THRESHOLD", "15.0")),
@@ -102,6 +102,8 @@ def load_settings() -> Settings:
             )
         ),
         ros_interface=RosInterfaceConfig(
+            fleet_status_topic=os.getenv("ROS_FLEET_STATUS_TOPIC", "/fleet/status"),
+            fleet_event_topic=os.getenv("ROS_FLEET_EVENT_TOPIC", "/fleet/event"),
             webcam_detections_topic=os.getenv(
                 "ROS_WEBCAM_DETECTIONS_TOPIC", "webcam/detections"
             ),

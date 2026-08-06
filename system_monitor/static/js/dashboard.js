@@ -2,7 +2,7 @@ const cfg = window.MONITOR_CONFIG || {pollInterval : 1000, mode : 'mock'};
 let selectedRobot = null;
 let lastSnapshot = null;
 let showTrails = true;
-let showDetectionHistory = true;
+let showDetectionMarkers = true;
 let mapMetadata = null;
 let mapImage = null;
 let mapMarkerHits = [];
@@ -96,7 +96,7 @@ const localizeObjectText = value => String(value ?? '')
  * 위험신호 종류를 서로 다른 모양과 색상으로 Canvas에 그린다.
  * 입력: Canvas 문맥, 객체 종류, 화면 좌표, 크기와 투명도다.
  * 출력: 없음. 쥐·쥐구멍·배설물 마커를 현재 Canvas에 추가한다.
- * 사용: 현재 대상과 과거 탐지를 같은 시각 규칙으로 표시할 때 호출한다.
+ * 사용: 현재 대상과 이번 실행 중 수신한 탐지를 같은 규칙으로 표시한다.
  */
 function drawDetectionMarker(ctx, objectType, point, size = 5, alpha = 1) {
   const color = detectionColors[objectType] || '#ff6b6b';
@@ -135,7 +135,7 @@ function drawDetectionMarker(ctx, objectType, point, size = 5, alpha = 1) {
  * 마커 주변에서 겹치지 않는 후보를 골라 어두운 배경 라벨을 그린다.
  * 입력: Canvas 문맥, 라벨 문자열·색상·기준점, 사용 중인 영역과 화면 크기다.
  * 출력: 없음. 선택한 라벨 영역을 occupied에 추가한다.
- * 사용: 과거 탐지, 덫, 로봇, 현재 대상 라벨을 같은 규칙으로 표시한다.
+ * 사용: 수신 탐지, 덫, 로봇, 현재 대상 라벨을 같은 규칙으로 표시한다.
  */
 function drawMapLabel(ctx, text, point, color, occupied, viewport) {
   ctx.save();
@@ -295,7 +295,7 @@ function showMapMarkerDetail(marker) {
     info += ` · ${count}건`;
 
   const titlePrefix = marker.kind === 'current' ? '현재 ' : '';
-  const titleSuffix = marker.kind === 'history' ? ' 감지' : '';
+  const titleSuffix = marker.kind === 'detection' ? ' 감지' : '';
   $('#map-marker-title').textContent =
       isTrap ? label : `${titlePrefix}${label}${titleSuffix}`;
   const timestamp = Number(data.timestamp);
@@ -316,7 +316,7 @@ function showMapMarkerDetail(marker) {
  * 출력: 대표 탐지 데이터에 count가 추가된 클러스터 배열이다.
  * 사용: `drawMap()`이 같은 위치의 반복 탐지를 `×N`으로 표시할 때 호출한다.
  */
-function clusterDetectionHistory(detections, radius = .15) {
+function clusterReceivedDetections(detections, radius = .15) {
   const clusters = [];
   detections.forEach(detection => {
     if (detection.map_x == null || detection.map_y == null)
@@ -342,45 +342,13 @@ function toast(message, type = 'success') {
 }
 
 /**
- * 영향이 큰 로봇 명령을 설명한 뒤 사용자의 결정을 기다린다.
- * 입력: 제목, 질문, 적용 결과, 확인 버튼 문구와 위험 동작 여부다.
- * 출력: 확인이면 true, 취소·ESC이면 false인 Promise다.
- * 사용: 새 임무, 복귀, 임무 중단, 전체 이동 정지 직전에 호출한다.
- */
-function requestCommandConfirmation(
-    {title, message, impact, confirmLabel, danger = false}) {
-  const dialog = $('#command-confirm-dialog');
-  if (!dialog) {
-    toast('새 제어 화면 적용을 위해 Mock 서버를 재시작해 주세요.', 'error');
-    return Promise.resolve(false);
-  }
-  $('#command-confirm-title').textContent = title;
-  $('#command-confirm-message').textContent = message;
-  $('#command-confirm-impact').textContent = impact;
-  const approve = $('#approve-command-confirm');
-  approve.textContent = confirmLabel;
-  approve.classList.toggle('danger', danger);
-  dialog.returnValue = 'cancel';
-  dialog.showModal();
-  return new Promise(resolve => {
-    dialog.addEventListener('close',
-                            () => resolve(dialog.returnValue === 'confirm'),
-                            {once : true});
-  });
-}
-
-/**
- * 인증이 필요한 JSON API를 공통 방식으로 호출한다.
+ * JSON API를 공통 방식으로 호출한다.
  * 입력: API URL과 선택적인 fetch 옵션이다.
  * 출력: 파싱된 JSON Promise이며, 실패 응답은 Error로 변환한다.
  * 사용: `await request('/api/snapshot')`처럼 호출한다.
  */
 async function request(url, options = {}) {
   const response = await fetch(url, options);
-  if (response.status === 401) {
-    location.href = '/login';
-    throw new Error('인증 필요');
-  }
   const data = await response.json();
   if (!response.ok)
     throw new Error(data.error || data.reason || '요청 실패');
@@ -416,7 +384,6 @@ function render(snapshot) {
   if (!selectedRobot && snapshot.robots.length)
     selectedRobot = snapshot.robots[0].robot_id;
   renderRobots(snapshot.robots, snapshot.runtime, snapshot.mission);
-  renderFleetStopControl(snapshot.robots, snapshot.runtime);
   renderCameras(snapshot.robots, snapshot.server_time);
   renderEvents(snapshot.events);
   drawMap(snapshot);
@@ -476,103 +443,12 @@ function renderOperationsStatus(snapshot) {
 }
 
 /**
- * 현재 상태에서 각 제어 버튼을 사용할 수 있는지와 안내 문구를 계산한다.
- * 입력: 선택 로봇 상태와 런타임 명령 지원 여부다.
- * 출력: 버튼별 disabled/reason 값과 카드 하단 안내 문구다.
- * 사용: `renderRobots()`가 버튼 상태, title, 도움말을 같은 기준으로 만든다.
- */
-function getCommandControls(robot, commandsEnabled) {
-  const movingStates = [
-    'TRACKING', 'SEARCHING', 'APPROACHING', 'NAVIGATING', 'INSTALLING_TRAP'
-  ];
-  const unavailable =
-      !commandsEnabled
-          ? 'ROS 이동 명령 연결 전에는 사용할 수 없습니다.'
-          : (robot.state === 'OFFLINE' ? '로봇 통신이 끊겨 사용할 수 없습니다.'
-                                       : '');
-  const startBlocked =
-      [...movingStates, 'RETURNING', 'PAUSED', 'ERROR' ].includes(robot.state);
-  const pauseBlocked =
-      robot.state !== 'PAUSED' && !movingStates.includes(robot.state);
-  const returnBlocked =
-      [ 'OFFLINE', 'RETURNING', 'IDLE' ].includes(robot.state);
-  const stopBlocked = [ 'OFFLINE', 'IDLE', 'COMPLETED' ].includes(robot.state);
-  const reason = (blocked, detail) => unavailable || (blocked ? detail : '');
-
-  let guidance = '대기 중 · 임무 시작을 선택할 수 있습니다.';
-  if (!commandsEnabled)
-    guidance = '상태 조회 전용 · ROS 이동 명령 연결 후 제어할 수 있습니다.';
-  else if (robot.state === 'OFFLINE')
-    guidance = '통신 끊김 · 연결이 복구될 때까지 명령을 보낼 수 없습니다.';
-  else if (movingStates.includes(robot.state))
-    guidance = '임무 수행 중 · 일시정지, 복귀 또는 임무 중단이 가능합니다.';
-  else if (robot.state === 'PAUSED')
-    guidance = '일시정지 상태 · 임무 재개 또는 복귀를 선택하세요.';
-  else if (robot.state === 'RETURNING')
-    guidance = '복귀 중 · 필요하면 임무 중단으로 이동을 정지할 수 있습니다.';
-  else if (robot.state === 'COMPLETED')
-    guidance = '임무 완료 · 새 임무 시작 시 진행률과 화면 경로가 초기화됩니다.';
-  else if (robot.state === 'TARGET_LOST')
-    guidance = '대상 유실 · 임무 재시작, 복귀 또는 중단을 선택하세요.';
-  else if (robot.state === 'ERROR')
-    guidance = '오류 상태 · 원인을 확인한 뒤 임무 중단을 선택하세요.';
-
-  return {
-    start : {
-      disabled : Boolean(unavailable || startBlocked),
-      reason : reason(startBlocked,
-                      robot.state === 'PAUSED'
-                          ? '일시정지 상태에서는 임무 재개를 사용하세요.'
-                          : '현재 상태에서는 새 임무를 시작할 수 없습니다.')
-    },
-    pause : {
-      disabled : Boolean(unavailable || pauseBlocked),
-      reason : reason(pauseBlocked,
-                      '진행 중인 이동 임무가 있을 때 사용할 수 있습니다.')
-    },
-    returnHome : {
-      disabled : Boolean(unavailable || returnBlocked),
-      reason : reason(returnBlocked,
-                      '대기·복귀·오프라인 상태에서는 사용할 수 없습니다.')
-    },
-    stop : {
-      disabled : Boolean(unavailable || stopBlocked),
-      reason : reason(stopBlocked, '진행 중이거나 일시정지된 임무가 없습니다.')
-    },
-    guidance
-  };
-}
-
-/**
- * 전체 이동 정지 버튼의 활성 여부와 비활성 이유를 계산해 반영한다.
- * 입력: 전체 로봇 배열과 `commands_enabled`를 포함한 런타임 상태다.
- * 출력: 없음. 버튼의 disabled와 title 속성을 갱신한다.
- * 사용: 스냅샷을 받을 때마다 `render()`가 호출한다.
- */
-function renderFleetStopControl(robots, runtime = {}) {
-  const button = $('#stop-all-robots');
-  if (!button)
-    return;
-  const commandsEnabled = runtime.commands_enabled !== false;
-  const targets = robots.filter(
-      robot => robot.connection === 'ONLINE' &&
-               !['IDLE', 'COMPLETED', 'OFFLINE'].includes(robot.state));
-  button.disabled = !commandsEnabled || !targets.length;
-  button.title =
-      !commandsEnabled
-          ? 'ROS 이동 명령 연결 전에는 사용할 수 없습니다.'
-          : (!targets.length ? '정지할 이동 임무가 없습니다.'
-                             : `${targets.length}대의 이동 임무를 정지합니다.`);
-}
-
-/**
- * 선택 로봇의 상태 카드와 역할별 제어 버튼을 렌더링한다.
- * 입력: 로봇 배열, 명령 지원 여부를 담은 런타임 상태, 전체 임무 상태다.
- * 출력: 없음. 로봇 선택, 전체 임무 요약, 상태·명령 DOM을 다시 만든다.
- * 사용: 최초 스냅샷과 로봇 선택·명령 처리 후 `render()`에서 호출한다.
+ * 선택 로봇의 읽기 전용 상태 카드를 렌더링한다.
+ * 입력: 로봇 배열, 경고 기준을 담은 런타임 상태, 전체 임무 상태다.
+ * 출력: 없음. 로봇 선택, 전체 임무 요약, 현재 상태 DOM을 다시 만든다.
+ * 사용: 최초 스냅샷과 로봇 선택 후 `render()`에서 호출한다.
  */
 function renderRobots(robots, runtime = {}, mission = {}) {
-  const commandsEnabled = runtime.commands_enabled !== false;
   const lowBatteryThreshold = Number(runtime.low_battery_threshold || 15);
   const robot =
       robots.find(item => item.robot_id === selectedRobot) || robots[0];
@@ -597,7 +473,7 @@ function renderRobots(robots, runtime = {}, mission = {}) {
       <i class="${item.connection === 'ONLINE' ? '' : 'offline'}"></i>
     </button>`)
               .join('')}</div>`;
-  // 전체 임무 상태는 안전 버튼과 분리해 로봇 선택 탭 바로 아래에서 읽는다.
+  // 전체 임무 상태는 선택 탭 바로 아래에 두어 로봇 상태와 함께 읽는다.
   const waitingForRoleAssignment =
       mission.role_assignment_status === 'WAITING' &&
       [ 'READY', 'RUNNING' ].includes(mission.status);
@@ -614,22 +490,6 @@ function renderRobots(robots, runtime = {}, mission = {}) {
   const detail =
       [ robot ]
           .map(robot => {
-            const startCommand =
-                robot.role === 'RAT_TRACKER'
-                    ? 'START_TRACKING'
-                    : (robot.role === 'SURVEY_TRAP' ? 'START_SEARCH'
-                                                    : 'START_SCOUTING');
-            const controls = getCommandControls(robot, commandsEnabled);
-            const pauseCommand = robot.state === 'PAUSED' ? 'RESUME' : 'PAUSE';
-            const primaryCommand =
-                robot.state === 'PAUSED'
-                    ? 'RESUME'
-                    : ([
-                        'TRACKING', 'SEARCHING', 'APPROACHING', 'NAVIGATING',
-                        'INSTALLING_TRAP'
-                      ].includes(robot.state)
-                           ? 'PAUSE'
-                           : startCommand);
             const battery =
                 robot.battery == null
                     ? 0
@@ -659,37 +519,6 @@ function renderRobots(robots, runtime = {}, mission = {}) {
                 n(robot.position.x,
                   1)}, ${n(robot.position.y, 1)}</strong></div>
       </div>
-      <div class="command-row">
-        <button class="main-command ${
-                primaryCommand === startCommand
-                    ? 'primary-command'
-                    : ''}" data-command="${startCommand}" title="${
-                escapeHtml(controls.start.reason ||
-                           '새 임무를 시작합니다.')}" ${
-                controls.start.disabled ? 'disabled' : ''}>${
-                robot.state === 'COMPLETED' ? '새 임무 시작'
-                                            : '임무 시작'}</button>
-        <button class="secondary-command ${
-                primaryCommand === pauseCommand
-                    ? 'primary-command'
-                    : ''}" data-command="${pauseCommand}" title="${
-                escapeHtml(controls.pause.reason ||
-                           '현재 임무를 일시정지하거나 재개합니다.')}" ${
-                controls.pause.disabled ? 'disabled' : ''}>${
-                robot.state === 'PAUSED' ? '임무 재개' : '일시정지'}</button>
-        <button class="secondary-command" data-command="RETURN_HOME" title="${
-                escapeHtml(
-                    controls.returnHome.reason ||
-                    '현재 목표 이동을 취소하고 시작 위치로 복귀합니다.')}" ${
-                controls.returnHome.disabled ? 'disabled' : ''}>복귀</button>
-        <button class="danger-command" data-command="STOP" title="${
-                escapeHtml(
-                    controls.stop.reason ||
-                    '현재 이동과 임무를 중단하고 대기 상태로 전환합니다.')}" ${
-                controls.stop.disabled ? 'disabled' : ''}>임무 중단</button>
-      </div>
-      <p id="selected-command-guidance" class="command-guidance"><i></i>${
-                escapeHtml(controls.guidance)}</p>
     </article>`;
           })
           .join('');
@@ -698,75 +527,6 @@ function renderRobots(robots, runtime = {}, mission = {}) {
       .forEach(button => button.addEventListener('click', () => {
         selectedRobot = button.dataset.selectRobot;
         render(lastSnapshot);
-      }));
-  document.querySelectorAll('[data-command]')
-      .forEach(button => button.addEventListener('click', async event => {
-        event.stopPropagation();
-        const robotId = button.closest('.robot-card').dataset.robot;
-        const command = button.dataset.command;
-        const labels = {
-          START_SCOUTING : '공동 탐색 시작',
-          START_TRACKING : '추적 시작',
-          START_SEARCH : '탐색 시작',
-          PAUSE : '일시정지',
-          RESUME : '임무 재개',
-          RETURN_HOME : '복귀',
-          STOP : '임무 중단'
-        };
-        const currentRobot =
-            lastSnapshot?.robots.find(item => item.robot_id === robotId);
-        // 상태를 크게 바꾸는 명령만 영향 범위를 설명하고 한 번 더 확인한다.
-        let confirmation = null;
-        if (command === 'RETURN_HOME') {
-          confirmation = {
-            title : `${robotId} 복귀`,
-            message : `${robotId}를 시작 위치로 복귀시키겠습니까?`,
-            impact :
-                '현재 목표 이동을 취소하고 복귀 경로로 전환합니다. 저장된 탐지 기록은 유지됩니다.',
-            confirmLabel : '복귀 실행'
-          };
-        } else if (command === 'STOP') {
-          confirmation = {
-            title : `${robotId} 임무 중단`,
-            message : `${robotId}의 현재 임무를 중단하시겠습니까?`,
-            impact :
-                '현재 이동을 정지하고 로봇을 대기 상태로 전환합니다. 저장된 탐지 기록은 유지됩니다.',
-            confirmLabel : '임무 중단',
-            danger : true
-          };
-        } else if (command.startsWith('START_') &&
-                   currentRobot?.state === 'COMPLETED') {
-          confirmation = {
-            title : `${robotId} 새 임무 시작`,
-            message : '완료된 임무에 이어 새 임무를 시작하시겠습니까?',
-            impact :
-                '전체 임무 진행률이 0%부터 다시 시작되고 화면의 이동 경로가 초기화됩니다. 저장된 탐지 기록은 유지됩니다.',
-            confirmLabel : '새 임무 시작'
-          };
-        }
-        if (confirmation && !await requestCommandConfirmation(confirmation))
-          return;
-        const previousText = button.textContent;
-        button.disabled = true;
-        button.textContent = '전송 중…';
-        try {
-          await request('/api/commands', {
-            method : 'POST',
-            headers : {'Content-Type' : 'application/json'},
-            body : JSON.stringify({robot_id : robotId, command})
-          });
-          if (command.startsWith('START_') &&
-              currentRobot?.state === 'COMPLETED') {
-            // 새 임무 진행률과 일치하도록 이전 임무의 화면 경로도 비운다.
-            robotTrails.clear();
-          }
-          toast(`${robotId} · ${labels[command]} 명령이 반영되었습니다.`);
-          await poll();
-        } catch (error) {
-          toast(error.message, 'error');
-          button.disabled = false;
-          button.textContent = previousText;
-        }
       }));
 }
 
@@ -896,7 +656,7 @@ function renderEvents(events) {
 
 /**
  * 정적 ROS 맵 메타데이터와 서버가 변환한 PNG 이미지를 한 번 불러온다.
- * 입력: 없음. 인증된 `/api/map`과 응답의 image_url을 사용한다.
+ * 입력: 없음. `/api/map`과 응답의 image_url을 사용한다.
  * 출력: 없음. 맵 캐시와 상태 문구를 갱신하고 필요하면 지도를 다시 그린다.
  * 사용: 대시보드 초기화 마지막 단계에서 한 번 호출한다.
  */
@@ -964,11 +724,6 @@ function createMapProjection(width, height) {
 
   return {
     imageRect : {x : left, y : top, width : drawWidth, height : drawHeight},
-    // map_service.py의 world_to_pixel()과 동일한 3단계 변환이다:
-    // origin만큼 평행이동 → origin_yaw만큼 반대 회전 → m을 픽셀로 바꾸고
-    // y축을 뒤집는다(이미지는 위→아래, ROS map은 아래→위로 증가).
-    // 서버가 만든 PNG와 같은 좌표계를 써야 로봇/탐지 마커가 지도와
-    // 어긋나지 않는다.
     toCanvas : (x, y) => {
       const dx = Number(x) - originX;
       const dy = Number(y) - originY;
@@ -976,15 +731,13 @@ function createMapProjection(width, height) {
       const localY = -sinYaw * dx + cosYaw * dy;
       const pixelX = localX / mapMetadata.resolution;
       const pixelY = mapMetadata.height - localY / mapMetadata.resolution;
-      // 마지막으로 원본 PGM 픽셀 → 화면에 그려진 배율(imageScale)로 맞추고
-      // 지도 이미지가 canvas 중앙에 오도록 left/top 오프셋을 더한다.
       return {x : left + pixelX * imageScale, y : top + pixelY * imageScale};
     }
   };
 }
 
 /**
- * 로봇 위치·방향·이동 궤적과 현재/과거 탐지를 실시간 지도에 그린다.
+ * 로봇 위치·방향·이동 궤적과 현재 세션의 탐지를 지도에 그린다.
  * 입력: 로봇 위치와 최근 탐지를 포함한 서버 스냅샷이다.
  * 출력: 없음. 화면 크기에 맞춘 canvas 픽셀을 다시 그린다.
  * 사용: `render()`와 지도 표시 옵션 변경 핸들러에서 호출한다.
@@ -1004,8 +757,6 @@ function drawMap(snapshot) {
   const occupiedLabels = [];
   mapMarkerHits = [];
 
-  // 1) 배경: 실제 ROS 맵 PNG가 있으면 어둡게 깔고, 없으면(Mock) 좌표 격자를
-  // 대신 그린다.
   if (projection.imageRect) {
     const area = projection.imageRect;
     ctx.save();
@@ -1038,8 +789,6 @@ function drawMap(snapshot) {
     ctx.fillText('입구', toCanvas(.45, .4).x, toCanvas(.45, .4).y);
   }
 
-  // 2) 로봇별 이동 궤적(옵션): render()가 매 스냅샷마다 쌓아 둔
-  // robotTrails를 선으로 잇는다.
   if (showTrails) {
     snapshot.robots.forEach((robot, index) => {
       if (projection.imageRect && robot.position_frame !== mapFrame)
@@ -1067,8 +816,8 @@ function drawMap(snapshot) {
       snapshot.robots.filter(robot => targetStates.has(robot.state))
           .map(robot => robot.target || {})
           .filter(target => target.map_x != null && target.map_y != null);
-  const history =
-      clusterDetectionHistory(snapshot.detections || [])
+  const receivedDetections =
+      clusterReceivedDetections(snapshot.detections || [])
           .filter(det => !currentTargets.some(
                       target => target.object_type === det.object_type &&
                                 Math.hypot(target.map_x - det.map_x,
@@ -1076,12 +825,9 @@ function drawMap(snapshot) {
           .slice(0, 5)
           .reverse();
 
-  // 3) 라벨 겹침 방지 1단계: 실제로 그려질 모든 마커(과거 탐지·덫·로봇·현재
-  // 대상)의 위치를 먼저 occupiedLabels에 예약해 둔다. 이렇게 해야 이후
-  // drawMapLabel()이 "글자 라벨이 다른 마커를 가리지 않는" 위치를 고를 수
-  // 있다. 라벨을 그리는 순서와 관계없이 모든 실제 마커 위치를 먼저 보호한다.
-  if (showDetectionHistory)
-    history.forEach(det => {
+  // 라벨을 그리는 순서와 관계없이 모든 실제 마커 위치를 먼저 보호한다.
+  if (showDetectionMarkers)
+    receivedDetections.forEach(det => {
       if (det.map_x != null && det.map_y != null)
         reserveMapMarkerArea(occupiedLabels,
                              toCanvas(det.map_x, det.map_y));
@@ -1104,18 +850,16 @@ function drawMap(snapshot) {
                            toCanvas(target.map_x, target.map_y), 11);
   });
 
-  // 4) 과거 탐지 마커를 그린다(위치 예약이 끝난 뒤). 최근 것일수록 더
-  // 진하게(alpha 증가), 최근 2개 묶음만 텍스트 라벨을 붙인다.
-  if (showDetectionHistory)
-    history.forEach((det, index, array) => {
+  if (showDetectionMarkers)
+    receivedDetections.forEach((det, index, array) => {
       if (det.map_x == null || det.map_y == null)
         return;
       const p = toCanvas(det.map_x, det.map_y);
       const newest = index === array.length - 1;
       drawDetectionMarker(ctx, det.object_type, p, newest ? 5 : 4,
                           .28 + index / Math.max(1, array.length) * .32);
-      addMapMarkerHit(p, 'history', det);
-      // 과거 마커는 모두 클릭 가능하지만 최근 두 묶음만 라벨을 표시한다.
+      addMapMarkerHit(p, 'detection', det);
+      // 수신 마커는 모두 클릭 가능하지만 최근 두 묶음만 라벨을 표시한다.
       if (index >= array.length - 2) {
         const count = det.count > 1 ? ` ×${det.count}` : '';
         const text = `${
@@ -1127,7 +871,6 @@ function drawMap(snapshot) {
       }
     });
 
-  // 5) 설치된 덫 마커.
   (snapshot.traps || []).forEach(trap => {
     if (trap.map_x == null || trap.map_y == null)
       return;
@@ -1138,9 +881,6 @@ function drawMap(snapshot) {
     addMapMarkerHit(p, 'trap', trap);
   });
 
-  // 6) 로봇 아이콘(방향이 있는 삼각형)과, 추적/탐색 중이면 현재 대상까지의
-  // 점선 + 대상 마커를 그린다. 가장 마지막에 그려서 다른 마커 위에 보이게
-  // 한다.
   snapshot.robots.forEach((robot, index) => {
     if (projection.imageRect && robot.position_frame !== mapFrame)
       return;
@@ -1231,9 +971,9 @@ function drawMap(snapshot) {
 
 /**
  * 서버 스냅샷을 한 번 조회해 대시보드 전체를 갱신한다.
- * 입력: 없음. 인증된 `/api/snapshot`을 사용한다.
+ * 입력: 없음. `/api/snapshot`을 사용한다.
  * 출력: 완료 시 DOM이 갱신되는 Promise이며 오류는 연결 실패 상태로 표시한다.
- * 사용: 최초 로딩, 주기 타이머, 명령 처리 직후 호출한다.
+ * 사용: 최초 로딩과 주기 타이머에서 호출한다.
  */
 async function poll() {
   try {
@@ -1268,59 +1008,6 @@ document.querySelectorAll('[data-event]')
         toast(error.message, 'error');
       }
     }));
-
-/**
- * 현재 제어 가능한 모든 로봇에 STOP 명령을 각각 전송한다.
- * 입력: `전체 이동 정지` 버튼의 click 이벤트다.
- * 출력: 없음. 사용자 확인 후 결과 토스트와 최신 스냅샷을 반영한다.
- * 사용: 물리 E-Stop이 아닌 관제 명령 기반의 일괄 임무 중단에만 사용한다.
- */
-async function stopAllRobotMissions(event) {
-  const button = event.currentTarget;
-  const targets =
-      (lastSnapshot?.robots || [])
-          .filter(robot =>
-                      robot.connection === 'ONLINE' &&
-                      !['IDLE', 'COMPLETED', 'OFFLINE'].includes(robot.state));
-  if (!targets.length)
-    return;
-  const confirmed = await requestCommandConfirmation({
-    title : '전체 이동 정지',
-    message : `${
-        targets.map(robot => robot.robot_id)
-            .join(', ')}의 이동 임무를 정지하시겠습니까?`,
-    impact :
-        '관제 STOP 명령을 각 로봇에 전송하고 임무를 대기 상태로 전환합니다. 이 기능은 물리 긴급 정지 장치를 대체하지 않습니다.',
-    confirmLabel : '전체 정지',
-    danger : true
-  });
-  if (!confirmed)
-    return;
-
-  const previousText = button.textContent;
-  button.disabled = true;
-  button.textContent = '정지 명령 중…';
-  // 한 로봇의 실패가 다른 로봇의 STOP 전송을 취소하지 않도록 모두 기다린다.
-  const results = await Promise.allSettled(targets.map(
-      robot => request('/api/commands', {
-        method : 'POST',
-        headers : {'Content-Type' : 'application/json'},
-        body : JSON.stringify({robot_id : robot.robot_id, command : 'STOP'})
-      })));
-  const failed = results.filter(result => result.status === 'rejected');
-  if (failed.length)
-    toast(`${targets.length - failed.length}/${
-              targets.length}대만 정지 명령이 반영되었습니다.`,
-          'error');
-  else
-    toast(`${targets.length}대의 이동 정지 명령이 반영되었습니다.`);
-  button.textContent = previousText;
-  await poll();
-}
-
-const stopAllRobotsButton = $('#stop-all-robots');
-if (stopAllRobotsButton)
-  stopAllRobotsButton.addEventListener('click', stopAllRobotMissions);
 
 document.querySelectorAll('[data-mobile-target]')
     .forEach(button => button.addEventListener('click', () => {
@@ -1375,8 +1062,8 @@ $('#toggle-trails').addEventListener('click', event => {
     drawMap(lastSnapshot);
 });
 $('#toggle-detections').addEventListener('click', event => {
-  showDetectionHistory = !showDetectionHistory;
-  event.currentTarget.classList.toggle('active', showDetectionHistory);
+  showDetectionMarkers = !showDetectionMarkers;
+  event.currentTarget.classList.toggle('active', showDetectionMarkers);
   if (lastSnapshot)
     drawMap(lastSnapshot);
 });

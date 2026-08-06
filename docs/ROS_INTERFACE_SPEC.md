@@ -1,67 +1,85 @@
-# ROS 2 인터페이스 초안
+# ROS 2 인터페이스 명세
 
-현재 `rokey_4_mini/main`에서 확인된 인터페이스를 기준으로 작성했다.
+`main` 브랜치의 `turtle_project`와 `turtle_interfaces`를 기준으로 System Monitor가
+읽는 계약을 정리한다. Fleet String 토픽이 1순위 경계이며 로봇별 센서 토픽은
+위치·상세 탐지 정보를 보충하는 선택 입력이다.
 
-## 기존 인터페이스
+## main Fleet 계약
 
-| Namespace 상대 이름 | 타입 | System Monitor 사용 |
+| 토픽 | 타입 | 포맷 | 관제 처리 |
+|---|---|---|---|
+| `/fleet/status` | `std_msgs/String` | `robot:state:battery` | 연결·상태·배터리 갱신 |
+| `/fleet/event` | `std_msgs/String` | `event:x:y` | 현재 화면의 탐지·트랩 위치 갱신 |
+
+main 상태는 다음처럼 관제 상태로 변환한다.
+
+| main 상태 | 관제 상태 |
+|---|---|
+| `IDLE` | `IDLE` |
+| `PATROLLING` | `SEARCHING` |
+| `RETURNING` | `RETURNING` |
+| `DOCKED` | `COMPLETED` |
+| `TRACKING` | `TRACKING` |
+| `HERDING` | `NAVIGATING` |
+
+main 사건은 `rat_detected` → `LIVE_RODENT`, `opening_confirmed` →
+`ENTRY_POINT`, `trap_ok` → 설치 트랩 마커로 변환한다. x/y는 main detector가 TF로
+변환한 map 좌표로 취급한다.
+
+### 현재 계약 제약
+
+`/fleet/event` 포맷에는 `robot_id`, 신뢰도, 거리, 이미지 경로가 없다. 따라서
+System Monitor는 가장 최근에 활동 상태를 보낸 로봇을 사건 소유자로 사용하고,
+그 정보도 없으면 설정된 첫 로봇을 사용한다. 정확한 다중 로봇 사건 귀속이 필요하면
+main 계약을 `robot:event:x:y` 또는 커스텀 메시지로 확장해야 한다.
+
+System Monitor는 `/fleet/command`를 발행하지 않는다. 로봇 제어는
+`central_node`와 로봇 노드의 책임이며 관제 화면은 `/fleet/status`로 확인된 결과만
+표시한다.
+
+## 선택적 로봇별 입력
+
+| 토픽 | 타입 | 목적 |
 |---|---|---|
-| `webcam/detections` | `vision_msgs/Detection3DArray` | 외부 웹캠 탐지 클래스·신뢰도·거리 |
-| `oakd/detections` | `vision_msgs/Detection3DArray` | OAK-D 추적 클래스·신뢰도·거리 |
-| `dummy_cloud` | `sensor_msgs/PointCloud2` | 가상 장애물 발행 여부 및 후속 상태 표시 |
-| `navigate_to_pose` | `nav2_msgs/action/NavigateToPose` | 현재 goal 결과·feedback 연동 예정 |
-| `tf`, `tf_static` | TF | map 기준 로봇 위치 연동 예정 |
+| `/<ns>/odom` | `nav_msgs/Odometry` | 위치·방향·속도 |
+| `/<ns>/battery_state` | `sensor_msgs/BatteryState` | Fleet status 보조 배터리 |
+| `/<ns>/webcam/detections` | `vision_msgs/Detection3DArray` | 상세 웹캠 탐지 |
+| `/<ns>/oakd/detections` | `vision_msgs/Detection3DArray` | 상세 OAK-D 탐지·대상 유실 |
 
-`goal_manager_node.py`의 기존 동작은 웹캠 좌표로 접근하고, OAK-D가 대상을 잡으면 OAK-D 추적으로 전환하며, 1.5초 유실 시 goal을 취소하는 구조다.
+Detection3D 중심 좌표는 header frame이 `ROS_MAP_FRAME`과 같을 때만 지도 좌표로
+사용한다. 다른 센서 frame은 TF 연결 전까지 분류·거리만 표시한다. odom 위치 역시
+source frame을 보존하며 map frame이 아니면 지도에 억지로 표시하지 않는다.
 
-### 탐지 좌표계 처리
+## turtle_interfaces
 
-`Detection3D.bbox.center`는 `Detection3DArray.header.frame_id` 좌표계의 값이다.
-System Monitor는 `frame_id`가 설정된 `ROS_MAP_FRAME`과 같은 경우에만 중심의
-x/y를 `map_x/map_y`로 저장한다. 카메라 등 센서 좌표계로 수신한 탐지는 거리와
-분류 결과만 저장하며, 지도 좌표는 TF 변환이 연결될 때까지 비워 둔다.
+main의 `/db/query_hole` 서비스는 `turtle_interfaces/srv/QueryHole`을 사용한다.
 
-## 이번 스타터에서 추가 구독한 후보
+```text
+float64 x
+float64 y
+---
+bool exists
+bool trap_installed
+```
 
-| 토픽 | 목적 | 확인 상태 |
-|---|---|---|
-| `/<ns>/odom` | 로봇 위치·속도 | 현장 `ros2 topic list`로 확인 필요 |
-| `/<ns>/battery_state` | 배터리 | 현장 `ros2 topic list`로 확인 필요 |
+현재 이 서비스는 `db_node`와 `detector_node` 사이의 로봇 동작용 계약이다.
+System Monitor는 이 DB를 만들거나 직접 공유하지 않는다. 로봇 DB 조회가 필요해지면
+파일 접근이 아니라 별도의 Service/API 계약과 데이터 소유권을 먼저 확정한다.
 
-## 실제 제어 명령
+## 환경변수
 
-현재는 안전상 ROS 제어 명령을 연결하지 않았다. PM·로봇 담당과 아래를 먼저 확정한다.
+| 환경변수 | 기본값 |
+|---|---|
+| `ROBOT_NAMESPACES` | `robot4,robot6` |
+| `ROS_FLEET_STATUS_TOPIC` | `/fleet/status` |
+| `ROS_FLEET_EVENT_TOPIC` | `/fleet/event` |
+| `ROS_WEBCAM_DETECTIONS_TOPIC` | `webcam/detections` |
+| `ROS_OAKD_DETECTIONS_TOPIC` | `oakd/detections` |
+| `ROS_ODOMETRY_TOPIC` | `odom` |
+| `ROS_BATTERY_TOPIC` | `battery_state` |
+| `ROS_MAP_FRAME` | `map` |
+| `OFFLINE_TIMEOUT_SEC` | `15.0` |
 
-- 추적 시작/중단: Topic, Service, Action 중 선택
-- 탐색 시작/중단
-- 복귀
-- 쥐덫 설치
-- 비상정지
-
-합의 전 UI의 ROS 모드 명령 API는 `accepted: false`를 반환한다.
-
-## 저장소 업데이트 후 맞출 설정
-
-변경 가능성이 큰 값은 `system_monitor/config.py`의 `RosInterfaceConfig`로 모았다.
-아래 환경변수를 실제 `ros2 topic list -t`와 맵 YAML에 맞추면 구독 처리와 화면
-코드는 수정하지 않아도 된다.
-
-| 환경변수 | 기본값 | 의미 |
-|---|---|---|
-| `ROBOT_NAMESPACES` | `robot4,robot5` | 모니터링할 로봇 namespace |
-| `ROS_WEBCAM_DETECTIONS_TOPIC` | `webcam/detections` | 웹캠 탐지 토픽 |
-| `ROS_OAKD_DETECTIONS_TOPIC` | `oakd/detections` | OAK-D 탐지 토픽 |
-| `ROS_ODOMETRY_TOPIC` | `odom` | 위치·속도 토픽 |
-| `ROS_BATTERY_TOPIC` | `battery_state` | 배터리 토픽 |
-| `ROS_MAP_FRAME` | `map` | 지도와 마커가 공유할 TF frame |
-| `MAP_YAML_PATH` | 프로젝트 환경의 `my_map.yaml` | 정적 맵 YAML 경로 |
-
-토픽 값은 세 형태를 지원한다.
-
-- 상대 이름 `odom`: 로봇마다 `/<namespace>/odom`으로 변환
-- 절대 이름 `/fleet/status`: namespace를 붙이지 않고 그대로 사용
-- 템플릿 `/{namespace}/odometry/filtered`: 로봇별 namespace를 치환
-
-내일 확인할 순서는 `ros2 topic list -t` → 각 메시지 `header.frame_id` → 맵 YAML의
-`resolution`, `origin`, `image` → 필요 시 TF 트리 순서다. 메시지 타입 자체가 바뀐
-경우에만 `ros_bridge.py`의 구독 타입과 변환 함수를 수정한다.
+토픽 값은 상대 이름, `/fleet/status` 같은 절대 이름,
+`/{namespace}/odometry/filtered` 같은 namespace 템플릿을 지원한다.
+Offline 제한은 main `robot_agent`의 기본 상태 보고 주기 10초보다 길게 설정한다.

@@ -12,9 +12,6 @@
     <div class="brand"><span class="brand-dot"></span><div><strong>WPC Control</strong><small>Warehouse Pest Control</small></div></div>
     <div class="top-actions">
       <span class="mode-badge {{ mode }}">{{ mode|upper }} MODE</span>
-      <a href="{{ url_for('detections_page') }}" class="text-link">탐지 DB</a>
-      <span class="user-chip">{{ user.username }} · {{ user.role }}</span>
-      <form action="{{ url_for('logout') }}" method="post"><button class="ghost-button">로그아웃</button></form>
     </div>
   </header>
 
@@ -27,7 +24,7 @@
           <strong id="fleet-connection-state">로봇 연결 확인 중</strong>
         </div>
         <div class="header-event-actions">
-          <button id="open-event-dialog" class="event-summary-button" type="button" title="탐지·역할 배정·명령·경고를 포함한 최근 이벤트">최근 이벤트 <span id="event-count">0</span></button>
+          <button id="open-event-dialog" class="event-summary-button" type="button" title="탐지·역할 배정·경고를 포함한 현재 세션 이벤트">최근 이벤트 <span id="event-count">0</span></button>
           {% if mode == "mock" %}
           <button id="mock-panel-toggle" class="ghost-button" type="button">테스트</button>
           <div id="mock-controls" class="mock-controls hidden">
@@ -52,16 +49,14 @@
 
     <section class="dashboard-grid">
       <aside class="panel robot-panel mobile-active">
-        <!-- 전체 정지 버튼은 개별 STOP 명령을 묶는 관제 기능이며 물리 E-Stop이 아니다. -->
-        <div class="panel-title fleet-panel-header">
+        <div class="panel-title">
           <h2>로봇 상태</h2>
-          <button id="stop-all-robots" class="fleet-stop-button" type="button" disabled><span aria-hidden="true">■</span> 전체 정지</button>
         </div>
         <div id="robot-list" class="robot-list"></div>
       </aside>
 
       <section class="panel map-panel">
-        <div class="panel-title"><div><p class="eyebrow">SLAM MAP</p><h2>실시간 위치 및 탐지 마커</h2></div><div class="map-tools"><button id="toggle-trails" class="map-tool active" type="button">이동 경로</button><button id="toggle-detections" class="map-tool active" type="button">과거 탐지</button><button id="toggle-map-legend" class="map-tool" type="button" aria-controls="map-legend-card" aria-expanded="false">범례</button></div></div>
+        <div class="panel-title"><div><p class="eyebrow">SLAM MAP</p><h2>실시간 위치 및 탐지 마커</h2></div><div class="map-tools"><button id="toggle-trails" class="map-tool active" type="button">이동 경로</button><button id="toggle-detections" class="map-tool active" type="button">탐지 마커</button><button id="toggle-map-legend" class="map-tool" type="button" aria-controls="map-legend-card" aria-expanded="false">범례</button></div></div>
         <div class="map-wrap">
           <canvas id="map-canvas" aria-label="로봇 위치와 탐지 마커 지도"></canvas>
           <aside id="map-legend-card" class="map-legend-card hidden" aria-label="지도 범례">
@@ -72,7 +67,7 @@
               <span><i class="legend-shape droppings"></i>배설물</span>
               <span><i class="legend-shape trap"></i>설치된 덫</span>
               <span><i class="legend-shape current"></i>현재 대상</span>
-              <span><i class="legend-shape history"></i>과거 탐지</span>
+              <span><i class="legend-shape received"></i>수신 탐지</span>
               <span><i class="legend-line target"></i>현재 대상 연결</span>
               <span><i class="legend-line trail"></i>최근 이동 경로</span>
               <span><i class="legend-line aisle"></i>통로 기준선</span>
@@ -104,19 +99,8 @@
   </main>
 
   <dialog id="event-dialog" class="event-dialog">
-    <div class="dialog-heading"><div><p class="eyebrow">EVENT HISTORY</p><h2>최근 이벤트 내역</h2><p class="muted">탐지·역할 배정·명령·경고를 포함한 최근 사건을 시간순으로 확인합니다.</p></div><button id="close-event-dialog" class="ghost-button" type="button">닫기</button></div>
+    <div class="dialog-heading"><div><p class="eyebrow">LIVE EVENT STREAM</p><h2>현재 세션 이벤트</h2><p class="muted">서버 실행 중 수신한 탐지·상태 변화·경고만 표시하며 재시작하면 사라집니다.</p></div><button id="close-event-dialog" class="ghost-button" type="button">닫기</button></div>
     <div id="event-dialog-list" class="dialog-event-list"></div>
-  </dialog>
-
-  <!-- 새 임무·복귀·중단처럼 상태를 크게 바꾸는 명령의 영향 범위를 확인한다. -->
-  <dialog id="command-confirm-dialog" class="command-confirm-dialog" aria-labelledby="command-confirm-title">
-    <form method="dialog">
-      <p class="eyebrow">ROBOT CONTROL</p>
-      <h2 id="command-confirm-title">로봇 명령 확인</h2>
-      <p id="command-confirm-message" class="command-confirm-message"></p>
-      <div class="command-impact"><strong>명령 적용 결과</strong><p id="command-confirm-impact"></p></div>
-      <div class="command-confirm-actions"><button id="cancel-command-confirm" class="ghost-button" value="cancel">취소</button><button id="approve-command-confirm" class="command-confirm-button" value="confirm">확인</button></div>
-    </form>
   </dialog>
 
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
