@@ -72,7 +72,7 @@ class MockManagerTest(unittest.TestCase):
         self.assertEqual(self.state.snapshot()["traps"], [])
 
     def test_scheduled_detection_does_not_reopen_completed_mission(self):
-        self.mock._mission_progress = 100
+        self.mock._scenario_completed = True
         self.state.update_robot("robot4", state="COMPLETED")
         self.mock._tick = 5
 

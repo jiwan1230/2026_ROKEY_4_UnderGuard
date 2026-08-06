@@ -106,9 +106,6 @@ class RosBridge:
             "available": self.available,
             "running": self.running,
             "read_only": True,
-            "mock_events_enabled": False,
-            "mission_progress_available": False,
-            "data_source": "ROS2",
             "low_battery_threshold": self.low_battery_threshold,
         }
 

@@ -89,11 +89,9 @@ class StateManager:
         self,
         robots: list[tuple[str, str]],
         offline_timeout_sec: float = 3.0,
-        low_battery_threshold: float = 15.0,
     ):
         self._lock = threading.RLock()
         self._offline_timeout_sec = offline_timeout_sec
-        self._low_battery_threshold = low_battery_threshold
         self._initial_robots = tuple(robots)
         self._reset_unlocked()
 
@@ -110,9 +108,6 @@ class StateManager:
         self._next_trap_id = 1
         self._mission = {
             "status": "READY",
-            "progress": 0,
-            "elapsed_sec": 0,
-            "started_at": None,
             "role_assignment_status": "WAITING",
             "tracker_robot_id": None,
             "support_robot_ids": [],
@@ -216,11 +211,9 @@ class StateManager:
             self._mission.update(changes)
 
     def mark_mission_started(self) -> None:
-        """첫 활동 시 임무 시작 시각과 실행 상태를 한 번만 기록한다."""
+        """첫 탐지가 들어오면 화면의 전체 임무 상태를 실행 중으로 바꾼다."""
 
         with self._lock:
-            if self._mission["started_at"] is None:
-                self._mission["started_at"] = time.time()
             self._mission["status"] = "RUNNING"
 
     def get_robot(self, robot_id: str) -> dict[str, Any]:
@@ -284,24 +277,12 @@ class StateManager:
             self._refresh_connections()
             robots = [asdict(robot) for robot in self._robots.values()]
             mission = copy.deepcopy(self._mission)
-            if mission["started_at"] is not None and mission["status"] == "RUNNING":
-                mission["elapsed_sec"] = int(time.time() - mission["started_at"])
             online = sum(robot["connection"] == "ONLINE" for robot in robots)
-            active_alerts = sum(
-                robot["connection"] == "OFFLINE"
-                or robot["state"] in {"TARGET_LOST", "ERROR"}
-                or (
-                    robot["battery"] is not None
-                    and robot["battery"] < self._low_battery_threshold
-                )
-                for robot in robots
-            )
             return {
                 "server_time": time.time(),
                 "summary": {
                     "robots_online": online,
                     "robots_total": len(robots),
-                    "active_alerts": active_alerts,
                 },
                 "mission": mission,
                 "robots": robots,

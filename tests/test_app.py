@@ -92,6 +92,12 @@ class AppTest(unittest.TestCase):
         self.assertEqual(set(mock_runtime), set(ros_runtime))
         self.assertTrue(mock_runtime["read_only"])
         self.assertTrue(ros_runtime["read_only"])
+        for removed_field in (
+            "mock_events_enabled",
+            "mission_progress_available",
+            "data_source",
+        ):
+            self.assertNotIn(removed_field, mock_runtime)
         mock_client = self.app.test_client()
         ros_client = ros_app.test_client()
         self.assertEqual(
@@ -106,6 +112,12 @@ class AppTest(unittest.TestCase):
 
         self.assertIn(b'id="mock-panel-toggle"', mock_client.get("/").data)
         self.assertNotIn(b'id="mock-panel-toggle"', ros_client.get("/").data)
+
+        snapshot = mock_client.get("/api/snapshot").get_json()
+        self.assertNotIn("active_alerts", snapshot["summary"])
+        self.assertNotIn("progress", snapshot["mission"])
+        self.assertNotIn("elapsed_sec", snapshot["mission"])
+        self.assertNotIn("started_at", snapshot["mission"])
 
     def test_removed_feature_css_is_not_shipped(self):
         response = self.app.test_client().get("/static/css/dashboard.css")
@@ -122,6 +134,9 @@ class AppTest(unittest.TestCase):
             b".command-row",
             b".command-confirm-dialog",
             b".fleet-stop-button",
+            b".map-legend{",
+            b"#camera-robot",
+            b".map-tools .map-legend",
         ):
             self.assertNotIn(selector, style)
         response.close()

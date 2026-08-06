@@ -42,7 +42,6 @@ def create_app(settings: Settings | None = None) -> Flask:
     state = StateManager(
         [(robot.robot_id, robot.role) for robot in settings.robots],
         offline_timeout_sec=settings.offline_timeout_sec,
-        low_battery_threshold=settings.low_battery_threshold,
     )
     mock = MockManager(
         state,

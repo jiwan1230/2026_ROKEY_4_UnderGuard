@@ -23,15 +23,17 @@ class StateManagerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.state.update_robot("robot4", state="UNKNOWN_STATE")
 
-    def test_active_alerts_follow_current_robot_state(self):
-        self.state.update_robot("robot4", state="TARGET_LOST", battery=70)
-        self.assertEqual(self.state.snapshot()["summary"]["active_alerts"], 1)
+    def test_summary_only_reports_connection_counts(self):
+        self.assertEqual(
+            self.state.snapshot()["summary"],
+            {"robots_online": 0, "robots_total": 1},
+        )
 
-        self.state.update_robot("robot4", state="TRACKING", battery=70)
-        self.assertEqual(self.state.snapshot()["summary"]["active_alerts"], 0)
-
-        self.state.update_robot("robot4", battery=14)
-        self.assertEqual(self.state.snapshot()["summary"]["active_alerts"], 1)
+        self.state.update_robot("robot4", state="IDLE")
+        self.assertEqual(
+            self.state.snapshot()["summary"],
+            {"robots_online": 1, "robots_total": 1},
+        )
 
     def test_first_rat_detector_gets_tracker_role_once(self):
         state = StateManager(

@@ -10,7 +10,6 @@ RGB(image_raw/compressed)를 OpenCV 창에 띄우고, 좌클릭 4점으로 박�
     ros2 run turtle_project opening_test_node --ros-args -p depth_gap:=0.08
 """
 import cv2
-import numpy as np
 import rclpy
 from cv_bridge import CvBridge
 from message_filters import ApproximateTimeSynchronizer, Subscriber

@@ -45,7 +45,6 @@ StateManager (현재 프로세스 메모리)
 | 화면·스냅샷 구조 | 공통 | 공통 |
 | 위험신호 이름 | 표준값 사용 | 표준값 사용 |
 | 사건 보관 | 프로세스 메모리 | 프로세스 메모리 |
-| 임무 진행률 | 시연값 | 실제 Feedback 전까지 표시하지 않음 |
 | 테스트 사건 버튼 | 표시 | 숨김 |
 
 ROS 입력과 제약은 [ROS 인터페이스 명세](docs/ROS_INTERFACE_SPEC.md), 현재 개발 순서는 [System Monitor 책임 범위](docs/SYSTEM_MONITOR_SCOPE.md)를 기준으로 확인합니다.

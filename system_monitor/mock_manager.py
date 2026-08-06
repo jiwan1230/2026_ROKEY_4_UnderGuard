@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 import random
 import threading
-import time
 from typing import Callable
 
 from .detection_service import (
@@ -41,8 +40,8 @@ class MockManager:
         self._scenario_holds: dict[str, str | None] = {
             robot_id: None for robot_id in robot_ids
         }
-        self._mission_progress = 0
-        self._mission_started_at = time.time()
+        self._scenario_active_ticks = 0
+        self._scenario_completed = False
         self._initial_rat_detector = random.choice(robot_ids)
 
     @property
@@ -63,9 +62,6 @@ class MockManager:
             "available": self.available,
             "running": self.running,
             "read_only": True,
-            "mock_events_enabled": True,
-            "mission_progress_available": True,
-            "data_source": "SIMULATED",
             "low_battery_threshold": self.low_battery_threshold,
         }
 
@@ -117,7 +113,7 @@ class MockManager:
             return handler()
 
     def _run(self) -> None:
-        """초기화 후 이동, 예약 탐지, 임무 진행률을 매초 갱신한다."""
+        """초기화 후 이동, 예약 탐지, 임무 상태를 매초 갱신한다."""
 
         self._initialize_robots()
         while not self._stop.wait(1.0):
@@ -206,7 +202,7 @@ class MockManager:
         """정해진 tick에 세 종류 탐지를 생성해 시연 순서를 재현한다."""
 
         # 임무 완료 후 예약 탐지가 로봇을 다시 탐색/추적 상태로 되돌리지 않는다.
-        if self._mission_progress >= 100:
+        if self._scenario_completed:
             return
         mission = self.state.snapshot()["mission"]
         if self._tick in {5, 18, 31}:
@@ -225,26 +221,22 @@ class MockManager:
         states = [robot["state"] for robot in self.state.snapshot()["robots"]]
         active = any(state in {"TRACKING", "SEARCHING", "RETURNING"} for state in states)
         if active:
-            self._mission_progress = min(100, self._mission_progress + 2)
+            self._scenario_active_ticks += 1
             mission_status = "RUNNING"
         elif states and all(state == "PAUSED" for state in states):
             mission_status = "PAUSED"
         elif states and all(state == "COMPLETED" for state in states):
             mission_status = "COMPLETED"
-            self._mission_progress = 100
+            self._scenario_completed = True
         else:
             mission_status = "READY"
 
-        if self._mission_progress >= 100 and active:
+        if self._scenario_active_ticks >= 50 and active:
             self._complete_active_robots()
+            self._scenario_completed = True
             mission_status = "COMPLETED"
 
-        self.state.set_mission(
-            status=mission_status,
-            progress=self._mission_progress,
-            elapsed_sec=int(time.time() - self._mission_started_at),
-            started_at=self._mission_started_at,
-        )
+        self.state.set_mission(status=mission_status)
 
     def _complete_active_robots(self) -> None:
         for robot_id in self.robot_ids:
