@@ -54,7 +54,7 @@ def test_sensitivity_sweep_completes_with_the_shipping_config():
                 assert 0.0 <= rate <= 1.0
 
     drive = sweep["drive_distance_m"]
-    assert set(drive["rejected"]) == {0.9, 1.05}
+    assert set(drive["rejected"]) == {0.45, 0.6}
     for reason in drive["rejected"].values():
         assert "flee_reaction_distance_m" in reason
     # 유효한 지점들은 통째로 rejected 되지 않고 실제로 실행되었다.

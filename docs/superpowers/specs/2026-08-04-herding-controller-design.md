@@ -1,5 +1,29 @@
 # UnderGuard AMR — 2대 협업 표적 몰이(Herding) 알고리즘 패키지 설계
 
+## 변경 이력
+
+- **2026-08-06 정정**: 실제 운용 방식을 다시 확인한 결과, §1 결정 2와 §2-5의
+  "Driver/Blocker 동적 배정(비용 비교로 매 주기 재계산)"은 잘못된 가정이었다.
+  실제로는 로봇 2대가 배터리 상태에 따라 번갈아 순찰/충전하고, 순찰 중 표적을
+  발견한 로봇이 그 순간 Driver(로봇 A/로봇 1)로 배정되며 그 배정은 해당 포획
+  에피소드가 끝날 때까지 고정된다 — 그리고 그 배정 자체는 이 패키지가 아니라
+  상위 시스템이 담당한다. 이 패키지는 로봇 1(Driver)의 목표를 계산·발행하지
+  않으며(`~/robot1_goal` 삭제), 로봇 2(Blocker)의 목표점만 계산해서 발행한다.
+  §1/§2-5/§3-3 아래 내용은 이 정정을 반영해 갱신했다. 배경과 재검증 수치는
+  저장소 루트 `herding_controller_트러블슈팅_노트.md` 10번 항목 참고.
+- **2026-08-06 추가 정정**: §4-2의 "오프라인 시뮬레이터"도 재정의됐다. 그동안
+  검증 기준이었던 벽 없는 10×10m 정사각형 아레나는 실제 배포 환경(맵 상의
+  방)과 무관한 가상 공간이었다 — "실제 맵이 진짜 정식 검증이어야 한다"는
+  것을 확인받고, `test/real_map_arena.py` + `run_validation.py:
+  run_real_map_algo_suite()`를 만들어 실제 SLAM 맵(`maps/room_map.pgm`)
+  위에서 `HerdingCore` 전체를 검증하는 것으로 "정식" 검증을 재정의했다.
+  최종 수치: `reactive_flee` 65.0%, `noisy_human` 87.0% (트랩 3곳 통합,
+  N=100/트랩) — ALGO-001/002/003/005 전부 PASS. 추상 아레나 쪽(이제
+  `run_algo_suite`, 빠른 회귀 테스트 용도로만 유지)도 같은 파라미터로
+  재검증해 ALGO-001~008 8개 전부 PASS. 트러블슈팅 노트 10-4 항목에 이
+  수치에 도달하기까지의 전체 과정(파라미터 재튜닝, 버그 수정이 일시적으로
+  성공률을 낮췄던 사례 포함)이 기록되어 있다.
+
 ## 0. 출처와 승인
 - 원본 요구사항: `prompt_herding_controller.md` (사용자 작성, 사실상 완결된 스펙)
 - 승인된 결정: 최상위 프로젝트 폴더명 `Intelligence1_Algorithm`, 그 안에 ROS2 ament_python 패키지 `herding_controller/`
@@ -13,7 +37,11 @@
 
 ### 확정된 설계 결정
 1. 목표 지점: 맵 상에 고정된 포획 구역 1곳 (파라미터로 좌표+반경 지정).
-2. 로봇 역할: Driver / Blocker를 상황에 따라 동적으로 교대 (고정 배정 아님).
+2. 로봇 역할: 배터리 상태에 따라 두 로봇이 번갈아 순찰/충전하며, 순찰 중
+   표적을 발견한 로봇이 그 순간 Driver로 배정되어 해당 에피소드 동안
+   고정된다 (배정은 상위 시스템 담당, 이 패키지는 Blocker 목표만 계산).
+   ~~Driver / Blocker를 상황에 따라 동적으로 교대~~ *(2026-08-06 정정,
+   변경 이력 참고)*
 3. 표적 하드웨어 제약: 미니카 + RC 리모컨만 사용 가능, 자율 도주 로직 탑재 불가.
    - 검증은 오프라인 시뮬레이터에서 통계적으로 수행 (100회 시행).
    - 미니카는 시연/소규모 실물 확인용 (10회 시행).
@@ -50,11 +78,16 @@ P_drive = target_pos + drive_distance_m * u
 3. 해당 경로상 좌표를 Blocking Point로 선점.
 4. 이미 장애물이 막고 있으면 차선 확률 경로로 대체.
 
-### 2-5. 역할 동적 배정 (role_assigner.py)
-1. 각 로봇의 Driving Point까지 비용(거리+방향전환비용) 계산.
-2. 비용 낮은 로봇을 Driver로 배정.
-3. 히스테리시스 필수: `role_swap_margin` 이상 차이 + `role_swap_cooldown_sec` 경과 시에만 교대.
-4. 두 로봇 목표가 `min_robot_separation_m` 미만이면 Blocker 목표를 밀어냄.
+### 2-5. 최소 이격 거리 (role_assigner.py) — *2026-08-06 정정*
+Driver/Blocker 역할은 이 패키지가 배정하지 않는다(위 §1 결정 2 참고). 이
+모듈이 실제로 하는 일은 하나뿐이다: 로봇 2(Blocker)의 목표점이 로봇
+1(Driver)의 실제 위치로부터 `min_robot_separation_m` 미만이면 Blocker
+목표를 밀어낸다.
+
+~~1. 각 로봇의 Driving Point까지 비용(거리+방향전환비용) 계산.~~
+~~2. 비용 낮은 로봇을 Driver로 배정.~~
+~~3. 히스테리시스 필수: role_swap_margin 이상 차이 + role_swap_cooldown_sec 경과 시에만 교대.~~
+(위 세 항목은 실제 운용 방식과 맞지 않아 제거됨 — 변경 이력 참고)
 
 ### 2-6. 상태 기계 (state_machine.py)
 ```
@@ -104,10 +137,13 @@ class EvasionModel(ABC):
 구현: `reactive_flee`(주 검증용), `wall_hugger`(검증용), `noisy_human`(실물 근사, 반응지연 0.3~0.8s+노이즈),
 `random_walk`(대조군), `log_replay`(실측 CSV 재생).
 
-### 3-3. ROS2 인터페이스 (herding_node.py)
-Subscribe: `~/target_pose`, `~/robot1_pose`, `~/robot2_pose` (PoseStamped), `/map` (OccupancyGrid, transient_local).
-Publish: `~/robot1_goal`, `~/robot2_goal` (PoseStamped), `~/herding_state` (String/JSON),
+### 3-3. ROS2 인터페이스 (herding_node.py) — *2026-08-06 정정*
+Subscribe: `~/target_pose`, `~/robot1_pose`(Driver/로봇 A, 상위 시스템이 조종), `~/robot2_pose`(Blocker/로봇 B),
+`/map` (OccupancyGrid, transient_local).
+Publish: `~/robot2_goal` (PoseStamped, **로봇 2(Blocker)의 목표만**), `~/herding_state` (String/JSON),
 `~/escape_probability` (OccupancyGrid), `~/capture_result` (Bool).
+~~Publish: ~/robot1_goal, ~/robot2_goal~~ — 로봇 1(Driver)은 이 패키지가 조종하지
+않으므로 `~/robot1_goal`은 발행하지 않는다 (변경 이력 참고).
 제어 주기 `control_rate_hz` 기본 5.0Hz. Nav2 액션 직접 호출 금지 — 목표 좌표만 발행.
 
 ### 3-4. config/herding_params.yaml
@@ -121,7 +157,7 @@ Publish: `~/robot1_goal`, `~/robot2_goal` (PoseStamped), `~/herding_state` (Stri
 | ALGO-001 | 몰이 성공률 | 100회 시행 ≥ 70% |
 | ALGO-002 | 평균 포획 소요 시간 | ≤ 60초(sim time) |
 | ALGO-003 | 패닉 발생률 | ≤ 10% |
-| ALGO-004 | 역할 진동 없음 | 시행당 ≤ 5회 |
+| ALGO-004 | 역할 진동 없음 | 시행당 ≤ 5회 *(2026-08-06부터 역할이 고정되어 항상 0회 — 구조적으로 항상 PASS, 변경 이력 참고)* |
 | ALGO-005 | 제어 주기 지연 | 1사이클 ≤ 100ms (40×40 격자) |
 | ALGO-006 | Occlusion 복구 | 5초 이내 ≥ 80% |
 | ALGO-007 | 파라미터 외부화 | 하드코딩 임계값 0건 |

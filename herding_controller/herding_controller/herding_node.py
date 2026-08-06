@@ -27,17 +27,17 @@ from herding_controller.state_machine import FSMState
 _PARAM_DEFAULTS = {
     "frame_id": "map",
     "control_rate_hz": 5.0,
-    # --- 캡처 존 ---
-    "capture_zone_x_m": 3.0,
-    "capture_zone_y_m": 3.0,
-    "capture_radius_m": 0.5,
-    "capture_hold_sec": 3.0,
-    # --- 그리드 ---
-    "grid_resolution_m": 0.25,
-    "grid_width_cells": 40,
-    "grid_height_cells": 40,
-    "grid_origin_x_m": 0.0,
-    "grid_origin_y_m": 0.0,
+    # --- 캡처 존 --- (2026-08-06: 실제 방의 "top" 트랩 좌표 기본값, config/herding_params.yaml 참고)
+    "capture_zone_x_m": -2.81,
+    "capture_zone_y_m": -5.36,
+    "capture_radius_m": 0.3,
+    "capture_hold_sec": 1.5,  # 2026-08-06: 3.0 -> 1.5, 실제 맵 재검증 결과 (config/herding_params.yaml 주석 참고)
+    # --- 그리드 --- (2026-08-06: maps/room_map.yaml 실측값으로 교체)
+    "grid_resolution_m": 0.05,
+    "grid_width_cells": 106,
+    "grid_height_cells": 147,
+    "grid_origin_x_m": -3.19,
+    "grid_origin_y_m": -9.03,
     # --- 타겟 추정기 (KF) ---
     "kf_process_noise": 0.1,
     "kf_measurement_noise": 0.05,
@@ -52,22 +52,19 @@ _PARAM_DEFAULTS = {
     "escape_route_top_k": 3,
     "escape_concentration_threshold": 0.5,
     # --- Herding 제어 ---
-    # Task 15에서 튜닝된 값들. drive_distance_m * drive_distance_ease_factor는
-    # flee_reaction_distance_m 미만이어야 한다 (0.75 * 1.15 = 0.86 < 1.0) --
-    # 자세한 근거는 config/herding_params.yaml과 HerdingConfig.__post_init__을
-    # 참고. test_param_defaults_match_shipping_yaml_values가 이 값들을 yaml에
-    # 고정시킨다.
-    "drive_distance_m": 0.75,
-    "flee_reaction_distance_m": 1.0,
-    "panic_distance_m": 0.35,
+    # 2026-08-06 실제 맵(5.3x7.35m) 기준 재튜닝. drive_distance_m *
+    # drive_distance_ease_factor는 flee_reaction_distance_m 미만이어야 한다
+    # (0.3 * 1.15 = 0.345 < 0.42) -- 자세한 근거는 config/herding_params.yaml과
+    # HerdingConfig.__post_init__을 참고. test_param_defaults_match_shipping_yaml_values가
+    # 이 값들을 yaml에 고정시킨다.
+    "drive_distance_m": 0.3,
+    "flee_reaction_distance_m": 0.42,
+    "panic_distance_m": 0.12,
     "alignment_threshold": 0.7,
     "drive_distance_ease_factor": 1.15,
-    "block_lookahead_m": 3.0,
-    # --- 역할 배정 ---
-    "role_swap_margin": 0.5,
-    "role_swap_cooldown_sec": 2.0,
+    "block_lookahead_m": 1.8,  # 2026-08-06: 5.3x7.35m 실제 방 기준 재조정 (기존 3.0m는 10x10m 아레나 기준)
+    # --- 최소 이격 거리 (로봇 A 실제 위치와 Blocker 목표점) ---
     "min_robot_separation_m": 0.6,
-    "role_cost_turn_weight": 0.3,
     # --- Occlusion 그리드 ---
     "diffusion_rate": 0.2,
     "decay_factor": 0.9,
@@ -188,8 +185,7 @@ class HerdingNode(Node):
         # 벽시계 기준 기록: HerdingCore에 넘겨지는 sim_time_sec/dt는 명목상의
         # 1/control_rate_hz 카운터가 아니라 실제로 경과한 노드 클록 시간이므로,
         # 타이머 지터나 콜백 누락이 있어도 capture_hold_sec /
-        # role_swap_cooldown_sec / occlusion_timeout_sec가 실제 시간에
-        # 충실하게 유지된다.
+        # occlusion_timeout_sec가 실제 시간에 충실하게 유지된다.
         self._nominal_dt = 1.0 / self.config.control_rate_hz
         self._last_cycle_sec: float | None = None
         self._elapsed_sec = 0.0
@@ -200,7 +196,9 @@ class HerdingNode(Node):
         self.create_subscription(PoseStamped, "~/robot2_pose", self._on_robot2_pose, 10)
         self.create_subscription(OccupancyGrid, "/map", self._on_map, map_qos)
 
-        self.robot1_goal_pub = self.create_publisher(PoseStamped, "~/robot1_goal", 10)
+        # 로봇 1(Driver/로봇 A)의 목표는 발행하지 않는다: 그 로봇은 이 노드가
+        # 아니라 상위 시스템(순찰/추격 거동)이 조종한다. 이 노드가 실제로
+        # 명령하는 것은 로봇 2(Blocker/로봇 B)의 목표점뿐이다.
         self.robot2_goal_pub = self.create_publisher(PoseStamped, "~/robot2_goal", 10)
         self.state_pub = self.create_publisher(String, "~/herding_state", 10)
         self.escape_prob_pub = self.create_publisher(OccupancyGrid, "~/escape_probability", 10)
@@ -304,14 +302,14 @@ class HerdingNode(Node):
             )
 
     def _publish(self, output: HerdingOutput) -> None:
-        # 두 로봇 모두 실제 pose를 보고하기 전까지 robotN_pos는 여전히
-        # __init__에서 설정한 (0, 0) 자리 표시자이며, HerdingCore는
-        # (IDLE/SEARCH/TRACK/CAPTURED 상태에서) robot_pos를 그대로 목표점으로
-        # 되돌려준다 -- 여기서 그것을 발행하면 두 로봇을 그리드 원점 쪽으로
-        # 실제로 몰아가게 된다. 둘 다에 대한 실제 위치 확정이 있을 때까지
-        # 목표점 발행을 보류한다.
+        # robot2_pos(Blocker)가 실제 pose를 보고하기 전까지는 __init__에서
+        # 설정한 (0, 0) 자리 표시자이며, HerdingCore는 (IDLE/SEARCH/TRACK/
+        # CAPTURED 상태에서) 이를 그대로 목표점으로 되돌려준다 -- 여기서
+        # 그것을 발행하면 로봇을 그리드 원점 쪽으로 실제로 몰아가게 된다.
+        # robot1_pos(Driver, 이 노드가 조종하지 않음)도 escape model의 로봇
+        # 반발 항과 blocking point의 최소 이격 거리 계산에 실제로 쓰이므로,
+        # 두 pose 모두 확정된 뒤에야 robot2_goal을 발행한다.
         if self._robot1_pose_received and self._robot2_pose_received:
-            self.robot1_goal_pub.publish(self._to_pose(output.robot1_goal))
             self.robot2_goal_pub.publish(self._to_pose(output.robot2_goal))
 
         state_msg = String()

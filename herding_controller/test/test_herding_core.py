@@ -20,8 +20,7 @@ def make_config(**overrides):
         # ease factor를 flee_reaction_distance_m / drive_distance_m
         # (1.0 / 0.8 = 1.25) 미만으로 유지하여 HerdingConfig.__post_init__이 이 픽스처를 허용하도록 함.
         alignment_threshold=0.7, drive_distance_ease_factor=1.15, block_lookahead_m=1.2,
-        role_swap_margin=0.5, role_swap_cooldown_sec=2.0, min_robot_separation_m=0.6,
-        role_cost_turn_weight=0.3, diffusion_rate=0.2, decay_factor=0.9,
+        min_robot_separation_m=0.6, diffusion_rate=0.2, decay_factor=0.9,
     )
     defaults.update(overrides)
     return HerdingConfig(**defaults)
@@ -105,8 +104,7 @@ def test_config_wires_every_subconfig_without_type_error():
     assert core.escape_model.config.escape_route_top_k == 3
     assert core.planner_config.drive_distance_m == 0.8
     assert core.planner_config.block_lookahead_m == 1.2
-    assert core.role_assigner_config.role_cost_turn_weight == 0.3
-    assert core.role_assigner_config.min_robot_separation_m == 0.6
+    assert core.config.min_robot_separation_m == 0.6
     assert core.occlusion_grid.config.diffusion_rate == 0.2
     assert core.occlusion_grid.config.decay_factor == 0.9
     # escape model과 occlusion grid는 core의 단일 GridMap을 공유해야 한다.
@@ -180,42 +178,29 @@ def test_second_lost_episode_reseeds_from_new_position():
     assert abs(second_cell[0] - 20) <= 6 and abs(second_cell[1] - 20) <= 6
 
 
-def test_role_swapped_is_false_on_the_bootstrap_assignment():
-    """첫 assign() 호출은 비용이 최적인 driver를 바로 선택한다; 이는 swap이 아니다."""
+def test_roles_are_always_fixed_regardless_of_robot_positions():
+    """역할은 비용 비교로 배정되지 않는다: 로봇 1이 항상 Driver, 로봇 2가 항상 Blocker다.
+
+    실제 운용에서는 순찰 중 표적을 발견한 로봇이 상위 시스템에 의해 Driver로
+    배정되고, 그 배정은 이 패키지 밖에서 이루어진다. 로봇 2가 기하학적으로
+    훨씬 더 나은 Driver 후보처럼 보이는 위치에 있어도, 역할이 바뀌어서는
+    안 된다.
+    """
     runner = Runner()
     output = runner.run_until(FSMState.HERD, (2.0, 2.0), r1=(8.0, 8.0), r2=(1.5, 1.5))
-    assert output.driver_id == 2  # robot 2가 비용이 훨씬 낮으므로 bootstrap이 이를 선택함
+    assert output.driver_id == 1
+    assert output.blocker_id == 2
     assert output.role_swapped is False
 
 
-def test_role_swapped_is_true_only_on_the_cycle_of_a_real_swap():
+def test_role_swapped_is_always_false():
+    """역할 재배정 로직이 없으므로 role_swapped는 어떤 상황에서도 True가 될 수 없다."""
     runner = Runner()
     runner.run_until(FSMState.HERD, (2.0, 2.0), r1=(8.0, 8.0), r2=(1.5, 1.5))
-    swaps = []
-    drivers = []
     for _ in range(20):
         output = runner.run(1, (2.0, 2.0), r1=(1.5, 1.5), r2=(9.0, 9.0))
-        drivers.append(output.driver_id)
-        swaps.append(output.role_swapped)
-    assert drivers[0] == 2 and drivers[-1] == 1, "cost-optimal driver must eventually flip"
-    assert sum(swaps) == 1, "role_swapped must be True on exactly the flip cycle"
-    flip_index = swaps.index(True)
-    assert drivers[flip_index] == 1 and drivers[flip_index - 1] == 2
-
-
-def test_role_assignment_candidate_is_not_biased_by_a_panicking_robot():
-    """패닉 거리 안에 있는 로봇이 단지 가깝다는 이유만으로 Driver 역할을 얻어서는 안 된다.
-
-    compute_driving_point()는 평가 대상 로봇 바로 옆의 후퇴 지점으로 수렴하므로,
-    robot1의 결과를 role-assignment 후보로 사용하면 robot1이 panic_distance_m
-    안에 있을 때마다 무조건 이기게 된다.
-    """
-    runner = Runner()
-    # robot1은 타겟과 목표 사이에 위치하며(나쁜 Driver) panic 범위 안에 있다;
-    # robot2는 타겟 뒤, 이상적인 driving point 바로 위에 위치한다(좋은 Driver).
-    output = runner.run_until(FSMState.HERD, (2.0, 2.0), r1=(2.2, 2.2), r2=(1.4, 1.4))
-    assert output.driver_id == 2
-    assert output.panic is False  # robot2(Driver)는 panic 범위 안에 있지 않음
+        assert output.role_swapped is False
+        assert output.driver_id == 1
 
 
 def test_panic_flag_propagates_from_the_driving_point():
@@ -241,9 +226,12 @@ def test_off_grid_target_does_not_crash_the_cycle():
     output = runner.run(6, (50.0, 50.0))
     assert output.fsm_state == FSMState.HERD
     assert output.escape_top3 == []
-    # Driver는 계속 주행하며; blocking point를 계산할 수 없으므로 blocker는 대기한다.
-    assert output.driver_id == 2
-    np.testing.assert_allclose(output.robot1_goal, [0.0, 0.0])
+    # Driver(로봇 1)에 대한 참고 지점은 grid_map과 무관하게 순수 기하학으로
+    # 계속 계산되며; blocking point는 계산할 수 없으므로 blocker(로봇 2)는
+    # 자기 자리를 유지한다.
+    assert output.driver_id == 1
+    assert output.blocker_id == 2
+    np.testing.assert_allclose(output.robot2_goal, [4.0, 4.0])
 
 
 def test_mismatched_occupancy_shape_is_ignored():

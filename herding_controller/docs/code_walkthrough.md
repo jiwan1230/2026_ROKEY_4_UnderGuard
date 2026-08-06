@@ -21,7 +21,8 @@ herding_controller/herding_controller/   <- 알고리즘 코어. ROS 의존성 0
     target_estimator.py  칼만 필터 (표적 위치/속도 추정)
     escape_model.py       마르코프 도주 방향 예측
     herding_planner.py    Driving/Blocking Point 계산
-    role_assigner.py      Driver/Blocker 동적 배정 (이력현상)
+    geodesic_field.py     벽을 고려한 목표 방향 필드 (2026-08-06 신규)
+    role_assigner.py      최소 이격 거리 유지 (Driver/Blocker 역할 자체는 고정, 외부 배정)
     state_machine.py      6+1 상태 FSM
     occlusion_grid.py     LOST 상태 재탐색용 belief 그리드
     herding_core.py       위 전부를 조합하는 파사드 (핵심 오케스트레이션)
@@ -29,8 +30,9 @@ herding_controller/herding_controller/   <- 알고리즘 코어. ROS 의존성 0
 
 test/                     <- 오프라인 검증 하네스 (역시 ROS 의존성 0, herding_node.py 제외)
     evasion_models/*.py    표적(쥐) 역할 대리 모델 5종
-    simulator.py           헤드리스 2D 물리 시뮬레이터
-    run_validation.py      ALGO-001~008 통계 검증 + 대조군 실험
+    simulator.py           헤드리스 2D 물리 시뮬레이터 (추상 아레나 + 실제 맵 두 가지 run_trial)
+    real_map_arena.py      실제 SLAM 맵(../maps/room_map.pgm) 로딩 + 순찰/발견 + 벽 회피 이동 (2026-08-06 신규)
+    run_validation.py      ALGO-001~008 통계 검증 (추상 아레나 회귀용 + 실제 맵 정식 검증) + 대조군 실험
     field_logger.py        실물 시연 CSV 로깅 + 블라인드 포획구역 선택
 ```
 
@@ -56,17 +58,21 @@ rclpy 어댑터 한 장뿐입니다 — 여기서 로직을 추가하면 오프�
 5. **상태별 분기**:
    - `LOST`: `occlusion_grid.py`의 belief 그리드를 확산/감쇠시키고, 최고
      확률 셀을 재탐색 목표로 두 로봇에게 준다.
-   - `HERD`/`CORNER`: `role_assigner.py`로 Driver/Blocker 배정 →
-     `herding_planner.py`의 `compute_driving_point()`/`compute_blocking_point()`로
-     각 로봇의 목표 좌표 계산 → `resolve_separation()`으로 두 목표점이
-     너무 가깝지 않게 밀어냄.
+   - `HERD`/`CORNER`: 로봇 1(Driver/로봇 A, 상위 시스템이 이미 배정한 값을
+     그대로 받아들임)과 로봇 2(Blocker/로봇 B) 역할은 고정이다.
+     `herding_planner.py`의 `compute_driving_point()`로 로봇 1의 참고
+     지점(실제로 발행되지는 않음)을, `compute_blocking_point()`로 로봇 2의
+     실제 목표 좌표를 계산 → `resolve_separation()`으로 두 지점이 너무
+     가깝지 않게 로봇 2 쪽을 밀어냄.
    - 그 외(`IDLE`/`SEARCH`/`TRACK`/`CAPTURED`): 로봇은 현재 위치를 유지.
 6. **결과 반환** — `HerdingOutput`(로봇 목표 좌표 2개, FSM 상태, driver/blocker id,
    도주 확률, 패닉/역할교체 플래그, 지연시간)을 만들어 반환.
 
 `herding_node.py`는 이 `step()`을 ROS 타이머 콜백에서 호출하고, 결과를
-`~/robot1_goal`, `~/robot2_goal`, `~/herding_state`, `~/escape_probability`,
-`~/capture_result` 토픽으로 발행하는 게 전부입니다.
+`~/robot2_goal`, `~/herding_state`, `~/escape_probability`, `~/capture_result`
+토픽으로 발행하는 게 전부입니다. `~/robot1_goal`은 발행하지 않습니다 — 로봇
+1(Driver/로봇 A)은 이 패키지가 조종하지 않기 때문입니다 (§3의 `role_assigner.py`
+참고).
 
 ---
 
@@ -117,24 +123,42 @@ rclpy 어댑터 한 장뿐입니다 — 여기서 로직을 추가하면 오프�
 
 | 클래스/함수 | 담당 기능 |
 |---|---|
-| `compute_driving_point()` | Driver 목표점 = 표적 뒤쪽(포획구역 반대편). 표적이 이미 목표 쪽으로 가고 있으면 `drive_distance_ease_factor`로 느슨하게, 로봇이 `panic_distance_m` 안으로 너무 붙으면 후퇴(retreat) 지점 반환 |
-| `compute_blocking_point()` | Blocker 목표점 = escape model이 예측한 최고확률 도주 경로 중 "목표 반구 밖"에 있는 것을 선점. 막혀 있으면 차선책으로 완화 |
+| `compute_driving_point()` | Driver(로봇 1) 참고 지점 = 표적 뒤쪽(포획구역 반대편). 표적이 이미 목표 쪽으로 가고 있으면 `drive_distance_ease_factor`로 느슨하게, 로봇이 `panic_distance_m` 안으로 너무 붙으면 후퇴(retreat) 지점 반환. **이 값은 실제로 로봇에게 발행되지 않는다** — 로봇 1은 이 패키지가 조종하지 않으며, 이 계산은 "외부 시스템이 근사할 것으로 기대되는 거동"의 참고치이자 오프라인 검증 하네스(`test/simulator.py`)가 로봇 1을 움직이는 데 재사용하는 모델일 뿐이다 |
+| `compute_blocking_point()` | Blocker(로봇 2) 목표점 = escape model이 예측한 최고확률 도주 경로 중 "목표 반구 밖"에 있는 것을 선점. 막혀 있으면 차선책으로 완화. **이 값이 곧 `~/robot2_goal`로 발행되는, 이 패키지가 실제로 명령하는 유일한 좌표**다 |
 
-알고리즘상 역할: 예측(escape_model)과 상태(FSM)를 실제 로봇이 가야 할 (x, y)
-좌표로 변환하는 곳. **이 두 함수의 반환값이 곧 로봇에게 발행되는 목표 좌표**다.
+알고리즘상 역할: 예측(escape_model)과 상태(FSM)를 로봇 2가 가야 할 (x, y)
+좌표로 변환하는 곳.
 
-### `role_assigner.py` — Driver/Blocker 동적 배정
+### `geodesic_field.py` — 벽을 고려한 목표 방향 (2026-08-06 신규)
 
 | 클래스/함수 | 담당 기능 |
 |---|---|
-| `RoleAssigner.assign()` | 두 로봇 중 어느 쪽이 Driver인지 결정. `role_swap_margin`(비용 차이 임계값) + `role_swap_cooldown_sec`(최소 유지 시간) 둘 다 넘어야 교체 — 역할 진동(chattering) 방지 |
-| `._cost()` | 후보 로봇이 목표점까지 가는 "수고" = 직선거리 + 회전각 가중치 |
-| `resolve_separation()` | Driver/Blocker 목표점이 `min_robot_separation_m`보다 가까우면 Blocker 쪽을 밀어냄 (로봇 간 충돌 방지) |
+| `GeodesicField.__init__()` | 포획존(goal) 셀을 소스로 다익스트라 실행, 모든 자유공간 셀까지 "벽을 피해서 가는 실제 최단거리"를 계산 (goal_pos는 미션 내내 고정이므로 1회만) |
+| `.gradient_toward_goal()` | 한 지점에서 "벽을 피해 goal에 가까워지는" 국소 방향 |
+| `.trace_path()` / `.waypoint_ahead()` | 국소 기울기를 반복 추적해 실제 복도를 따라가는 경로를 만들고, 그 경로를 따라 일정 거리(기본 1.5m) 앞선 지점을 반환 — 다가올 코너를 미리 반영 |
 
-알고리즘상 역할: "누가 밀고 누가 막을지"를 매 주기 재계산하되, 히스테리시스로
-불필요한 역할 교체를 억제. `herding_core.py`의 `_nominal_driving_point()`가
-이 함수에 넘길 로봇 중립적인 후보점을 별도로 계산한다는 점이 포인트(안 그러면
-우연히 가까운 로봇 쪽으로 배정이 편향됨).
+알고리즘상 역할: `herding_planner.py`의 두 함수는 직선거리(유클리드)로만
+목표 방향을 계산하므로, 방이 미로처럼 복잡하면 그 직선이 벽을 가로질러
+잘못된 방향을 가리킬 수 있다. `herding_core.py`가 실제 포획존 좌표 대신
+이 필드가 계산한 "벽을 고려한 가상 목표점"을 두 함수에 넘겨서, 코드 한
+줄도 안 건드리고 벽 인지를 추가한다 (자세한 경위는 트러블슈팅 노트 9/10번
+항목 참고 — 처음엔 국소 기울기만으로는 효과가 작았고, 실제 경로를 따라가는
+`waypoint_ahead()`로 바꾼 뒤에야 유의미해졌다).
+
+### `role_assigner.py` — 최소 이격 거리 유지
+
+| 클래스/함수 | 담당 기능 |
+|---|---|
+| `resolve_separation()` | 로봇 2(Blocker)의 목표점이 로봇 1(Driver)의 실제 위치와 `min_robot_separation_m`보다 가까우면 로봇 2 쪽을 밀어냄 (로봇 간 충돌 방지) |
+
+알고리즘상 역할: Driver/Blocker **역할 자체는 이 패키지가 배정하지 않는다.**
+실제 운용에서는 두 로봇이 배터리 상태에 따라 번갈아 순찰/충전하다가, 순찰
+중 표적을 발견한 로봇이 상위 시스템에 의해 그 순간 Driver(로봇 1)로 배정되고
+그 배정은 포획 에피소드가 끝날 때까지 고정된다 — 이 패키지는 항상 "로봇 1 =
+이미 주어진 Driver, 로봇 2 = 우리가 목표점을 계산하는 Blocker"로 취급하며,
+비용을 비교해 매 주기 역할을 재배정하는 로직은 없다. (이전 버전에는 그런
+비용 기반 동적 재배정 로직이 있었으나, 실제 운용 방식과 맞지 않아 제거됐다 —
+자세한 경위는 트러블슈팅 노트 참고.)
 
 ### `state_machine.py` — 몰이 진행 상태 FSM
 
@@ -157,8 +181,11 @@ rclpy 어댑터 한 장뿐입니다 — 여기서 로직을 추가하면 오프�
 | `.best_guess_cell()` | belief가 가장 높은 셀 = 재탐색 목표 |
 
 알고리즘상 역할: 표적이 시야에서 사라졌을 때(LOST) "어디 있을 가능성이
-가장 높은가"를 시간에 따라 흐려지는 확률 지도로 추적. (검증 결과 ALGO-006
-기준 미달 — 이동 방향을 반영하지 못하는 구조적 한계로 기록됨, 작업요약 참고)
+가장 높은가"를 시간에 따라 흐려지는 확률 지도로 추적. (2026-08-06: 역할
+고정 + 발견기반 스폰으로 검증 하네스를 바로잡은 뒤 재검증한 결과 ALGO-006
+100% PASS로 회복 — 이전에 기록됐던 79.3% 미달은 이동 방향을 반영 못 하는
+구조적 한계가 아니라 검증 하네스 쪽 문제였던 것으로 확인됨, 트러블슈팅
+노트 10번 항목 참고)
 
 ### `herding_core.py` — 오케스트레이션 파사드
 
@@ -166,8 +193,8 @@ rclpy 어댑터 한 장뿐입니다 — 여기서 로직을 추가하면 오프�
 |---|---|
 | `HerdingConfig` | 모든 튜닝 파라미터를 담는 flat dataclass + `__post_init__`에서 `drive_distance_m * drive_distance_ease_factor < flee_reaction_distance_m` 불변식 검증 |
 | `Observation` / `HerdingOutput` | 코어의 입력/출력 데이터 타입 (numpy만 사용, ROS 메시지 타입 없음) |
-| `HerdingCore.step()` | 위 6개 모듈을 순서대로 호출하는 메인 루프 (§2 참고) |
-| `._nominal_driving_point()` | role assigner에 넘길 로봇 중립적 후보점 |
+| `HerdingCore.step()` | 위 모듈들을 순서대로 호출하는 메인 루프 (§2 참고) |
+| `._ensure_geodesic_field()` / `._direction_goal()` | 맵 도착 시 geodesic 필드를 1회 계산해 캐싱하고, 매 주기 벽을 고려한 목표 방향 기준점을 반환 |
 | `._search_point()` | LOST 상태에서 belief 최고점 또는 마지막 관측 위치로 폴백 |
 
 알고리즘상 역할: 이 프로젝트의 핵심 아키텍처 제약(ROS 의존성 0)을 지키는
@@ -178,7 +205,7 @@ rclpy 어댑터 한 장뿐입니다 — 여기서 로직을 추가하면 오프�
 | 클래스/함수 | 담당 기능 |
 |---|---|
 | `_load_config()` | ROS 파라미터 → `HerdingConfig` |
-| `HerdingNode` | `~/target_pose`, `~/robot{1,2}_pose`, `/map` 구독 → `HerdingCore.step()` 호출 → `~/robot{1,2}_goal`, `~/herding_state`, `~/escape_probability`, `~/capture_result` 발행 |
+| `HerdingNode` | `~/target_pose`, `~/robot{1,2}_pose`, `/map` 구독 → `HerdingCore.step()` 호출 → `~/robot2_goal`(로봇 1 목표는 발행 안 함), `~/herding_state`, `~/escape_probability`, `~/capture_result` 발행 |
 | `_rasterize_escape_probabilities()` | 8방향 확률을 RViz `OccupancyGrid`로 그리기 위한 래스터화 |
 | `_quaternion_to_heading()` | 로봇 orientation 쿼터니언 → 2D heading 벡터 |
 
@@ -200,20 +227,31 @@ rclpy 어댑터 한 장뿐입니다 — 여기서 로직을 추가하면 오프�
 | `random_walk.py` | 로봇을 완전히 무시 — ALGO-008 대조군(우연 성공률 baseline) |
 | `log_replay.py` | 실제 기록된 궤적 CSV 재생 — 시뮬레이션 대 현장 실험 비교용 |
 
-### `simulator.py` — 헤드리스 2D 물리 시뮬레이터
+### `simulator.py` — 헤드리스 2D 물리 시뮬레이터 (추상 아레나 + 실제 맵)
 
 | 함수 | 역할 |
 |---|---|
-| `run_trial()` | 로봇 2대+표적을 점질량으로 물리 시뮬레이션 하며 매 스텝 `HerdingCore.step()` 호출. `control_mode`로 `algorithm`/`idle`/`random` 전환 가능(ALGO-008용) |
-| `_step_body()` | 위치를 제안 지점으로 이동시키되 벽 충돌 시 정지 |
-| `_advance_target()` | 도주 모델이 명령한 속도를 적분해 표적을 이동 |
+| `run_trial()` | 벽 없는(경계 링만) 추상 정사각형 아레나에서 로봇 2대+표적을 물리 시뮬레이션. `control_mode`로 `algorithm`/`idle`/`random` 전환 가능(ALGO-008용). 2026-08-06부터는 빠른 회귀 테스트 용도 |
+| `run_trial_real_map()` | **정식 검증(2026-08-06~)**: `maps/room_map.pgm` 위에서 `HerdingCore.step()` 전체를 그대로 사용. 로봇 1은 발견 전까지 `real_map_arena.PATROL_WAYPOINTS`를 순찰하다가 센서 반경 안에 표적이 들어오면 추격 시작 |
+| `_step_body()` / `real_map_arena.step_body_sliding()` | 전자는 벽 충돌 시 정지(추상 아레나용), 후자는 막히면 16방향 중 갈 수 있는 방향으로 미끄러짐(실제 맵의 좁은 문턱용) |
+| `_advance_target()` | 도주 모델이 명령한 속도를 적분해 표적을 이동. `step_fn`으로 이동 규칙 교체 가능 — 실제 맵에서는 표적도 슬라이딩을 써야 한다(안 그러면 벽 앞에서 완전히 얼어붙음, 트러블슈팅 노트 10-4 항목) |
 
-### `run_validation.py` — 통계 검증
+### `real_map_arena.py` — 실제 맵 아레나 (2026-08-06 신규)
+
+| 함수/상수 | 역할 |
+|---|---|
+| `load_room_obstacle_mask()` | `maps/room_map.pgm`을 grid_map 규약에 맞는 장애물 마스크로 로딩 |
+| `TRAPS` | 포획구역 후보 3곳(top/left/bottom) 실측 좌표 |
+| `PATROL_WAYPOINTS` / `SENSOR_RANGE_M` | 로봇 1의 순찰 경로 / 발견 판정 센서 반경 |
+| `step_body_sliding()` / `move_with_wall_avoidance()` | 좁은 문턱 회피(16방향 슬라이딩) + 벽 반발력(potential field) 이동 |
+
+### `run_validation.py` — 통계 검증 (추상 아레나 회귀 + 실제 맵 정식)
 
 | 함수 | 역할 |
 |---|---|
-| `run_algo_suite()` | 4개 도주모델 × N회 시행 → ALGO-001~005/007 판정, `_run_occlusion_recovery_check`(ALGO-006), `_run_control_experiment`(ALGO-008 카이제곱 검정), `_run_sensitivity_sweep`(파라미터 민감도) |
-| `_write_report()` / `_write_plots()` | `test/output/`에 텍스트 리포트 + 궤적/민감도 그래프 저장 |
+| `run_algo_suite()` | 추상 아레나에서 4개 도주모델 × N회 시행 → ALGO-001~005/007 판정, `_run_occlusion_recovery_check`(ALGO-006), `_run_control_experiment`(ALGO-008 카이제곱 검정), `_run_sensitivity_sweep`(파라미터 민감도). 빠른 회귀 테스트 |
+| `run_real_map_algo_suite()` | **정식 검증**: 트랩 3곳 × 2개 도주모델(reactive_flee/noisy_human) × N회, 실제 맵 위에서 ALGO-001/002/003/005 판정 |
+| `_write_report()` / `_write_real_map_report()` / `_write_plots()` | `test/output/`에 텍스트 리포트(각각 `validation_report.txt`/`real_map_validation_report.txt`) + 궤적/민감도 그래프 저장 |
 
 ### `field_logger.py` — 실물 시연 지원
 

@@ -33,7 +33,8 @@ from test.evasion_models.noisy_human import NoisyHuman  # noqa: E402
 from test.evasion_models.random_walk import RandomWalk  # noqa: E402
 from test.evasion_models.reactive_flee import ReactiveFlee  # noqa: E402
 from test.evasion_models.wall_hugger import WallHugger  # noqa: E402
-from test.simulator import SimulatorConfig, run_trial  # noqa: E402
+from test import real_map_arena  # noqa: E402
+from test.simulator import SimulatorConfig, run_trial, run_trial_real_map  # noqa: E402
 
 # occlusion-recovery 검사는 타겟 측정값을 보류할 수 있는 제어 루프가 필요한데,
 # run_trial()은 이를 노출하지 않는다. 그래서 (복제해서 어긋나게 만들기보다는)
@@ -44,6 +45,7 @@ from test.simulator import (  # noqa: E402
     _bind_model_to_arena,
     _boundary_ring_mask,
     _move_toward,
+    _spawn_driver_near_target,
     _step_body,
     _update_heading,
 )
@@ -95,8 +97,12 @@ MODEL_RNG_STREAM = 1
 # 25%에서 82%까지 움직인다. 이를 민감도 그림에서 빼면 이 시스템이 실제로 민감하게
 # 반응하는 유일한 파라미터를 숨기는 셈이 된다.
 SENSITIVITY_SWEEPS = {
-    "drive_distance_m": (0.6, 0.75, 0.9, 1.05),
-    "block_lookahead_m": (1.2, 2.0, 3.0, 4.0),
+    # 2026-08-06: 실제 맵 기준값(drive_distance_m=0.3, block_lookahead_m=1.8)에
+    # 맞춰 스윕 지점도 재조정 (트러블슈팅 노트 10번 항목). 여전히 상위 두 지점은
+    # HerdingConfig 불변식(drive_distance_m * ease < flee_reaction_distance_m,
+    # 0.42) 위반 지점을 의도적으로 포함한다: 0.45*1.15=0.5175, 0.6*1.15=0.69.
+    "drive_distance_m": (0.15, 0.3, 0.45, 0.6),
+    "block_lookahead_m": (0.9, 1.8, 2.7, 3.6),
     "robot_repulsion_weight": (0.5, 1.0, 1.5, 2.0),
 }
 
@@ -143,6 +149,109 @@ def _make_model(name: str, herding_config: HerdingConfig, seed: int):
     if name == "random_walk":
         return RandomWalk(speed, rng=rng)
     raise ValueError(f"unknown evasion model: {name}")
+
+
+def make_real_map_config(herding_config_base: HerdingConfig, capture_zone) -> HerdingConfig:
+    """실제 SLAM 맵(room_map.pgm) 격자 파라미터 + 지정된 트랩 좌표로 config를 만든다.
+
+    grid_resolution_m/grid_width_cells/grid_height_cells/grid_origin_x_m/
+    grid_origin_y_m은 `maps/room_map.yaml`의 실측값과 반드시 일치해야 한다
+    (herding_node.py가 /map 수신 시 이 값들과 다르면 경고를 낸다).
+    """
+    obstacle_mask = real_map_arena.load_room_obstacle_mask()
+    height_cells, width_cells = obstacle_mask.shape
+    return dataclasses.replace(
+        herding_config_base,
+        grid_resolution_m=real_map_arena.RESOLUTION_M,
+        grid_width_cells=width_cells, grid_height_cells=height_cells,
+        grid_origin_x_m=real_map_arena.ORIGIN_X_M, grid_origin_y_m=real_map_arena.ORIGIN_Y_M,
+        capture_zone_x_m=float(capture_zone[0]), capture_zone_y_m=float(capture_zone[1]),
+    )
+
+
+def run_real_map_model_trials(herding_config: HerdingConfig, model_name: str, trials: int, seed_base: int) -> list:
+    """실제 맵 위에서 하나의 회피 모델에 대해 `trials`번 시행하고 TrialResults를 반환한다.
+
+    `_make_model()`을 그대로 재사용한다: WallHugger/NoisyHuman이 생성 시 받는
+    GridMap의 obstacle_mask는 어차피 `run_trial_real_map()` 내부의
+    `_bind_model_to_arena()`가 실제 맵으로 재연결하므로 신경 쓸 필요 없다.
+    """
+    results = []
+    for i in range(trials):
+        seed = seed_base + i
+        model = _make_model(model_name, herding_config, seed)
+        results.append(run_trial_real_map(herding_config, model, seed, SIM_CONFIG))
+    return results
+
+
+# 실제 맵 검증은 reactive_flee(주 검증 모델)와 noisy_human(실물 근사)만 돈다 --
+# wall_hugger/random_walk은 추상 아레나 쪽에서 이미 검증되고 있고, 실제 맵의
+# 문턱 회피 로직과의 상호작용까지 추가로 검증할 필요성은 낮다고 판단했다.
+REAL_MAP_MODEL_NAMES = ("reactive_flee", "noisy_human")
+
+
+def run_real_map_algo_suite(herding_config_base: HerdingConfig, trials_per_trap: int = 100,
+                            seed_base: int = 0) -> dict:
+    """실제 SLAM 맵 위에서, 포획구역 후보 3곳 각각에 대해 ALGO-001/002/003/005를 검증한다.
+
+    이 스위트가 "정식" 검증이다 (2026-08-06 정정, 트러블슈팅 노트 10번
+    항목): 추상 정사각형 아레나(`run_algo_suite`)는 이제 빠른 회귀 테스트
+    용도로만 남고, 실제 배포 성공률의 근거는 여기서 나온다. ALGO-004(역할
+    진동, 역할이 고정이라 항상 0)/006(occlusion)/007(구조적)/008(대조군)은
+    추상 아레나 쪽 검증을 그대로 채택한다 -- 006/008은 통제된 비교 실험이라
+    단순한 환경에서 더 깨끗하게 측정되고, 004/007은 환경과 무관한 구조적
+    보장이라 어느 쪽에서 측정해도 같다.
+    """
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    trap_results = {}
+    for offset, (trap_name, trap_pos) in enumerate(real_map_arena.TRAPS.items()):
+        config = make_real_map_config(herding_config_base, trap_pos)
+        model_results = {}
+        for model_name in REAL_MAP_MODEL_NAMES:
+            results = run_real_map_model_trials(
+                config, model_name, trials_per_trap, seed_base + offset * 100_000
+            )
+            model_results[model_name] = (results, summarize(results))
+        trap_results[trap_name] = model_results
+
+    _, primary_summary = trap_results["top"]["reactive_flee"]
+    algo_status = {
+        "ALGO-001 (실제맵)": primary_summary["success_rate"] >= ALGO_001_MIN_SUCCESS_RATE,
+        "ALGO-002 (실제맵)": primary_summary["mean_time_sec"] <= ALGO_002_MAX_MEAN_TIME_SEC,
+        "ALGO-003 (실제맵)": primary_summary["panic_rate"] <= ALGO_003_MAX_PANIC_RATE,
+        "ALGO-005 (실제맵)": primary_summary["mean_latency_ms"] <= ALGO_005_MAX_LATENCY_MS,
+    }
+    _write_real_map_report(trap_results, algo_status, trials_per_trap)
+    return {"trap_results": trap_results, "algo_status": algo_status}
+
+
+def _write_real_map_report(trap_results: dict, algo_status: dict, trials_per_trap: int) -> None:
+    lines = ["=== 실제 맵 검증 (room_map.pgm, 정식) ==="]
+    all_results_by_model = {name: [] for name in REAL_MAP_MODEL_NAMES}
+    for trap_name, model_results in trap_results.items():
+        lines.append(f"--- 트랩: {trap_name} ---")
+        for model_name, (results, summary) in model_results.items():
+            all_results_by_model[model_name].extend(results)
+            discoveries = [r.discovery_time_sec for r in results if r.discovery_time_sec is not None]
+            lines.append(
+                f"  {model_name:13s}: 성공 {summary['success_rate']*100:5.1f}% | "
+                f"평균 소요 {summary['mean_time_sec']:5.1f}s | panic {summary['panic_rate']*100:4.1f}% | "
+                f"평균 발견시각 {np.mean(discoveries):.1f}s" if discoveries else
+                f"  {model_name:13s}: 성공 {summary['success_rate']*100:5.1f}%"
+            )
+    lines.append("--- 트랩 전체 통합 (모델별) ---")
+    for model_name, results in all_results_by_model.items():
+        summary = summarize(results)
+        lines.append(
+            f"  {model_name:13s}: 성공 {summary['success_rate']*100:5.1f}% (n={summary['trials']}) | "
+            f"평균 소요 {summary['mean_time_sec']:5.1f}s | panic {summary['panic_rate']*100:4.1f}%"
+        )
+    lines.append(f"=== SUMMARY (실제 맵, 트랩당 {trials_per_trap}회 × {len(REAL_MAP_MODEL_NAMES)}개 모델) ===")
+    lines.append(" / ".join(f"{k} {'PASS' if v else 'FAIL'}" for k, v in algo_status.items()))
+    report = "\n".join(lines)
+    print(report)
+    with open(os.path.join(OUTPUT_DIR, "real_map_validation_report.txt"), "w") as f:
+        f.write(report + "\n")
 
 
 def run_model_trials(herding_config: HerdingConfig, model_name: str, trials: int, seed_base: int) -> list:
@@ -247,7 +356,10 @@ def _simulate_occlusion_episode(herding_config: HerdingConfig, seed: int) -> flo
     target_state = np.array([
         rng.uniform(spawn_low[0], spawn_high[0]), rng.uniform(spawn_low[1], spawn_high[1]), 0.0, 0.0,
     ])
-    robot1_pos = np.array([spawn_low[0], spawn_low[1]])
+    # run_trial()과 동일한 근거: 로봇 1(Driver)은 표적을 방금 발견한 위치에서
+    # 시작하고, 로봇 2(Blocker)는 고정된 대기 지점에서 시작한다. spawn_low/
+    # spawn_high(마진 적용)로 클램프해서 경계 벽 셀 위에 스폰되지 않게 한다.
+    robot1_pos = _spawn_driver_near_target(target_state[:2], rng, spawn_low, spawn_high, SIM_CONFIG)
     robot2_pos = np.array([spawn_high[0], spawn_low[1]])
     robot1_heading = np.array([1.0, 0.0])
     robot2_heading = np.array([1.0, 0.0])
@@ -641,5 +753,10 @@ def _write_sensitivity_plot(sensitivity: dict) -> None:
 
 if __name__ == "__main__":
     # 선택적인 argv[1]이 시행 횟수를 오버라이드하여, 스위트를 저렴하게 스모크 테스트할 수 있게 한다.
-    trial_count = int(sys.argv[1]) if len(sys.argv) > 1 else 100
-    run_algo_suite(load_herding_config(CONFIG_PATH), trials=trial_count)
+    # --abstract-only를 주면 추상 아레나(회귀용)만 돌리고 실제 맵 검증은 건너뛴다.
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    trial_count = int(args[0]) if args else 100
+    herding_config = load_herding_config(CONFIG_PATH)
+    run_algo_suite(herding_config, trials=trial_count)
+    if "--abstract-only" not in sys.argv:
+        run_real_map_algo_suite(herding_config, trials_per_trap=trial_count)

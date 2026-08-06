@@ -12,6 +12,11 @@ import base64
 import io
 import json
 import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import numpy as np
 
 import matplotlib
 matplotlib.use("Agg")
@@ -41,6 +46,31 @@ STATE_COLOR = {
 TRAP_KO = {"top": "상단 쥐구멍", "left": "좌측 쥐구멍", "bottom": "하단 쥐구멍", "bottom_right": "우측 하단 쥐구멍"}
 
 
+def _line_crosses_wall(p1, p2, grid_map, n=20):
+    """world 좌표 p1->p2 직선이 장애물 셀을 지나가면 True.
+
+    로봇의 실제 이동은 `real_map_arena.step_body_sliding`/
+    `move_with_wall_avoidance`가 항상 벽을 피해가지만(실측: 로봇 실제
+    좌표가 장애물 셀에 있었던 적은 0번), "다음 목표"를 점선으로 그릴 때는
+    로봇의 현재 위치와 목표점을 그냥 일직선으로 잇는다. 목표점이 벽
+    너머(예: 문턱 반대편)에 있으면 이 점선이 화면에서 벽을 뚫고 지나가는
+    것처럼 보여서, 로봇이 벽을 피해 실제로 돌아가고 있는데도 "벽을 뚫고
+    가려 한다"는 오해를 준다 (사용자 피드백으로 확인됨). 이 함수로 그
+    상황을 감지해서, 호출부가 점선을 다르게(흐리게/설명 붙여) 그리게 한다.
+    """
+    p1 = np.asarray(p1, dtype=float)
+    p2 = np.asarray(p2, dtype=float)
+    for t in np.linspace(0.0, 1.0, n):
+        point = p1 * (1 - t) + p2 * t
+        try:
+            row, col = grid_map.world_to_cell(*point)
+        except ValueError:
+            continue
+        if grid_map.obstacle_mask[row, col]:
+            return True
+    return False
+
+
 def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, fps=15):
     with open(data_path) as f:
         data = json.load(f)
@@ -51,6 +81,13 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
     frames = frames[::subsample]
 
     is_real_map = "photo_frame" in data
+    wall_grid_map = None
+    if is_real_map:
+        # 목표 점선이 벽을 관통하는지 판정하기 위한 장애물 격자. GIF
+        # 렌더링에만 쓰이며, 시뮬레이션 자체(이미 frames에 다 기록됨)에는
+        # 영향이 없다.
+        from test import real_map_arena
+        wall_grid_map = real_map_arena.build_grid_map(real_map_arena.load_room_obstacle_mask())
     driver_key = "driver" if "driver" in frames[0] else "herder"
     blocker_key = "blocker" if "blocker" in frames[0] else "tracker"
     if driver_key == "driver":
@@ -143,6 +180,9 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
                             linewidth=2, alpha=0.0)
     ax.add_patch(panic_ring)
     ax.set_title("", color=INK, fontsize=11)
+    if is_real_map:
+        ax.text(0.5, -0.03, "점선이 흐려지면: 목표 방향은 맞지만 그 직선이 벽을 지남 -- 로봇은 실제로 벽을 피해 돌아감",
+               color=MUTED, fontsize=7.5, ha="center", va="top", transform=ax.transAxes)
 
     # ---- 텔레메트리 패널 (Artifact의 오른쪽 사이드바와 동일한 정보) ----
     ax_t.set_facecolor(PANEL)
@@ -226,6 +266,17 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
             if show_goals:
                 goal_links[name].set_data([rx, gx], [ry, gy])
                 goal_marks[name].set_data([gx], [gy])
+                if wall_grid_map is not None and _line_crosses_wall(f[name], f[goal_field[name]], wall_grid_map):
+                    # 목표까지 일직선을 그으면 벽을 관통한다: 로봇은 실제로
+                    # 이 직선이 아니라 벽을 피해 돌아가므로("케이스 A/B"
+                    # 수정 이후 실측상 로봇이 장애물 셀에 있었던 적은 없음),
+                    # 이 점선을 "실제 이동 경로"로 오해하지 않도록 훨씬
+                    # 흐리게 그린다 -- 점선은 여전히 "그 방향이 목표"라는
+                    # 정보는 담고 있지만, 로봇이 벽을 뚫고 가려 한다는
+                    # 인상은 주지 않는다.
+                    goal_links[name].set_alpha(0.18)
+                else:
+                    goal_links[name].set_alpha(0.7)
             else:
                 goal_links[name].set_data([], [])
                 goal_marks[name].set_data([], [])

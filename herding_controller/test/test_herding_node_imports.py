@@ -246,7 +246,6 @@ def test_goal_publish_is_withheld_until_both_robot_poses_received():
         node = herding_node.HerdingNode()
         try:
             published = []
-            node.robot1_goal_pub.publish = lambda msg: published.append(("r1", msg))
             node.robot2_goal_pub.publish = lambda msg: published.append(("r2", msg))
 
             node._on_timer()  # 어느 pose도 아직 수신되지 않음
@@ -261,8 +260,8 @@ def test_goal_publish_is_withheld_until_both_robot_poses_received():
             r2 = PoseStamped()
             r2.pose.position.x, r2.pose.position.y = 9.0, 1.0
             node._on_robot2_pose(r2)
-            node._on_timer()  # 이제 둘 다 알려짐
-            assert {name for name, _ in published} == {"r1", "r2"}
+            node._on_timer()  # 이제 둘 다 알려짐 (robot1_goal은 애초에 발행되지 않음)
+            assert {name for name, _ in published} == {"r2"}
         finally:
             node.destroy_node()
     finally:
@@ -310,8 +309,9 @@ def test_on_robot_pose_updates_heading_from_orientation_not_hardcoded():
             node._on_robot1_pose(msg)
             assert np.allclose(node._robot1_heading, [0.0, 1.0], atol=1e-9)
 
-            # robot2는 robot1과 다른 orientation을 받는다: role_cost_turn_weight는
-            # 두 로봇의 heading이 서로 달라야만 둘을 구분할 수 있다.
+            # robot2는 robot1과 다른 orientation을 받는다: 두 heading이
+            # 서로 독립적으로 추출되는지(한쪽이 다른 쪽 값을 덮어쓰지
+            # 않는지) 확인한다.
             msg2 = PoseStamped()
             msg2.pose.orientation.w = 1.0  # identity: +X를 향함
             node._on_robot2_pose(msg2)
@@ -580,7 +580,6 @@ def test_timer_survives_an_exception_from_core_step_and_logs_it():
             logger = _RecordingLogger()
             node.get_logger = lambda: logger
             published = []
-            node.robot1_goal_pub.publish = lambda msg: published.append(msg)
             node.robot2_goal_pub.publish = lambda msg: published.append(msg)
             node.state_pub.publish = lambda msg: published.append(msg)
 
@@ -630,15 +629,15 @@ def test_timer_survives_an_exception_raised_while_publishing():
 
 # --- 최종 검토 I2: map 불일치는 ROS logger를 통해 경고됨 - #
 
-def _make_map_msg(node, height=None, width=None, resolution=None, origin_x=0.0, origin_y=0.0):
+def _make_map_msg(node, height=None, width=None, resolution=None, origin_x=None, origin_y=None):
     msg = OccupancyGrid()
     msg.info.height = int(height if height is not None else node.config.grid_height_cells)
     msg.info.width = int(width if width is not None else node.config.grid_width_cells)
     msg.info.resolution = float(
         resolution if resolution is not None else node.config.grid_resolution_m
     )
-    msg.info.origin.position.x = float(origin_x)
-    msg.info.origin.position.y = float(origin_y)
+    msg.info.origin.position.x = float(origin_x if origin_x is not None else node.config.grid_origin_x_m)
+    msg.info.origin.position.y = float(origin_y if origin_y is not None else node.config.grid_origin_y_m)
     msg.data = [0] * (msg.info.height * msg.info.width)
     return msg
 
@@ -668,7 +667,7 @@ def test_on_map_warns_on_resolution_and_origin_mismatch():
         try:
             logger = _RecordingLogger()
             node.get_logger = lambda: logger
-            node._on_map(_make_map_msg(node, resolution=0.05, origin_x=-5.0, origin_y=-5.0))
+            node._on_map(_make_map_msg(node, resolution=0.25, origin_x=-5.0, origin_y=-5.0))
             joined = " ".join(logger.warnings)
             assert "resolution" in joined
             assert "origin" in joined

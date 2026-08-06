@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from herding_controller.escape_model import EscapeModel, EscapeModelConfig
+from herding_controller.geodesic_field import GeodesicField
 from herding_controller.grid_map import GridConfig, GridMap
 from herding_controller.herding_planner import (
     PlannerConfig,
@@ -18,7 +19,7 @@ from herding_controller.herding_planner import (
     compute_driving_point,
 )
 from herding_controller.occlusion_grid import OcclusionGrid, OcclusionGridConfig
-from herding_controller.role_assigner import RoleAssigner, RoleAssignerConfig, resolve_separation
+from herding_controller.role_assigner import resolve_separation
 from herding_controller.state_machine import FSMInputs, FSMState, HerdingStateMachine
 from herding_controller.target_estimator import EstimatorConfig, TargetEstimator
 
@@ -54,10 +55,7 @@ class HerdingConfig:
     alignment_threshold: float
     drive_distance_ease_factor: float
     block_lookahead_m: float
-    role_swap_margin: float
-    role_swap_cooldown_sec: float
     min_robot_separation_m: float
-    role_cost_turn_weight: float
     diffusion_rate: float
     decay_factor: float
     grid_origin_x_m: float = 0.0
@@ -120,7 +118,16 @@ class HerdingOutput:
 
 
 class HerdingCore:
-    """grid, estimator, escape model, planner, role assigner, FSM, occlusion grid를 서로 연결한다."""
+    """grid, estimator, escape model, planner, FSM, occlusion grid를 서로 연결한다.
+
+    로봇 역할은 이 클래스가 배정하지 않는다: 로봇 1(=Driver/로봇 A)은 실제
+    운용에서 순찰 중 표적을 발견한 로봇이 상위 시스템에 의해 그 순간 배정되고,
+    그 포획 에피소드가 끝날 때까지 고정된다 -- 이 클래스는 그 배정을 그대로
+    given으로 받아들이고, 로봇 1의 움직임을 조종하지 않는다(HerdingOutput의
+    robot1_goal은 "이 지점을 향해 이동한다고 가정했을 때의 참고 지점"일
+    뿐이며, herding_node.py는 이를 실제로 발행하지 않는다). 이 클래스가
+    실제로 계산해서 명령하는 것은 로봇 2(=Blocker/로봇 B)의 목표점 하나뿐이다.
+    """
 
     def __init__(self, config: HerdingConfig) -> None:
         self.config = config
@@ -147,12 +154,6 @@ class HerdingCore:
             drive_distance_ease_factor=config.drive_distance_ease_factor,
             block_lookahead_m=config.block_lookahead_m,
         )
-        self.role_assigner_config = RoleAssignerConfig(
-            role_swap_margin=config.role_swap_margin, role_swap_cooldown_sec=config.role_swap_cooldown_sec,
-            min_robot_separation_m=config.min_robot_separation_m,
-            role_cost_turn_weight=config.role_cost_turn_weight,
-        )
-        self.role_assigner = RoleAssigner(self.role_assigner_config)
         self.fsm = HerdingStateMachine()
         self.occlusion_grid = OcclusionGrid(
             OcclusionGridConfig(diffusion_rate=config.diffusion_rate, decay_factor=config.decay_factor),
@@ -162,7 +163,14 @@ class HerdingCore:
         self._last_known_point: np.ndarray | None = None
         self._occlusion_seeded = False
         self._first_observation_seen = False
-        self._roles_ever_assigned = False
+        # 벽을 고려한 목표 방향 필드 (geodesic_field.py). goal_pos는 설정값으로
+        # 미션 내내 고정이므로, 맵이 실제로 도착한 뒤 딱 한 번만 계산해서
+        # 캐싱한다 -- 제어 주기(5Hz)마다 다익스트라를 다시 돌리면 지연시간
+        # 예산을 넘긴다. `_geodesic_ready`는 "맵이 아직 안 왔을 때"와 "맵은
+        # 왔는데 goal_pos가 격자 밖이라 계산에 실패했을 때"를 구분해서, 후자를
+        # 매 주기 재시도하지 않게 한다.
+        self._geodesic_field: GeodesicField | None = None
+        self._geodesic_ready = False
 
     # ------------------------------------------------------------------ #
     # 그리드 헬퍼                                                          #
@@ -190,28 +198,45 @@ class HerdingCore:
         y = float(np.clip(point[1], y_lo, y_hi))
         return self._cell_or_none(np.array([x, y]))
 
-    def _current_roles(self) -> tuple[int, int]:
-        """RoleAssigner에 현재 고정(latch)되어 있는 역할 배정."""
-        driver_id = self.role_assigner._driver_id
-        return driver_id, (2 if driver_id == 1 else 1)
+    def _ensure_geodesic_field(self) -> None:
+        """맵이 도착했다면, goal_pos 기준 geodesic 필드를 1회 계산해 캐싱한다."""
+        if self._geodesic_ready:
+            return
+        if not self.grid_map.obstacle_mask.any():
+            return  # 아직 실제 맵을 못 받음 (전부 False) -- 다음 주기에 재시도
+        try:
+            goal_row, goal_col = self.grid_map.world_to_cell(*self.goal_pos)
+        except ValueError:
+            # goal_pos가 격자 밖: 설정 오류이며 재시도해도 달라지지 않는다.
+            self._geodesic_ready = True
+            return
+        self._geodesic_field = GeodesicField(self.grid_map, goal_row, goal_col)
+        self._geodesic_ready = True
 
-    def _nominal_driving_point(self, target_pos: np.ndarray, target_vel: np.ndarray) -> np.ndarray:
-        """panic-retreat를 무시한 driving point로, 로봇에 무관한 역할 배정 후보로 사용된다.
+    # 국소 기울기 한 지점이 아니라 실제 경로를 따라 앞을 내다보는 거리.
+    # block_lookahead_m과 같은 자릿수로 맞춰, "한 코너 정도는 미리 본다"는
+    # 감각에 맞춘 값 -- 별도 config 파라미터로 빼지 않은 이유는 이게
+    # 알고리즘 내부 구현 디테일(geodesic 경로 추적의 해상도)이지, 배포
+    # 환경마다 바뀌어야 하는 값이 아니기 때문이다.
+    _WAYPOINT_LOOKAHEAD_M = 1.5
 
-        compute_driving_point()는 해당 로봇이 panic_distance_m 이내에 있을 때
-        robot_pos에 밀착하는 *retreat* 지점을 반환한다. 따라서 특정 로봇을
-        기준으로 계산한 후보를 role assigner에 넘기면, 우연히 가까이 있던
-        로봇 쪽으로 배정이 편향될 것이다. panic distance 밖에 있음이 보장된
-        기준 위치에서 평가하면 두 로봇 모두에게 동일한 기하학적 driving
-        point를 얻을 수 있다.
+    def _direction_goal(self, position: np.ndarray) -> np.ndarray:
+        """compute_driving_point/compute_blocking_point에 goal_pos 대신 넘길 목표 방향 기준점.
+
+        geodesic 필드가 준비되어 있으면, 실제 경로를 따라
+        `_WAYPOINT_LOOKAHEAD_M`만큼 앞서 내다본 지점(코너를 미리 반영)을
+        반환한다. 실패하면(그리드 밖 등) 국소 기울기 한 번만 본 값으로,
+        그것도 실패하면 실제 goal_pos로 폴백한다 -- 두 함수 모두 이 값과
+        target_pos의 차이에서 "방향"만 뽑아 쓰므로 안전한 폴백 체인이다.
         """
-        away = target_pos - self.goal_pos
-        norm = float(np.linalg.norm(away))
-        away = away / norm if norm > 1e-6 else np.array([1.0, 0.0])
-        reference = target_pos + away * (self.config.panic_distance_m + self.config.drive_distance_m + 1.0)
-        return compute_driving_point(
-            target_pos, target_vel, self.goal_pos, reference, self.planner_config
-        ).point
+        if self._geodesic_field is not None:
+            waypoint = self._geodesic_field.waypoint_ahead(position, lookahead_m=self._WAYPOINT_LOOKAHEAD_M)
+            if waypoint is not None:
+                return waypoint
+            virtual_goal = self._geodesic_field.virtual_goal_point(position)
+            if virtual_goal is not None:
+                return virtual_goal
+        return self.goal_pos
 
     def _reset_occlusion_memory(self) -> None:
         """LOST 에피소드의 시드를 초기화하여 다음 에피소드가 새로 시드되도록 한다."""
@@ -248,6 +273,8 @@ class HerdingCore:
                     "ignoring occupancy grid with shape %s, expected %s",
                     tuple(observation.occupancy.shape), expected,
                 )
+
+        self._ensure_geodesic_field()
 
         target_observed = observation.target_measurement is not None
         if target_observed:
@@ -289,10 +316,17 @@ class HerdingCore:
         panic = False
         role_swapped = False
 
+        # 역할은 항상 고정이다: 로봇 1 = Driver(로봇 A, 상위 시스템이 이미
+        # 배정한 값을 그대로 받아들임), 로봇 2 = Blocker(로봇 B, 아래에서
+        # 우리가 실제로 목표점을 계산해서 명령하는 대상). 비용을 비교해서
+        # 매 주기 역할을 재배정하는 로직은 없다 -- 그런 재배정 자체가 이
+        # 패키지의 책임이 아니기 때문이다.
+        driver_id, blocker_id = 1, 2
+
         if fsm_state == FSMState.LOST:
             # occlusion grid는 오직 LOST 상태에서만 사용된다: 여기서는 escape
-            # model, planner, role assignment 어느 것도 실행되지 않으며, 두
-            # 로봇은 그저 belief의 최고점을 훑고 지나간다.
+            # model, planner 어느 것도 실행되지 않으며, robot1_goal(참고용)과
+            # robot2_goal(실제 명령)은 그저 belief의 최고점을 훑고 지나간다.
             if not self._occlusion_seeded:
                 self._last_known_point = np.asarray(target_state.position, dtype=float).copy()
                 self._last_known_cell = self._clamped_cell_or_none(target_state.position)
@@ -301,60 +335,52 @@ class HerdingCore:
                     self._occlusion_seeded = True
             self.occlusion_grid.step(observation.dt)
             search_point = self._search_point(target_state.position)
-            driver_id, blocker_id = self._current_roles()
             # 두 로봇 모두 동일한 belief 최고점으로 수렴하므로, 하나의 지점을
-            # 두고 다투지 않도록 두 번째 목표를 오프셋한다.
-            offset_point = resolve_separation(search_point, search_point, self.role_assigner_config)
-            if driver_id == 1:
-                robot1_goal, robot2_goal = search_point, offset_point
-            else:
-                robot1_goal, robot2_goal = offset_point, search_point
+            # 두고 다투지 않도록 로봇 2의 목표를 오프셋한다.
+            robot1_goal = search_point
+            robot2_goal = resolve_separation(search_point, search_point, self.config.min_robot_separation_m)
         else:
             self._reset_occlusion_memory()
             if fsm_state in (FSMState.HERD, FSMState.CORNER):
-                candidate = self._nominal_driving_point(target_state.position, target_state.velocity)
-                previous_driver = self.role_assigner._driver_id if self._roles_ever_assigned else None
-                driver_id, blocker_id = self.role_assigner.assign(
-                    observation.robot1_pos, observation.robot2_pos,
-                    observation.robot1_heading, observation.robot2_heading,
-                    candidate, observation.sim_time_sec,
-                )
-                # 최초의 assign() 호출은 이전에 계산된 배정으로부터 교체하는
-                # 것이 아니라 driver를 부트스트랩하는 것이므로 swap이 아니다.
-                role_swapped = previous_driver is not None and driver_id != previous_driver
-                self._roles_ever_assigned = True
-
-                driver_pos = observation.robot1_pos if driver_id == 1 else observation.robot2_pos
-                blocker_pos = observation.robot2_pos if driver_id == 1 else observation.robot1_pos
+                # robot1_goal은 로봇 1(Driver)이 이 지점을 향해 움직인다고
+                # 가정했을 때의 참고 지점일 뿐이다 -- herding_node.py는 이
+                # 값을 실제로 발행하지 않는다(로봇 A는 이 패키지가 조종하지
+                # 않음). 오프라인 검증 하네스(test/simulator.py)는 이 값을
+                # "외부 시스템이 근사할 것으로 기대되는 Driver 거동"의
+                # 모델로 재사용한다.
+                #
+                # compute_driving_point/compute_blocking_point에는 실제
+                # goal_pos 대신 direction_goal(벽을 고려한 가상 목표점,
+                # geodesic_field.py)을 넘긴다: 두 함수 모두 이 값과
+                # target_pos의 차이에서 방향만 뽑아 쓰므로, 직선이 벽을
+                # 가로지르는 상황에서도 실제로 갈 수 있는 방향을 가리키게
+                # 된다 (geodesic 필드가 아직 없으면 goal_pos 그대로 폴백).
+                direction_goal = self._direction_goal(target_state.position)
                 driving = compute_driving_point(
-                    target_state.position, target_state.velocity, self.goal_pos,
-                    driver_pos, self.planner_config,
+                    target_state.position, target_state.velocity, direction_goal,
+                    observation.robot1_pos, self.planner_config,
                 )
                 panic = driving.is_panic
 
                 if escape_estimate is not None:
                     blocking_point = compute_blocking_point(
-                        target_state.position, self.goal_pos, escape_estimate,
+                        target_state.position, direction_goal, escape_estimate,
                         self.grid_map, self.planner_config,
                     )
                     blocking_point = resolve_separation(
-                        driving.point, blocking_point, self.role_assigner_config
+                        driving.point, blocking_point, self.config.min_robot_separation_m
                     )
                 else:
                     # 타겟 추정치가 그리드 밖에 있어 escape distribution이
-                    # 없고 의미 있는 blocking point도 없다. driving은
-                    # 계속하고 blocker는 제자리를 유지한다.
-                    blocking_point = np.asarray(blocker_pos, dtype=float).copy()
+                    # 없고 의미 있는 blocking point도 없다. blocker는
+                    # 제자리를 유지한다.
+                    blocking_point = np.asarray(observation.robot2_pos, dtype=float).copy()
 
-                if driver_id == 1:
-                    robot1_goal, robot2_goal = driving.point, blocking_point
-                else:
-                    robot1_goal, robot2_goal = blocking_point, driving.point
+                robot1_goal, robot2_goal = driving.point, blocking_point
             else:
                 # IDLE / SEARCH / TRACK / CAPTURED: 위치를 유지한다.
                 robot1_goal = np.asarray(observation.robot1_pos, dtype=float).copy()
                 robot2_goal = np.asarray(observation.robot2_pos, dtype=float).copy()
-                driver_id, blocker_id = self._current_roles()
 
         latency_ms = (time.perf_counter() - start) * 1000.0
         return HerdingOutput(
