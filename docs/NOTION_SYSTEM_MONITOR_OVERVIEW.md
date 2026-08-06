@@ -142,6 +142,9 @@ Flask API
 
 | 토픽 | 메시지 타입 | 구현 상태 | 용도 |
 |---|---|---|---|
+| `/fleet/status` | `std_msgs/String` | 구현 | main 로봇 상태·배터리 |
+| `/fleet/event` | `std_msgs/String` | 구현 | main 탐지·트랩 사건 |
+| `/fleet/command` | `std_msgs/String` | 구현 | main 지원 웹 명령 |
 | `/<namespace>/webcam/detections` | `vision_msgs/Detection3DArray` | 구현 | 외부 웹캠 탐지 결과 |
 | `/<namespace>/oakd/detections` | `vision_msgs/Detection3DArray` | 구현 | OAK-D 탐지 결과 |
 | `/<namespace>/odom` | `nav_msgs/Odometry` | 후보 구현 | 로봇 위치·방향·속도 |
@@ -159,8 +162,8 @@ ros2 topic list -t
 ```text
 /robot4/odom
 /robot4/battery_state
-/robot5/odom
-/robot5/battery_state
+/robot6/odom
+/robot6/battery_state
 ```
 
 ### ROS Bridge에서 처리하는 내용
@@ -176,7 +179,8 @@ ros2 topic list -t
 
 ### 실제 로봇 제어 상태
 
-현재 실제 로봇 제어용 Action·Service는 연결되어 있지 않습니다. ROS 모드에서 웹 UI가 제어 명령을 요청하면 `accepted: false`를 반환합니다.
+현재 main의 `/fleet/command`가 지원하는 순찰·추적·복귀·정지 명령은 웹 UI에서
+전송합니다. main 계약에 없는 일시정지·트랩 설치 명령은 화면에서 비활성화합니다.
 
 > 원본 시스템의 “1.5초 대상 유실 시 Nav2 Goal 취소”는 기존 `goal_manager_node`의 동작입니다. 현재 Flask 시스템 모니터는 이 Goal 취소를 직접 실행하지 않습니다.
 
@@ -214,7 +218,7 @@ ros2 topic list -t
 
 ```text
 robot4: SCOUT
-robot5: SCOUT
+robot6: SCOUT
 ```
 
 최초 쥐 탐지가 발생하면 역할이 자동으로 변경됩니다.
@@ -330,9 +334,9 @@ PW: admin123
 MONITOR_MODE=mock
 SECRET_KEY=change-this-before-demo
 DATABASE_PATH=system_monitor.db
-ROBOT_NAMESPACES=robot4,robot5
+ROBOT_NAMESPACES=robot4,robot6
 ROBOT_ROLES=SCOUT,SCOUT
-OFFLINE_TIMEOUT_SEC=3.0
+OFFLINE_TIMEOUT_SEC=15.0
 POLL_INTERVAL_MS=1000
 ```
 
@@ -359,7 +363,7 @@ source /opt/ros/humble/setup.bash
 source ~/turtlebot4_ws/install/setup.bash
 
 export MONITOR_MODE=ros
-export ROBOT_NAMESPACES=robot4,robot5
+export ROBOT_NAMESPACES=robot4,robot6
 export ROBOT_ROLES=SCOUT,SCOUT
 
 python3 -m system_monitor.app
@@ -368,7 +372,7 @@ python3 -m system_monitor.app
 다음 값은 실제 프로젝트 환경에 맞게 변경해야 합니다.
 
 - `~/turtlebot4_ws` 워크스페이스 경로
-- `robot4`, `robot5` namespace
+- `robot4`, `robot6` namespace
 - `odom`, `battery_state` 토픽 이름
 - 두 로봇의 TF 및 Nav2 구성
 

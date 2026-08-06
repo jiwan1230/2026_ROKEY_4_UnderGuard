@@ -119,17 +119,30 @@ def record_trap_installed(
     robot_id: str,
     *,
     map_frame: str = "map",
+    map_x: float | None = None,
+    map_y: float | None = None,
 ) -> dict[str, Any]:
-    """트랩 설치 완료 상태와 사건을 동일한 형식으로 기록한다."""
+    """트랩 설치 완료 상태와 사건을 동일한 형식으로 기록한다.
+
+    Fleet event가 map 좌표를 주면 해당 값을 사용하고, 좌표가 없으면 로봇의
+    최신 map 위치를 사용한다. 둘 중 한 좌표만 전달하는 입력은 거부한다.
+    """
 
     robot = state.get_robot(robot_id)
-    expected_frame = map_frame.strip("/") or "map"
-    if robot["position_frame"] != expected_frame:
-        raise ValueError(f"트랩 위치 저장에는 {expected_frame} frame 좌표가 필요합니다.")
+    if (map_x is None) != (map_y is None):
+        raise ValueError("트랩 위치에는 map_x와 map_y가 모두 필요합니다.")
+    if map_x is None and map_y is None:
+        expected_frame = map_frame.strip("/") or "map"
+        if robot["position_frame"] != expected_frame:
+            raise ValueError(
+                f"트랩 위치 저장에는 {expected_frame} frame 좌표가 필요합니다."
+            )
+        map_x = robot["position"]["x"]
+        map_y = robot["position"]["y"]
     trap = {
         "robot_id": robot_id,
-        "map_x": robot["position"]["x"],
-        "map_y": robot["position"]["y"],
+        "map_x": float(map_x),
+        "map_y": float(map_y),
         "status": "INSTALLED",
     }
     trap["id"] = db.insert_trap(trap)

@@ -3,6 +3,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from system_monitor.config import RobotConfig, RosInterfaceConfig
 from system_monitor.database import Database
@@ -135,6 +136,64 @@ class RosBridgeTest(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(count, 2)
         self.assertEqual(self.state.get_robot("robot4")["battery"], 14.0)
+
+    def test_main_fleet_status_is_mapped_to_dashboard_state(self):
+        self.bridge._on_fleet_status(SimpleNamespace(data="robot4:PATROLLING:85"))
+
+        robot = self.state.get_robot("robot4")
+        self.assertEqual(robot["state"], "SEARCHING")
+        self.assertEqual(robot["current_task"], "창고 순찰 중")
+        self.assertEqual(robot["battery"], 85.0)
+        self.assertEqual(robot["nav_status"], "MOVING")
+        self.assertEqual(self.state.snapshot()["mission"]["status"], "RUNNING")
+
+        self.bridge._on_fleet_status(SimpleNamespace(data="robot4:DOCKED:84"))
+        robot = self.state.get_robot("robot4")
+        self.assertEqual(robot["state"], "COMPLETED")
+        self.assertEqual(robot["nav_status"], "STOPPED")
+
+    def test_malformed_or_unregistered_fleet_status_is_ignored(self):
+        self.bridge._on_fleet_status(SimpleNamespace(data="invalid"))
+        self.bridge._on_fleet_status(SimpleNamespace(data="robot6:IDLE:100"))
+
+        self.assertEqual(self.state.get_robot("robot4")["state"], "OFFLINE")
+
+    def test_main_fleet_events_create_detection_and_trap_records(self):
+        self.bridge._on_fleet_status(SimpleNamespace(data="robot4:PATROLLING:90"))
+        self.bridge._on_fleet_event(
+            SimpleNamespace(data="rat_detected:1.20:3.40")
+        )
+        self.bridge._on_fleet_event(SimpleNamespace(data="trap_ok:2.00:4.00"))
+
+        detection = self.db.search_detections()[0]
+        trap = self.db.search_traps()[0]
+        self.assertEqual(detection["object_type"], "LIVE_RODENT")
+        self.assertEqual(detection["robot_id"], "robot4")
+        self.assertEqual((detection["map_x"], detection["map_y"]), (1.2, 3.4))
+        self.assertEqual((trap["map_x"], trap["map_y"]), (2.0, 4.0))
+
+    def test_main_fleet_command_uses_shared_colon_format(self):
+        class FleetString:
+            def __init__(self, *, data):
+                self.data = data
+
+        class Publisher:
+            def __init__(self):
+                self.messages = []
+
+            def publish(self, msg):
+                self.messages.append(msg.data)
+
+        publisher = Publisher()
+        self.bridge._command_publisher = publisher
+        with patch("system_monitor.ros_bridge.String", FleetString):
+            result = self.bridge.send_command("robot4", "START_SCOUTING")
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(publisher.messages, ["robot4:PATROL"])
+        unsupported = self.bridge.send_command("robot4", "PAUSE")
+        self.assertFalse(unsupported["accepted"])
+        self.assertIn("지원하지 않는", unsupported["reason"])
 
 
 if __name__ == "__main__":

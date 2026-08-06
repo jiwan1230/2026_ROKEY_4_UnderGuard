@@ -66,6 +66,18 @@ class MockManager:
             "available": self.available,
             "running": self.running,
             "commands_enabled": True,
+            "command_capabilities": sorted(
+                {
+                    "START_SCOUTING",
+                    "START_TRACKING",
+                    "START_SEARCH",
+                    "PAUSE",
+                    "RESUME",
+                    "RETURN_HOME",
+                    "INSTALL_TRAP",
+                    "STOP",
+                }
+            ),
             "mock_events_enabled": True,
             "mission_progress_available": True,
             "data_source": "SIMULATED",

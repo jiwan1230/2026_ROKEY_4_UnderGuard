@@ -481,7 +481,8 @@ function renderOperationsStatus(snapshot) {
  * 출력: 버튼별 disabled/reason 값과 카드 하단 안내 문구다.
  * 사용: `renderRobots()`가 버튼 상태, title, 도움말을 같은 기준으로 만든다.
  */
-function getCommandControls(robot, commandsEnabled) {
+function getCommandControls(
+    robot, commandsEnabled, capabilities = null, startCommand = null) {
   const movingStates = [
     'TRACKING', 'SEARCHING', 'APPROACHING', 'NAVIGATING', 'INSTALLING_TRAP'
   ];
@@ -498,6 +499,10 @@ function getCommandControls(robot, commandsEnabled) {
       [ 'OFFLINE', 'RETURNING', 'IDLE' ].includes(robot.state);
   const stopBlocked = [ 'OFFLINE', 'IDLE', 'COMPLETED' ].includes(robot.state);
   const reason = (blocked, detail) => unavailable || (blocked ? detail : '');
+  const supports = command =>
+      !Array.isArray(capabilities) || capabilities.includes(command);
+  const pauseCommand = robot.state === 'PAUSED' ? 'RESUME' : 'PAUSE';
+  const unsupportedReason = '현재 main Fleet 명령 계약에서 지원하지 않습니다.';
 
   let guidance = '대기 중 · 임무 시작을 선택할 수 있습니다.';
   if (!commandsEnabled)
@@ -505,7 +510,9 @@ function getCommandControls(robot, commandsEnabled) {
   else if (robot.state === 'OFFLINE')
     guidance = '통신 끊김 · 연결이 복구될 때까지 명령을 보낼 수 없습니다.';
   else if (movingStates.includes(robot.state))
-    guidance = '임무 수행 중 · 일시정지, 복귀 또는 임무 중단이 가능합니다.';
+    guidance = supports('PAUSE')
+                   ? '임무 수행 중 · 일시정지, 복귀 또는 임무 중단이 가능합니다.'
+                   : '임무 수행 중 · main Fleet에서는 복귀와 임무 중단만 지원합니다.';
   else if (robot.state === 'PAUSED')
     guidance = '일시정지 상태 · 임무 재개 또는 복귀를 선택하세요.';
   else if (robot.state === 'RETURNING')
@@ -519,25 +526,37 @@ function getCommandControls(robot, commandsEnabled) {
 
   return {
     start : {
-      disabled : Boolean(unavailable || startBlocked),
-      reason : reason(startBlocked,
-                      robot.state === 'PAUSED'
-                          ? '일시정지 상태에서는 임무 재개를 사용하세요.'
-                          : '현재 상태에서는 새 임무를 시작할 수 없습니다.')
+      disabled : Boolean(
+          unavailable || startBlocked || !supports(startCommand)),
+      reason : !supports(startCommand)
+                   ? unsupportedReason
+                   : reason(startBlocked,
+                            robot.state === 'PAUSED'
+                                ? '일시정지 상태에서는 임무 재개를 사용하세요.'
+                                : '현재 상태에서는 새 임무를 시작할 수 없습니다.')
     },
     pause : {
-      disabled : Boolean(unavailable || pauseBlocked),
-      reason : reason(pauseBlocked,
-                      '진행 중인 이동 임무가 있을 때 사용할 수 있습니다.')
+      disabled : Boolean(
+          unavailable || pauseBlocked || !supports(pauseCommand)),
+      reason : !supports(pauseCommand)
+                   ? unsupportedReason
+                   : reason(pauseBlocked,
+                            '진행 중인 이동 임무가 있을 때 사용할 수 있습니다.')
     },
     returnHome : {
-      disabled : Boolean(unavailable || returnBlocked),
-      reason : reason(returnBlocked,
-                      '대기·복귀·오프라인 상태에서는 사용할 수 없습니다.')
+      disabled : Boolean(
+          unavailable || returnBlocked || !supports('RETURN_HOME')),
+      reason : !supports('RETURN_HOME')
+                   ? unsupportedReason
+                   : reason(returnBlocked,
+                            '대기·복귀·오프라인 상태에서는 사용할 수 없습니다.')
     },
     stop : {
-      disabled : Boolean(unavailable || stopBlocked),
-      reason : reason(stopBlocked, '진행 중이거나 일시정지된 임무가 없습니다.')
+      disabled : Boolean(unavailable || stopBlocked || !supports('STOP')),
+      reason : !supports('STOP')
+                   ? unsupportedReason
+                   : reason(stopBlocked,
+                            '진행 중이거나 일시정지된 임무가 없습니다.')
     },
     guidance
   };
@@ -554,15 +573,19 @@ function renderFleetStopControl(robots, runtime = {}) {
   if (!button)
     return;
   const commandsEnabled = runtime.commands_enabled !== false;
+  const stopSupported = !Array.isArray(runtime.command_capabilities) ||
+                        runtime.command_capabilities.includes('STOP');
   const targets = robots.filter(
       robot => robot.connection === 'ONLINE' &&
                !['IDLE', 'COMPLETED', 'OFFLINE'].includes(robot.state));
-  button.disabled = !commandsEnabled || !targets.length;
+  button.disabled = !commandsEnabled || !stopSupported || !targets.length;
   button.title =
       !commandsEnabled
           ? 'ROS 이동 명령 연결 전에는 사용할 수 없습니다.'
+          : (!stopSupported
+                 ? '현재 main Fleet 명령 계약에서 전체 정지를 지원하지 않습니다.'
           : (!targets.length ? '정지할 이동 임무가 없습니다.'
-                             : `${targets.length}대의 이동 임무를 정지합니다.`);
+                             : `${targets.length}대의 이동 임무를 정지합니다.`));
 }
 
 /**
@@ -619,8 +642,10 @@ function renderRobots(robots, runtime = {}, mission = {}) {
                     ? 'START_TRACKING'
                     : (robot.role === 'SURVEY_TRAP' ? 'START_SEARCH'
                                                     : 'START_SCOUTING');
-            const controls = getCommandControls(robot, commandsEnabled);
             const pauseCommand = robot.state === 'PAUSED' ? 'RESUME' : 'PAUSE';
+            const controls = getCommandControls(
+                robot, commandsEnabled, runtime.command_capabilities,
+                startCommand);
             const primaryCommand =
                 robot.state === 'PAUSED'
                     ? 'RESUME'

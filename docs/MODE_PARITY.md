@@ -30,7 +30,7 @@ process_detection
 
 | 항목 | 차이를 유지한 이유 |
 |---|---|
-| ROS 명령 송신 | Action·Service와 안전 정책이 확정되지 않아 성공으로 가장하지 않음 |
+| ROS 명령 송신 | main `/fleet/command`가 지원하는 명령만 송신하고 PAUSE·INSTALL_TRAP은 비활성화 |
 | ROS 임무 진행률 | Nav2 Feedback·Result가 없으므로 임의의 백분율을 만들지 않음 |
 | 실제 영상 | 영상 전송 방식이 확정되지 않아 상태 메타데이터만 표시 |
 | Mock 수동 사건 버튼 | 실제 ROS 데이터에 가짜 사건이 섞이지 않도록 Mock 모드에만 표시 |
@@ -60,6 +60,9 @@ Mock 사건 생성 버튼만 실제 ROS 데이터에 시험 사건이 섞이지 
 
 ## ROS에서 추가된 자동 상태 처리
 
+- `/fleet/status`의 main 상태 enum을 관제 상태로 변환합니다.
+- `/fleet/event`의 map 좌표 사건을 표준 위험신호와 트랩 기록으로 저장합니다.
+- `/fleet/command`는 main enum으로 의미가 유지되는 명령만 발행합니다.
 - 실제 ROS 메시지를 받기 전에는 로봇을 Online으로 표시하지 않습니다.
 - OAK-D 살아있는 설치류 탐지가 설정 시간 동안 끊기면 `TARGET_LOST`로 전환합니다.
 - 대상 유실 시 기존 `target` 좌표를 지우지 않아 마지막 위치를 유지합니다.

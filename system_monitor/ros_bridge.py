@@ -9,30 +9,75 @@ from typing import Any
 
 from .config import RobotConfig, RosInterfaceConfig
 from .database import Database
-from .detection_service import process_detection, record_low_battery, record_target_lost
-from .risk_signals import is_live_rodent, normalize_risk_signal
+from .detection_service import (
+    process_detection,
+    record_low_battery,
+    record_target_lost,
+    record_trap_installed,
+)
+from .risk_signals import ENTRY_POINT, LIVE_RODENT, is_live_rodent, normalize_risk_signal
 from .state_manager import StateManager
 
 try:
     import rclpy
-    from nav_msgs.msg import Odometry
-    from sensor_msgs.msg import BatteryState
-    from vision_msgs.msg import Detection3DArray
+    from std_msgs.msg import String
 except ImportError:  # 일반 PC의 Mock 모드에서는 ROS 패키지가 없어도 실행 가능
     rclpy = None
-    Odometry = BatteryState = Detection3DArray = None
+    String = None
+
+try:  # Fleet 계약 외 센서 토픽은 설치된 메시지 타입만 선택적으로 구독한다.
+    from nav_msgs.msg import Odometry
+except ImportError:
+    Odometry = None
+
+try:
+    from sensor_msgs.msg import BatteryState
+except ImportError:
+    BatteryState = None
+
+try:
+    from vision_msgs.msg import Detection3DArray
+except ImportError:
+    Detection3DArray = None
+
+try:  # colcon 설치 환경과 저장소에서 직접 실행하는 환경을 모두 지원한다.
+    from turtle_project import fleet_msg
+except ImportError:
+    from turtle_project.turtle_project import fleet_msg
+
+
+FLEET_STATE_MAP = {
+    "IDLE": ("IDLE", "임무 대기"),
+    "PATROLLING": ("SEARCHING", "창고 순찰 중"),
+    "RETURNING": ("RETURNING", "도킹 위치 복귀 중"),
+    "DOCKED": ("COMPLETED", "도킹 완료 · 다음 지시 대기"),
+    "TRACKING": ("TRACKING", "쥐 추적 중"),
+    "HERDING": ("NAVIGATING", "쥐 몰이 중"),
+}
+
+# UI 명령 중 main의 fleet command로 의미가 보존되는 항목만 송신한다.
+FLEET_COMMAND_MAP = {
+    "START_SCOUTING": "PATROL",
+    "START_TRACKING": "TRACK",
+    "START_SEARCH": "PATROL",
+    "RETURN_HOME": "DOCK",
+    "STOP": "STOP",
+}
+ROS_COMMAND_CAPABILITIES = frozenset({*FLEET_COMMAND_MAP, "RESUME"})
 
 
 class RosBridge:
-    """현재 rokey_4_mini 인터페이스를 Flask 상태 모델로 변환한다.
+    """main Fleet 인터페이스와 보조 센서 토픽을 웹 상태로 변환한다.
 
-    검증된 기존 입력:
+    main 기준 1순위 인터페이스:
+      - /fleet/status  : ``robot:state:battery``
+      - /fleet/event   : ``event_name:x:y``
+      - /fleet/command : ``robot:command``
+
+    선택적 보조 입력:
       - /<namespace>/webcam/detections : vision_msgs/Detection3DArray
       - /<namespace>/oakd/detections   : vision_msgs/Detection3DArray
-      - /<namespace>/dummy_cloud       : sensor_msgs/PointCloud2 (후속 단계)
-
-    odom/battery는 TurtleBot 배포 환경에 따라 이름이 달라질 수 있으므로
-    프로젝트 통합 시 `RobotConfig.topic()`을 실제 `ros2 topic list`와 대조한다.
+      - /<namespace>/odom, battery_state
     """
 
     def __init__(
@@ -53,16 +98,18 @@ class RosBridge:
         self.interface = interface or RosInterfaceConfig()
         self._thread: threading.Thread | None = None
         self._node = None
+        self._command_publisher = None
         # 초기화와 ROS 콜백 저장이 교차해 삭제 직후 이전 기록이 되살아나는
         # 일을 막는다. 위치 heartbeat처럼 DB를 쓰지 않는 콜백은 계속 동작한다.
         self._data_lock = threading.RLock()
         self._last_live_rodent_at: dict[str, float] = {}
         self._target_lost_reported: set[str] = set()
         self._low_battery_reported: set[str] = set()
+        self._last_active_robot_id: str | None = None
 
     @property
     def available(self) -> bool:
-        return rclpy is not None
+        return rclpy is not None and String is not None
 
     @property
     def running(self) -> bool:
@@ -75,7 +122,8 @@ class RosBridge:
             "mode": "ros",
             "available": self.available,
             "running": self.running,
-            "commands_enabled": False,
+            "commands_enabled": self.running and self._command_publisher is not None,
+            "command_capabilities": sorted(ROS_COMMAND_CAPABILITIES),
             "mock_events_enabled": False,
             "mission_progress_available": False,
             "data_source": "ROS2",
@@ -107,25 +155,56 @@ class RosBridge:
         self._thread = None
 
     def send_command(self, robot_id: str, command: str) -> dict[str, Any]:
-        """제어 인터페이스 확정 전 명령을 거부하는 안전 응답을 반환한다.
+        """웹 명령을 main의 ``/fleet/command`` String 포맷으로 발행한다.
 
         입력: 명령 대상 로봇 ID와 요청 명령이다.
-        출력: 항상 ``accepted=False``인 API 응답 딕셔너리다.
-        사용: Action/Service 계약 확정 후 이 경계 안에 실제 송신을 구현한다.
+        출력: 송신 여부, UI 명령, 타임라인 사건을 담은 API 응답 딕셔너리다.
+        사용: ROS 모드의 명령 API가 호출하며 실제 상태는 /fleet/status로 확정한다.
         """
 
-        # 입력은 Mock과 같게 검증하되, 통신 계약 전에는 송신을 가장하지 않는다.
         self.state.validate_command(robot_id, command)
+        fleet_command = self._to_fleet_command(robot_id, command)
+        if fleet_command is None:
+            return {
+                "accepted": False,
+                "robot_id": robot_id,
+                "command": command,
+                "event": None,
+                "reason": "main Fleet 계약이 지원하지 않는 명령입니다.",
+            }
+        if self._command_publisher is None:
+            return {
+                "accepted": False,
+                "robot_id": robot_id,
+                "command": command,
+                "event": None,
+                "reason": "ROS Fleet 명령 발행기가 아직 준비되지 않았습니다.",
+            }
+
+        self._command_publisher.publish(
+            String(data=fleet_msg.command(robot_id, fleet_command))
+        )
+        event = self.state.add_event(
+            f"Fleet 명령을 전송했습니다: {fleet_command}",
+            robot_id=robot_id,
+            event_type="COMMAND",
+        )
+        self.db.insert_event(event)
         return {
-            "accepted": False,
+            "accepted": True,
             "robot_id": robot_id,
             "command": command,
-            "event": None,
-            "reason": (
-                "실제 제어 인터페이스가 아직 확정되지 않았습니다. "
-                "PM/로봇 담당과 Action·Service를 합의하세요."
-            ),
+            "event": event,
+            "reason": None,
         }
+
+    def _to_fleet_command(self, robot_id: str, command: str) -> str | None:
+        """UI 명령을 main의 명령 enum으로 변환하며 의미 없는 변환은 거부한다."""
+
+        if command != "RESUME":
+            return FLEET_COMMAND_MAP.get(command)
+        role = self.state.get_robot(robot_id)["role"]
+        return "TRACK" if role == "RAT_TRACKER" else "PATROL"
 
     def reset_operational_data(self) -> dict[str, int]:
         """ROS 수집기는 유지하고 저장·화면 이력만 초기화한다.
@@ -159,34 +238,57 @@ class RosBridge:
         class MonitorNode(Node):
             def __init__(self) -> None:
                 super().__init__("system_monitor_bridge")
+                self.command_pub = self.create_publisher(
+                    String, bridge.interface.fleet_command_topic, 10
+                )
+                bridge._command_publisher = self.command_pub
+                self.create_subscription(
+                    String,
+                    bridge.interface.fleet_status_topic,
+                    bridge._on_fleet_status,
+                    10,
+                )
+                self.create_subscription(
+                    String,
+                    bridge.interface.fleet_event_topic,
+                    bridge._on_fleet_event,
+                    10,
+                )
                 for robot in bridge.robots:
                     rid = robot.robot_id
                     # 기본 인자로 rid를 고정해 모든 lambda가 마지막 로봇을
                     # 참조하는 파이썬 late-binding 문제를 방지한다.
-                    self.create_subscription(
-                        Detection3DArray,
-                        robot.topic(bridge.interface.webcam_detections_topic),
-                        lambda msg, robot_id=rid: bridge._on_detection(robot_id, "WEBCAM", msg),
-                        10,
-                    )
-                    self.create_subscription(
-                        Detection3DArray,
-                        robot.topic(bridge.interface.oakd_detections_topic),
-                        lambda msg, robot_id=rid: bridge._on_detection(robot_id, "OAK-D", msg),
-                        10,
-                    )
-                    self.create_subscription(
-                        Odometry,
-                        robot.topic(bridge.interface.odometry_topic),
-                        lambda msg, robot_id=rid: bridge._on_odom(robot_id, msg),
-                        10,
-                    )
-                    self.create_subscription(
-                        BatteryState,
-                        robot.topic(bridge.interface.battery_topic),
-                        lambda msg, robot_id=rid: bridge._on_battery(robot_id, msg),
-                        10,
-                    )
+                    if Detection3DArray is not None:
+                        self.create_subscription(
+                            Detection3DArray,
+                            robot.topic(bridge.interface.webcam_detections_topic),
+                            lambda msg, robot_id=rid: bridge._on_detection(
+                                robot_id, "WEBCAM", msg
+                            ),
+                            10,
+                        )
+                        self.create_subscription(
+                            Detection3DArray,
+                            robot.topic(bridge.interface.oakd_detections_topic),
+                            lambda msg, robot_id=rid: bridge._on_detection(
+                                robot_id, "OAK-D", msg
+                            ),
+                            10,
+                        )
+                    if Odometry is not None:
+                        self.create_subscription(
+                            Odometry,
+                            robot.topic(bridge.interface.odometry_topic),
+                            lambda msg, robot_id=rid: bridge._on_odom(robot_id, msg),
+                            10,
+                        )
+                    if BatteryState is not None:
+                        self.create_subscription(
+                            BatteryState,
+                            robot.topic(bridge.interface.battery_topic),
+                            lambda msg, robot_id=rid: bridge._on_battery(robot_id, msg),
+                            10,
+                        )
                 self.create_timer(0.5, bridge._check_target_timeouts)
 
         self._node = MonitorNode()
@@ -195,8 +297,105 @@ class RosBridge:
         finally:
             self._node.destroy_node()
             self._node = None
+            self._command_publisher = None
             if rclpy.ok():
                 rclpy.shutdown()
+
+    def _on_fleet_status(self, msg: Any) -> None:
+        """main의 ``robot:state:battery`` 상태를 관제 상태로 변환한다.
+
+        입력: ``std_msgs/String`` Fleet status다. 출력은 없다.
+        사용: `/fleet/status` 콜백이며 알 수 없는 로봇·잘못된 포맷은 무시한다.
+        """
+
+        try:
+            robot_id, fleet_state, battery = fleet_msg.parse_status(msg.data)
+            self.state.get_robot(robot_id)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return
+
+        fleet_state = fleet_state.upper()
+        mapped = FLEET_STATE_MAP.get(fleet_state)
+        if mapped is None:
+            mapped = ("ERROR", f"알 수 없는 Fleet 상태: {fleet_state}")
+        state_name, task = mapped
+        battery_value = max(0.0, min(100.0, float(battery)))
+        moving = fleet_state in {"PATROLLING", "RETURNING", "TRACKING", "HERDING"}
+
+        with self._data_lock:
+            below_threshold = battery_value < self.low_battery_threshold
+            not_reported = robot_id not in self._low_battery_reported
+            is_new_low_battery = below_threshold and not_reported
+            if is_new_low_battery:
+                record_low_battery(self.state, self.db, robot_id, battery_value)
+                self._low_battery_reported.add(robot_id)
+            elif battery_value >= self.low_battery_threshold + 2:
+                self._low_battery_reported.discard(robot_id)
+
+            self.state.update_robot(
+                robot_id,
+                state=state_name,
+                battery=battery_value,
+                current_task=task,
+                nav_status="MOVING" if moving else "STOPPED",
+            )
+            if moving:
+                self._last_active_robot_id = robot_id
+                self.state.mark_mission_started()
+
+    def _on_fleet_event(self, msg: Any) -> None:
+        """main의 ``event_name:x:y`` 사건을 탐지·트랩 기록으로 변환한다.
+
+        입력: map 좌표를 담은 ``std_msgs/String`` Fleet event다. 출력은 없다.
+        사용: `/fleet/event` 콜백이다. 현재 계약에 robot_id가 없어 최근 활동
+        로봇을 사용하고, 상태가 없으면 설정된 첫 로봇을 사용한다.
+        """
+
+        try:
+            name, map_x, map_y = fleet_msg.parse_event(msg.data)
+        except (AttributeError, TypeError, ValueError):
+            return
+        name = name.lower()
+        robot_id = self._event_robot_id()
+
+        with self._data_lock:
+            if name in {"rat_detected", "opening_confirmed"}:
+                object_type = LIVE_RODENT if name == "rat_detected" else ENTRY_POINT
+                process_detection(
+                    self.state,
+                    self.db,
+                    {
+                        "robot_id": robot_id,
+                        "object_type": object_type,
+                        "confidence": None,
+                        "distance": None,
+                        "map_x": map_x,
+                        "map_y": map_y,
+                        "source": "FLEET",
+                        "review_status": "UNREVIEWED",
+                    },
+                    event_message=f"Fleet에서 {object_type} 사건을 수신했습니다.",
+                    fallback_state="SEARCHING",
+                    fallback_task="탐지 위치 확인 중",
+                    camera_status="NORMAL",
+                )
+                return
+            if name == "trap_ok":
+                record_trap_installed(
+                    self.state,
+                    self.db,
+                    robot_id,
+                    map_frame=self.interface.map_frame,
+                    map_x=map_x,
+                    map_y=map_y,
+                )
+
+    def _event_robot_id(self) -> str:
+        """robot_id가 없는 main Fleet event의 표시 대상을 결정한다."""
+
+        if self._last_active_robot_id is not None:
+            return self._last_active_robot_id
+        return self.robots[0].robot_id
 
     def _on_detection(self, robot_id: str, source: str, msg: Any) -> None:
         """Detection3DArray의 유효 항목을 공통 탐지 서비스로 전달한다.
@@ -306,10 +505,10 @@ class RosBridge:
         value = percentage * 100 if percentage <= 1.0 else percentage
         value = round(max(0.0, min(100.0, value)), 3)
         with self._data_lock:
-            if (
-                value < self.low_battery_threshold
-                and robot_id not in self._low_battery_reported
-            ):
+            below_threshold = value < self.low_battery_threshold
+            not_reported = robot_id not in self._low_battery_reported
+            is_new_low_battery = below_threshold and not_reported
+            if is_new_low_battery:
                 record_low_battery(self.state, self.db, robot_id, value)
                 self._low_battery_reported.add(robot_id)
                 return

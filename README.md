@@ -27,7 +27,7 @@
   - 사용자·스키마·맵 설정은 유지하고 Mock/ROS 탐지·사건·트랩을 초기화
   - Mock은 임무를 대기시키고 ROS는 수집 노드와 현재 로봇 상태를 유지
 - Mock/ROS 실행 모드 분리와 공통 RuntimeService 계약
-- 앱·맵 변환·상태 관리자·Mock 시나리오·ROS 탐지 변환·DB Unit Test 40개
+- 앱·맵 변환·상태 관리자·Mock 시나리오·ROS/Fleet 변환·DB Unit Test 44개
 
 ## Mock/ROS 공통 동작 계약
 
@@ -42,11 +42,12 @@ Flask 라우트는 실행 모드를 직접 분기하지 않고 선택된 `Runtim
 | 최초 쥐 탐지 역할 배정 | 구현 | 구현 |
 | 대상 유실과 마지막 위치 유지 | 수동/시나리오 | OAK-D 1.5초 timeout |
 | 저전압 사건 중복 방지 | 수동/시나리오 | BatteryState 임계값 감시 |
-| 웹 명령 응답 구조 | `accepted: true` | `accepted: false` |
+| 웹 명령 응답 구조 | `accepted: true` | main Fleet 지원 명령만 `accepted: true` |
 | 임무 진행률 | 시뮬레이션 값 | 실제 Feedback 연동 전 `—` |
 
-ROS 명령은 Action·Service 계약이 정해지지 않았기 때문에 안전상 실행하지 않습니다.
-화면도 이 capability를 읽어 ROS 모드의 명령 버튼과 Mock 전용 사건 버튼을 비활성화합니다.
+ROS 모드는 main의 `/fleet/command` String 계약에 있는 명령만 송신합니다. `PAUSE`,
+`INSTALL_TRAP`처럼 main에 없는 명령은 capability에서 제외해 화면에서 비활성화하며,
+Mock 전용 사건 버튼은 ROS 데이터에 가짜 사건이 섞이지 않도록 숨깁니다.
 
 ## ROS 모드 기본 골격
 
@@ -54,35 +55,35 @@ ROS 명령은 Action·Service 계약이 정해지지 않았기 때문에 안전�
 
 | 토픽 | 구현 상태 |
 |---|---|
+| `/fleet/status` | main의 `robot:state:battery` 구독 및 상태 변환 구현 |
+| `/fleet/event` | main의 `event:x:y` 구독 및 탐지·트랩 저장 구현 |
+| `/fleet/command` | main이 지원하는 명령 발행 구현 |
 | `/<namespace>/webcam/detections` | `vision_msgs/Detection3DArray` 구독 구현 |
 | `/<namespace>/oakd/detections` | `vision_msgs/Detection3DArray` 구독 구현 |
 | `/<namespace>/odom` | `nav_msgs/Odometry` 구독 코드는 있으나 실제 장비 토픽 확인 필요 |
 | `/<namespace>/battery_state` | `sensor_msgs/BatteryState` 구독 코드는 있으나 실제 장비 토픽 확인 필요 |
 | `/<namespace>/dummy_cloud` | 미구현 · 후속 연결 필요 |
 
-위 토픽명은 코드에 고정하지 않고 환경변수로 주입합니다. 내일 로봇 저장소가
-갱신되면 `RosBridge`를 수정하기 전에 `.env.example`의 `ROS_*_TOPIC`,
-`ROS_MAP_FRAME`, `MAP_YAML_PATH`부터 실제 값에 맞추면 됩니다.
+위 토픽명은 코드에 고정하지 않고 환경변수로 주입합니다. main Fleet String 계약을
+1순위로 사용하고, Detection3DArray·odom·BatteryState는 실제 메시지 패키지와 토픽이
+존재할 때 사용하는 보조 입력입니다.
 
 Detection 결과의 상태 변환, DB 저장, 최초 탐지 기반 역할 배정은 구현되어 있습니다.
 OAK-D에서 살아있는 설치류가 1.5초 동안 다시 탐지되지 않으면 `TARGET_LOST` 사건을
 한 번 생성하고 마지막 위치를 유지합니다. 저전압 역시 임계값 진입 시 한 번만 사건을
-생성하고 정상 범위로 회복한 뒤 재진입했을 때 다시 생성합니다. 실제 로봇 명령용
-Action·Service가 확정되지 않았으므로 ROS 모드 제어 명령은 `accepted: false`입니다.
+생성하고 정상 범위로 회복한 뒤 재진입했을 때 다시 생성합니다.
 
 ## 아직 실제 연동이 필요한 기능
 
-- 두 번째 로봇 namespace 확정
-  - `robot4`: 원본 저장소 기준
-  - `robot5`: 최종 프로젝트 장비에서 확인 필요
+- 실제 장비의 `robot4`, `robot6` namespace 및 토픽 발행 확인
 - 실시간 SLAM `/map` 토픽과 OccupancyGrid 갱신
 - TF 기반 `map → base_link` 로봇 위치
 - Nav2 계획 경로 표시
 - 실제 OAK-D·웹캠 영상 및 Bounding Box 스트리밍
 - `dummy_cloud` 구독과 상태 표시
 - `NavigateToPose` Feedback·Result
-- 역할 자동 배정 결과를 실제 로봇 Action·Service로 전달
-- 실제 임무 시작·중단·복귀·트랩 설치 명령
+- 역할 자동 배정 결과와 main 중앙 조율 상태의 단일 소유권 확정
+- main Fleet에 없는 일시정지·트랩 설치 명령 계약 추가
 - WebSocket 또는 Flask-SocketIO 기반 실시간 Push 통신
 
 ## Mock 모드 실행
@@ -135,7 +136,8 @@ python3 -m unittest discover -s tests -v
 
 현재 앱 생명주기, 모드 공통 API 계약, PGM/YAML 변환, 표준 위험신호,
 Mock 역할 배정·트랩 위치, ROS 탐지 좌표계·대상 유실·저전압 처리,
-DB 초기화 안전조건을 포함한 총 40개 테스트가 통과합니다.
+DB 초기화 안전조건과 main Fleet 상태·사건·명령 변환을 포함한 총 44개 테스트가
+통과합니다.
 
 ## Mock/ROS 운영 데이터 초기화
 
@@ -147,7 +149,8 @@ DB 테이블 구조, 맵과 환경설정은 유지합니다. Mock은 현재 임�
 
 ## ROS 모드 실행
 
-ROS 2 Humble과 프로젝트 워크스페이스를 먼저 로드합니다. 아래 `turtlebot4_ws` 경로와 `robot5` namespace는 실제 장비 환경에 맞게 변경해야 합니다.
+ROS 2 Humble과 프로젝트 워크스페이스를 먼저 로드합니다. 아래
+`turtlebot4_ws` 경로는 실제 장비 환경에 맞게 변경해야 합니다.
 
 ```bash
 cd rokey_4_mini_sysmon_starter
@@ -157,7 +160,7 @@ python3 -m pip install --user -r requirements.txt
 source /opt/ros/humble/setup.bash
 source ~/turtlebot4_ws/install/setup.bash
 
-export ROBOT_NAMESPACES=robot4,robot5
+export ROBOT_NAMESPACES=robot4,robot6
 export ROBOT_ROLES=SCOUT,SCOUT
 
 ./run_ros.sh
@@ -174,8 +177,8 @@ ros2 topic list -t
 ```text
 /robot4/odom
 /robot4/battery_state
-/robot5/odom
-/robot5/battery_state
+/robot6/odom
+/robot6/battery_state
 ```
 
 ## 프로젝트 구조
