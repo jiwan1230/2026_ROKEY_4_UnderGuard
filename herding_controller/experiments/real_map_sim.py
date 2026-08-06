@@ -24,6 +24,8 @@ from test.evasion_models.reactive_flee import ReactiveFlee
 from test.run_validation import CONFIG_PATH, load_herding_config
 from test.simulator import SimulatorConfig, _advance_target, _bind_model_to_arena, _step_body
 
+from geodesic_field import GeodesicField
+
 _SLIDE_ANGLES = np.linspace(0, 2 * np.pi, 16, endpoint=False)
 
 
@@ -221,7 +223,7 @@ def nearest_trap(point):
 
 
 def run_trial(herding_config, planner_config, grid_map, distance_field, target_model_name, seed, mouse_spawn,
-              record_frames=True, blocker_active=True):
+              record_frames=True, blocker_active=True, use_geodesic=True):
     core_like = _CoreLike(grid_map)
     escape_model = EscapeModel(EscapeModelConfig(
         wall_follow_p=herding_config.markov_wall_follow_p, wall_hug_p=herding_config.markov_wall_hug_p,
@@ -262,6 +264,7 @@ def run_trial(herding_config, planner_config, grid_map, distance_field, target_m
     discovered = False
     patrol_idx = 0
     goal_name, goal_pos = None, None
+    geo_field = None
     discovery_time = None
     min_blocker_dist_after_discovery = float("inf")
     blocker_dist_at_capture = None
@@ -283,6 +286,14 @@ def run_trial(herding_config, planner_config, grid_map, distance_field, target_m
                 discovery_time = t
                 estimator.update(target_state[:2].copy())
                 goal_name, goal_pos = nearest_trap(target_state[:2])
+                if use_geodesic:
+                    # 목표는 발견 시점에 딱 한 번만 정해지므로, geodesic
+                    # 필드도 여기서 한 번만 계산한다 (매 스텝 재계산 X --
+                    # Dijkstra는 그리드 전체를 도는 계산이라 스텝마다 돌리기엔
+                    # 비싸고, 애초에 목표(trap)가 바뀌지 않는 한 다시 계산할
+                    # 이유가 없다).
+                    goal_row, goal_col = grid_map.world_to_cell(*goal_pos)
+                    geo_field = GeodesicField(grid_map, goal_row, goal_col)
 
         escape_estimate = None
         if discovered:
@@ -290,9 +301,25 @@ def run_trial(herding_config, planner_config, grid_map, distance_field, target_m
             estimator.update(target_state[:2].copy())
             est = estimator.get_state()
 
-            driving = compute_driving_point(est.position, est.velocity, goal_pos, driver_pos, planner_config)
+            # 벽을 고려한 "진짜 목표 방향"을 구해서, compute_driving_point/
+            # compute_blocking_point에는 실제 트랩 좌표 대신 이 방향으로
+            # 만든 가상의 근접 목표점을 goal_pos로 넘긴다. 두 함수는
+            # normalize(target_pos - goal_pos)로 방향만 뽑아 쓰므로,
+            # 좌표값 자체가 아니라 "그 방향이 벽을 피해 실제로 트랩과
+            # 가까워지는 방향인가"만 맞으면 된다 (geodesic_field.py
+            # virtual_goal_point 참고). geodesic 필드가 없거나(off-grid 등)
+            # use_geodesic=False면 기존처럼 순수 직선 방향으로 폴백한다.
+            direction_goal = goal_pos
+            if geo_field is not None:
+                virtual_goal = geo_field.virtual_goal_point(est.position)
+                if virtual_goal is not None:
+                    direction_goal = virtual_goal
+
+            driving = compute_driving_point(est.position, est.velocity, direction_goal, driver_pos, planner_config)
             escape_estimate = escape_model.compute(est.position, est.velocity, [driver_pos, blocker_pos])
-            blocking_point = compute_blocking_point(est.position, goal_pos, escape_estimate, grid_map, planner_config)
+            blocking_point = compute_blocking_point(
+                est.position, direction_goal, escape_estimate, grid_map, planner_config
+            )
             driver_goal_point, driver_panic = driving.point, driving.is_panic
             # blocker_active=False는 "로봇 B가 아예 없거나 손 놓고 있으면
             # 어떻게 되는가"를 재는 소거(ablation) 실험용 스위치다. 정상

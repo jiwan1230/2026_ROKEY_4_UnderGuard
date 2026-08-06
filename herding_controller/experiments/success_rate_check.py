@@ -51,7 +51,7 @@ def _setup():
 
 
 def run_batch(n_per_model, herding_config, grid_map, distance_field, planner_config, blocker_active=True,
-              base_seed=0):
+              base_seed=0, use_geodesic=True):
     rng = np.random.default_rng(base_seed)
     results = []
     seed = base_seed
@@ -64,7 +64,7 @@ def run_batch(n_per_model, herding_config, grid_map, distance_field, planner_con
             )
             trial = run_trial(
                 herding_config, planner_config, grid_map, distance_field, model_name, seed, mouse_spawn,
-                record_frames=False, blocker_active=blocker_active,
+                record_frames=False, blocker_active=blocker_active, use_geodesic=use_geodesic,
             )
             results.append(trial)
             seed += 1
@@ -134,14 +134,24 @@ def summarize(label, results):
 if __name__ == "__main__":
     n_per_model = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 25
     ablation = "--ablation" in sys.argv
+    compare_geodesic = "--compare-geodesic" in sys.argv
 
     herding_config, grid_map, distance_field, planner_config = _setup()
     herding_config_global = herding_config  # summarize()에서 참조
 
     t0 = time.time()
     results = run_batch(n_per_model, herding_config, grid_map, distance_field, planner_config, blocker_active=True)
-    rate = summarize("정상 운용 (로봇 A + 로봇 B)", results)
+    rate = summarize("정상 운용 (로봇 A + 로봇 B, geodesic 목표방향 적용)", results)
     print(f"\n(소요 시간: {time.time() - t0:.1f}s)")
+
+    if compare_geodesic:
+        t2 = time.time()
+        results_euclid = run_batch(n_per_model, herding_config, grid_map, distance_field, planner_config,
+                                   blocker_active=True, use_geodesic=False)
+        rate_euclid = summarize("대조군: geodesic 없이 직선(유클리드) 목표방향", results_euclid)
+        print(f"\n(소요 시간: {time.time() - t2:.1f}s)")
+        print(f"\n=== geodesic 목표방향의 순수 효과 ===\ngeodesic: {rate:.1f}%  vs  유클리드(기존): {rate_euclid:.1f}%  "
+              f"(차이: {rate - rate_euclid:+.1f}%p)")
 
     if ablation:
         t1 = time.time()
