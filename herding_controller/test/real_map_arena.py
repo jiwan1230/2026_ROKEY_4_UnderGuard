@@ -114,12 +114,22 @@ def nearest_trap(point):
     return name, TRAPS[name]
 
 
-def _wall_repulsion_direction(position, distance_field, grid_map):
-    """가장 가까운 벽에서 멀어지는 단위벡터와 현재 벽까지의 거리(m)를 반환한다."""
+def _wall_repulsion_direction(position, distance_field, grid_map, radius_cells=6):
+    """가장 가까운 벽에서 멀어지는 단위벡터와 현재 벽까지의 거리(m)를 반환한다.
+
+    `radius_cells`(기본 6칸=0.3m)만큼 떨어진 이웃으로 중심차분을 구한다.
+    바로 옆 1칸만 보면(예전 방식), 두 벽이 가까이 마주친 좁은 구석에서는
+    "가장 가까운 벽"이 로봇이 1cm만 움직여도 반대쪽 벽으로 뒤집힐 수 있어
+    반발 방향이 매 제어 주기 거의 정반대로 진동한다 -- 실측: 이 좁은
+    구석에서 로봇이 3cm 박스 안을 벗어나지 못하고 제자리걸음만 함
+    (트러블슈팅 노트 10-6 항목). geodesic_field.py의
+    `gradient_toward_goal()`에서 똑같은 문제를 똑같은 방법(더 넓게 평균)으로
+    이미 고친 적이 있다 -- 여기서도 동일한 해법을 적용한다.
+    """
     row, col = grid_map.world_to_cell(*position)
     h, w = distance_field.shape
-    r0, r1 = max(row - 1, 0), min(row + 1, h - 1)
-    c0, c1 = max(col - 1, 0), min(col + 1, w - 1)
+    r0, r1 = max(row - radius_cells, 0), min(row + radius_cells, h - 1)
+    c0, c1 = max(col - radius_cells, 0), min(col + radius_cells, w - 1)
     grad_x = (distance_field[row, c1] - distance_field[row, c0]) / 2.0
     grad_y = (distance_field[r1, col] - distance_field[r0, col]) / 2.0
     grad = np.array([grad_x, grad_y])

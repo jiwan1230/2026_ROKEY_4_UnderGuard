@@ -171,6 +171,9 @@ class HerdingCore:
         # 매 주기 재시도하지 않게 한다.
         self._geodesic_field: GeodesicField | None = None
         self._geodesic_ready = False
+        # Blocking Point 이력현상(hysteresis) 상태 -- 아래 _stabilize_blocking_point() 참고.
+        self._committed_blocking_point: np.ndarray | None = None
+        self._committed_blocking_time: float = 0.0
 
     # ------------------------------------------------------------------ #
     # 그리드 헬퍼                                                          #
@@ -237,6 +240,37 @@ class HerdingCore:
             if virtual_goal is not None:
                 return virtual_goal
         return self.goal_pos
+
+    # Blocking Point를 새로 계산한 값으로 매번 갈아치우기 전에 최소한 이만큼
+    # 유지한다. compute_blocking_point()는 "block_lookahead_m(1.8m) 앞의
+    # 지점이 장애물인가"로 후보 방향을 고르는데, 표적이 문턱 근처에 있으면
+    # 표적이 몇 cm만 움직여도 그 1.8m 앞 지점이 벽 반대편으로 넘어가버려서
+    # 후보가 완전히 다른 방향으로 바뀔 수 있다 -- 도주확률 예측 자체는
+    # 안정적인데도(트러블슈팅 노트 10-6 항목 실측: argmax 방향은 그대로,
+    # 목표 좌표만 1.3m 넘게 순간이동) 목표점만 매 제어 주기(0.2초)마다
+    # 요동쳐서, 로봇이 어느 쪽으로도 진행하지 못하고 제자리에서 맴돌게
+    # 만든다. role_assigner.py가 예전에 역할 교체 진동을 막던 것과 같은
+    # 종류의 문제라, 같은 해법(이력현상)을 쓴다.
+    _BLOCKING_POINT_COMMIT_SEC = 1.0
+
+    def _stabilize_blocking_point(self, candidate: np.ndarray, now_sec: float) -> np.ndarray:
+        """새 Blocking Point 후보를 즉시 채택하지 않고, 이전 값을 일정 시간 유지한다.
+
+        커밋한 지 `_BLOCKING_POINT_COMMIT_SEC` 미만이면 이전에 커밋한 점을
+        그대로 반환하고, 그 이상 지났으면(또는 아직 커밋된 값이 없으면)
+        새 후보를 채택하고 그 시각을 기록한다. 매 주기 값 자체는 계속
+        다시 계산되지만(그래야 표적이 실제로 멀리 움직였을 때 반영되므로),
+        화면에 나가는/로봇에 명령되는 값은 이 함수를 거친 안정화된 값이다.
+        """
+        if self._committed_blocking_point is None:
+            self._committed_blocking_point = candidate
+            self._committed_blocking_time = now_sec
+            return candidate
+        if now_sec - self._committed_blocking_time >= self._BLOCKING_POINT_COMMIT_SEC:
+            self._committed_blocking_point = candidate
+            self._committed_blocking_time = now_sec
+            return candidate
+        return self._committed_blocking_point
 
     def _reset_occlusion_memory(self) -> None:
         """LOST 에피소드의 시드를 초기화하여 다음 에피소드가 새로 시드되도록 한다."""
@@ -339,6 +373,9 @@ class HerdingCore:
             # 두고 다투지 않도록 로봇 2의 목표를 오프셋한다.
             robot1_goal = search_point
             robot2_goal = resolve_separation(search_point, search_point, self.config.min_robot_separation_m)
+            # 재관측 후 HERD로 돌아왔을 때 LOST 이전의 낡은 목표점을
+            # 이어받지 않도록 이력현상 상태를 지운다.
+            self._committed_blocking_point = None
         else:
             self._reset_occlusion_memory()
             if fsm_state in (FSMState.HERD, FSMState.CORNER):
@@ -363,22 +400,34 @@ class HerdingCore:
                 panic = driving.is_panic
 
                 if escape_estimate is not None:
-                    blocking_point = compute_blocking_point(
+                    raw_blocking_point = compute_blocking_point(
                         target_state.position, direction_goal, escape_estimate,
                         self.grid_map, self.planner_config,
                     )
+                    # 방금 계산한 후보를 즉시 채택하지 않고 이력현상을 거친다
+                    # -- _stabilize_blocking_point() 참고. resolve_separation은
+                    # (안정화된 값이든 아니든) 매 주기 다시 적용해서, 로봇 1이
+                    # 그사이 움직였어도 최소 이격 거리는 항상 보장한다.
+                    stable_blocking_point = self._stabilize_blocking_point(
+                        raw_blocking_point, observation.sim_time_sec
+                    )
                     blocking_point = resolve_separation(
-                        driving.point, blocking_point, self.config.min_robot_separation_m
+                        driving.point, stable_blocking_point, self.config.min_robot_separation_m
                     )
                 else:
                     # 타겟 추정치가 그리드 밖에 있어 escape distribution이
                     # 없고 의미 있는 blocking point도 없다. blocker는
-                    # 제자리를 유지한다.
+                    # 제자리를 유지하고, 다음에 다시 의미 있는 추정치가
+                    # 생기면 완전히 새로 커밋하도록 이력현상 상태를 지운다.
                     blocking_point = np.asarray(observation.robot2_pos, dtype=float).copy()
+                    self._committed_blocking_point = None
 
                 robot1_goal, robot2_goal = driving.point, blocking_point
             else:
-                # IDLE / SEARCH / TRACK / CAPTURED: 위치를 유지한다.
+                # IDLE / SEARCH / TRACK / CAPTURED: 위치를 유지한다. 새
+                # 에피소드가 HERD로 다시 들어갈 때 지난 목표점을 이어받지
+                # 않도록 이력현상 상태도 같이 지운다.
+                self._committed_blocking_point = None
                 robot1_goal = np.asarray(observation.robot1_pos, dtype=float).copy()
                 robot2_goal = np.asarray(observation.robot2_pos, dtype=float).copy()
 

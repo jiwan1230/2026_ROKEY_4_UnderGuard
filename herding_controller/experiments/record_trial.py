@@ -259,10 +259,16 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
 
         goal_field = {driver_key: "driver_goal" if "driver_goal" in f else "herder_goal",
                      blocker_key: "blocker_goal" if "blocker_goal" in f else "tracker_goal"}
-        show_goals = f["state"] != "CAPTURED"
+        show_goals_base = f["state"] != "CAPTURED"
         for name in (driver_key, blocker_key):
             rx, ry = world_to_plot(*f[name])
             gx, gy = world_to_plot(*f[goal_field[name]])
+            # 목표가 현재 위치와 사실상 같으면(예: 발견 전 대기 중인 로봇 B는
+            # 자기 스폰 지점을 "목표"로 받는다) X 표시와 로봇 점이 정확히
+            # 같은 자리에 겹쳐져서 뭉개진 얼룩처럼 보인다 -- 실제로 가려는
+            # 곳이 없으므로 이 경우엔 goal 표시를 아예 숨긴다.
+            goal_is_trivial = (abs(rx - gx) < 1e-6 and abs(ry - gy) < 1e-6)
+            show_goals = show_goals_base and not goal_is_trivial
             if show_goals:
                 goal_links[name].set_data([rx, gx], [ry, gy])
                 goal_marks[name].set_data([gx], [gy])
