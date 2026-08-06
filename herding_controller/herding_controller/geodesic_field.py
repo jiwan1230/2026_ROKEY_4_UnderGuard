@@ -1,16 +1,20 @@
+# herding_controller/herding_controller/geodesic_field.py
 """벽을 고려한 "목표까지의 실제 최단거리" 필드 (geodesic distance field).
 
-기존 real_map_sim.py는 Driver/Blocker의 목표 방향을 전부 직선거리(유클리드
-거리)로 계산했다: `u = normalize(target_pos - goal_pos)`. 방이 미로처럼
-복잡할 때, 이 직선이 벽을 가로지르면 "목표 반대편"이라고 계산한 방향이
-실제로는 갈 수 없는 방향이거나, 반대로 진짜 도주로를 "목표 방향"으로
-오판하게 만든다 (트러블슈팅 노트 8번 항목: 실패 시행 대부분이 표적을
-트랩 근처에 데려가지도 못했던 근본 원인).
+`herding_planner.py`의 `compute_driving_point`/`compute_blocking_point`는
+목표 방향을 전부 직선거리(유클리드 거리)로 계산한다:
+`u = normalize(target_pos - goal_pos)`. 방이 미로처럼 복잡할 때, 이 직선이
+벽을 가로지르면 "목표 반대편"이라고 계산한 방향이 실제로는 갈 수 없는
+방향이거나, 반대로 진짜 도주로를 "목표 방향"으로 오판하게 만든다
+(트러블슈팅 노트 8/10번 항목: 실제 SLAM 맵에서 실패 시행 대부분이 표적을
+포획존 근처에 데려가지도 못했던 원인 중 하나로 확인됨).
 
-이 모듈은 Dijkstra로 트랩(목표)으로부터 모든 자유공간 셀까지의 "벽을
-피해서 가는 실제 최단거리"를 1회 계산하고, 그 필드의 기울기(gradient)를
-"벽을 고려한 진짜 목표 방향"으로 제공한다. 목표는 시행마다(발견 시점에)
-한 번만 정해지므로, 이 계산도 시행당 한 번만 하면 된다 (매 스텝 재계산 아님).
+이 모듈은 Dijkstra로 포획존(목표)으로부터 모든 자유공간 셀까지의 "벽을
+피해서 가는 실제 최단거리"를 계산하고, 그 필드의 기울기(gradient)를 "벽을
+고려한 진짜 목표 방향"으로 제공한다. `herding_core.py`가 이 필드를 goal_pos
+기준으로 1회만 계산해 캐싱한다 (goal_pos는 설정값으로 미션 내내 고정이므로
+매 제어 주기 재계산할 필요가 없다 -- 제어 주기 5Hz에서 매번 다익스트라를
+돌리면 지연시간 예산을 넘긴다).
 """
 import heapq
 
@@ -79,9 +83,7 @@ class GeodesicField:
     def gradient_toward_goal(self, position, radius_cells=6):
         """position에서 "벽을 피해 goal에 실제로 가까워지는" 단위벡터를 반환한다.
 
-        `_wall_repulsion_direction`(real_map_sim.py)과 동일한 중심차분
-        기울기 계산이지만, 대상 필드가 "가장 가까운 벽까지 거리"가 아니라
-        "목표까지의 geodesic 거리"라는 점이 다르다. 이 필드는 감소하는
+        중심차분(central difference)으로 기울기를 근사한다. 이 필드는 감소하는
         방향이 곧 "목표로 다가가는, 벽을 피해서 실제로 갈 수 있는 방향"이므로
         -gradient를 취한다. 계산 불가능한 경우(inf, 그리드 밖, 평평한
         지점)에는 None을 반환해서 호출부가 유클리드 방향으로 안전하게
@@ -126,8 +128,66 @@ class GeodesicField:
         방향 계산 결과는 동일한 의미를 가지면서 벽을 고려하게 된다.
         `lookahead_m`은 방향 계산 후 normalize로 사라지므로 실제 값은
         중요하지 않다(0이 아니기만 하면 됨).
+
+        한계: 이 함수는 position 한 지점에서의 **국소** 기울기 하나만 보고
+        그 방향으로 직선 연장한 것이다. 복도가 코너를 돌아야 하는 상황에서는
+        국소 기울기가 "지금 당장 벽에서 벗어나는 방향"만 알려줄 뿐, 그
+        다음 코너가 어디서 꺾이는지는 반영하지 못한다 -- 미로형 실제 맵에서
+        측정한 실질적 개선폭이 작았던 원인 중 하나로 보인다(+3.8%p,
+        트러블슈팅 노트 9번 항목). 여러 구간을 앞서 내다보고 싶다면
+        `waypoint_ahead()`를 쓸 것.
         """
         direction = self.gradient_toward_goal(position, radius_cells=radius_cells)
         if direction is None:
             return None
         return np.asarray(position, dtype=float) + direction * lookahead_m
+
+    def trace_path(self, start_pos, step_m=0.15, max_points=400):
+        """start_pos에서 goal까지, 매 지점의 국소 기울기를 따라가며 만든 경로(웨이포인트 나열).
+
+        `virtual_goal_point()`가 한 지점의 기울기 하나만 보고 직선으로
+        연장하는 것과 달리, 이 함수는 실제로 그 기울기를 따라 `step_m`씩
+        전진하기를 반복한다 -- 그러다 보면 경로가 실제 복도를 따라 코너를
+        돌아나가는 형태로 이어진다. `max_points * step_m`이 추적 가능한
+        최대 경로 길이다.
+        """
+        path = [np.asarray(start_pos, dtype=float)]
+        current = np.asarray(start_pos, dtype=float)
+        for _ in range(max_points):
+            try:
+                row, col = self.grid_map.world_to_cell(*current)
+            except ValueError:
+                break
+            if not np.isfinite(self.distance[row, col]) or self.distance[row, col] <= step_m:
+                break  # 목표 근처에 도달
+            direction = self.gradient_toward_goal(current, radius_cells=3)
+            if direction is None:
+                break
+            current = current + direction * step_m
+            path.append(current.copy())
+        return path
+
+    def waypoint_ahead(self, position, lookahead_m=1.5, step_m=0.15):
+        """position에서 goal로 가는 실제 경로를 따라 lookahead_m만큼 나아간 지점.
+
+        `trace_path()`로 실제 복도를 따라가는 경로를 만든 뒤, 그 경로의
+        누적 길이가 lookahead_m에 도달하는 지점을 반환한다 (직선거리가
+        아니라 경로를 따라간 거리 기준). 이렇게 하면 다가올 코너를
+        미리 내다보고 그 방향으로 목표 지점을 잡을 수 있다 -- 매 제어
+        주기(target 위치가 바뀔 때)마다 다시 계산되므로 별도의 "다음
+        웨이포인트 인덱스" 상태를 들고 다닐 필요가 없다(경로 자체가
+        매번 표적의 현재 위치에서 새로 그려짐).
+
+        경로가 lookahead_m보다 짧으면(목표 바로 근처) 경로의 끝(목표
+        근처)을 그대로 반환한다. 경로를 하나도 못 그리면(그리드 밖 등)
+        None을 반환해 호출부가 폴백할 수 있게 한다.
+        """
+        path = self.trace_path(position, step_m=step_m, max_points=int(lookahead_m / step_m) + 40)
+        if len(path) < 2:
+            return None
+        traveled = 0.0
+        for i in range(1, len(path)):
+            traveled += float(np.linalg.norm(path[i] - path[i - 1]))
+            if traveled >= lookahead_m:
+                return path[i]
+        return path[-1]
