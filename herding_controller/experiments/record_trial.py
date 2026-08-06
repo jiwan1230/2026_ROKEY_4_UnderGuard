@@ -90,7 +90,7 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
     for spine in ax.spines.values():
         spine.set_color(LINE)
     if is_real_map:
-        ax.imshow(map_img, extent=[xlim[0], xlim[1], ylim[1], ylim[0]], origin="upper")
+        ax.imshow(map_img, extent=[xlim[0], xlim[1], ylim[0], ylim[1]], origin="upper")
     else:
         wx0, wx1 = data["wall"]["x"]
         wy0, wy1 = data["wall"]["y"]
@@ -109,6 +109,13 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
     for name, color in (("target", COLORS["target"]), (driver_key, COLORS["driver"]), (blocker_key, COLORS["blocker"])):
         trail_lines[name], = ax.plot([], [], "-", color=color, alpha=0.6, linewidth=2)
         dots[name], = ax.plot([], [], "o", color=color, markersize=9, zorder=6)
+
+    # 다음 목표 좌표: 로봇 -> 목표까지 점선 + 목표 지점에 X 표시 (Artifact와 동일)
+    goal_links, goal_marks = {}, {}
+    for name, color in ((driver_key, COLORS["driver"]), (blocker_key, COLORS["blocker"])):
+        goal_links[name], = ax.plot([], [], ":", color=color, alpha=0.7, linewidth=1.5, zorder=4)
+        goal_marks[name], = ax.plot([], [], "x", color=color, markersize=10, markeredgewidth=2.5, zorder=7)
+
     sensor_circle = plt.Circle((0, 0), 0, fill=False, linestyle="--", color=COLORS["sensor"], alpha=0.6)
     ax.add_patch(sensor_circle)
     panic_ring = plt.Circle((0, 0), 22 / 122 * (xlim[1] - xlim[0]), fill=False, color=COLORS["warn"],
@@ -189,6 +196,19 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
             trail_lines[name].set_data(xs, ys)
             dots[name].set_data([px], [py])
 
+        goal_field = {driver_key: "driver_goal" if "driver_goal" in f else "herder_goal",
+                     blocker_key: "blocker_goal" if "blocker_goal" in f else "tracker_goal"}
+        show_goals = f["state"] != "CAPTURED"
+        for name in (driver_key, blocker_key):
+            rx, ry = world_to_plot(*f[name])
+            gx, gy = world_to_plot(*f[goal_field[name]])
+            if show_goals:
+                goal_links[name].set_data([rx, gx], [ry, gy])
+                goal_marks[name].set_data([gx], [gy])
+            else:
+                goal_links[name].set_data([], [])
+                goal_marks[name].set_data([], [])
+
         discovered = f.get("discovered", True)
         if not discovered:
             px, py = world_to_plot(*f[driver_key])
@@ -239,7 +259,7 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
         value_texts["capture"].set_text(f"{pct*100:.0f}%")
         bar_fill.set_width(pct)
 
-        artists = list(trail_lines.values()) + list(dots.values())
+        artists = list(trail_lines.values()) + list(dots.values()) + list(goal_links.values()) + list(goal_marks.values())
         artists += [sensor_circle, panic_ring, state_pill_bg, state_pill_text, bar_fill]
         artists += list(value_texts.values())
         return artists
