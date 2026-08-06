@@ -31,7 +31,6 @@ def process_detection(
     data["object_type"] = normalize_risk_signal(data["object_type"])
     state.get_robot(robot_id)
     item = state.add_detection(data)
-    state.mark_mission_started()
 
     assignment = (
         state.assign_roles_from_rat_detection(robot_id)
@@ -97,6 +96,26 @@ def record_low_battery(
         robot_id=robot_id,
         severity="WARNING",
         event_type="LOW_BATTERY",
+    )
+
+
+def record_battery_recovered(
+    state: StateManager,
+    robot_id: str,
+    battery: float = 80.0,
+) -> dict[str, Any]:
+    """배터리 값을 정상 범위로 되돌리고 경고 해제 사건을 추가한다.
+
+    Mock 시연에서 "배터리 부족 → 경고 → 복구 → 경고 종료" 흐름의 마지막
+    단계다. record_low_battery와 같은 계층(공통 Mock/ROS 처리)에 둬서,
+    호출부가 StateManager를 직접 건드리지 않게 한다.
+    """
+
+    state.update_robot(robot_id, battery=battery)
+    return state.add_event(
+        "배터리가 복구되어 신규 확인 임무 제한이 해제되었습니다.",
+        robot_id=robot_id,
+        event_type="BATTERY_RECOVERED",
     )
 
 

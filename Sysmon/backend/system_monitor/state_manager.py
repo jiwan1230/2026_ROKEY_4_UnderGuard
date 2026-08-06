@@ -135,8 +135,10 @@ class StateManager:
         self._next_event_id = 1
         self._next_detection_id = 1
         self._next_trap_id = 1
+        # "status"는 저장하지 않는다 — snapshot()이 매번 로봇 state로부터
+        # 다시 계산해 덮어쓰므로, 여기 시드 값을 두면 절대 관측되지 않는
+        # 죽은 값만 남는다(_derive_mission_status 참고).
         self._mission = {
-            "status": "READY",
             "role_assignment_status": "WAITING",
             "tracker_robot_id": None,
             "support_robot_ids": [],
@@ -234,17 +236,6 @@ class StateManager:
             self._traps.append(item)
             self._traps = self._traps[-100:]
             return copy.deepcopy(item)
-
-    def set_mission(self, **changes: Any) -> None:
-        with self._lock:
-            self._mission.update(changes)
-
-    def mark_mission_started(self) -> None:
-        """호환용 훅이다. 전체 임무 상태는 이제 snapshot()이 로봇 state로부터
-        매번 다시 계산하므로 여기서 별도로 바꿀 값이 없다.
-        """
-
-        return None
 
     def get_robot(self, robot_id: str) -> dict[str, Any]:
         """외부 컴포넌트가 안전하게 읽도록 로봇 상태 복사본을 반환한다."""

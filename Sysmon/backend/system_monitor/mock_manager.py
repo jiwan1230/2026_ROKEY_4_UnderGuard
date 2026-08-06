@@ -9,6 +9,7 @@ from typing import Callable
 
 from .detection_service import (
     process_detection,
+    record_battery_recovered,
     record_low_battery,
     record_target_lost,
     record_trap_installed,
@@ -316,12 +317,7 @@ class MockManager:
         운영 제한 문구는 실시간 배터리 값 기준으로 자동 사라진다.
         """
 
-        self.state.update_robot(robot_id, battery=80.0)
-        return self.state.add_event(
-            "배터리가 복구되어 신규 확인 임무 제한이 해제되었습니다.",
-            robot_id=robot_id,
-            event_type="BATTERY_RECOVERED",
-        )
+        return record_battery_recovered(self.state, robot_id)
 
     def _trap_installed(self, robot_id: str) -> dict:
         event = record_trap_installed(

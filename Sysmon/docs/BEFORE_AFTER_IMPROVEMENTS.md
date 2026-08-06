@@ -28,6 +28,7 @@
 ## 검증
 
 ```bash
+cd backend
 python3 -m unittest discover -s tests -v
 ```
 

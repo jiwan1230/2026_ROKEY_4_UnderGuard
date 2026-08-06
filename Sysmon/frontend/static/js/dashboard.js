@@ -495,7 +495,7 @@ function renderRobots(robots, runtime = {}, mission = {}) {
   const missionSummary = `
     <div class="fleet-mission-summary">
       <span>전체 임무</span>
-      <strong id="mission-status" class="mission-summary-state state-${
+      <strong id="mission-status" class="mission-summary-state state-text state-${
           String(mission.status || 'IDLE').toLowerCase()}">${
           escapeHtml(missionText)}</strong>
     </div>`;
@@ -506,6 +506,7 @@ function renderRobots(robots, runtime = {}, mission = {}) {
                 robot.battery == null
                     ? 0
                     : Math.max(0, Math.min(100, Number(robot.battery)));
+            const isLowBattery = battery < lowBatteryThreshold;
             return `
     <article class="robot-card selected selected-robot-card" data-robot="${
                 escapeHtml(robot.robot_id)}">
@@ -519,7 +520,7 @@ function renderRobots(robots, runtime = {}, mission = {}) {
       <div class="robot-task state-text state-${
                 String(robot.state).toLowerCase()}">${
                 escapeHtml(localizeObjectText(robot.current_task))}</div>${
-                battery < lowBatteryThreshold
+                isLowBattery
                     ? `<div class="battery-advisory">배터리 ${
                           n(robot.battery,
                             0)}% · 복귀 권장 · 신규 확인 임무 제한</div>`
@@ -527,7 +528,7 @@ function renderRobots(robots, runtime = {}, mission = {}) {
       <div class="robot-metrics robot-metrics-compact">
         <div class="metric battery-metric"><small>배터리</small><strong>${
                 n(robot.battery, 0)}%</strong><span class="battery-mini ${
-                battery < lowBatteryThreshold
+                isLowBattery
                     ? 'low'
                     : ''}"><i style="width:${battery}%"></i></span></div>
         <div class="metric"><small>속도</small><strong>${

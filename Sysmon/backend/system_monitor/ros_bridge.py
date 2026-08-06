@@ -256,7 +256,6 @@ class RosBridge:
             )
             if moving:
                 self._last_active_robot_id = robot_id
-                self.state.mark_mission_started()
 
     def _on_fleet_event(self, msg: Any) -> None:
         """main의 ``event_name:x:y`` 사건을 탐지·트랩 기록으로 변환한다.

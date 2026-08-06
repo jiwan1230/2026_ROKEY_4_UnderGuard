@@ -37,6 +37,7 @@ ROS의 odom 좌표는 TF 변환 전까지 map 위치로 가장하지 않는다. 
 ## 검증
 
 ```bash
+cd backend
 python3 -m unittest discover -s tests -v
 ./run_mock.sh
 ./run_ros.sh

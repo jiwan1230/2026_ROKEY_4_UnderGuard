@@ -78,31 +78,31 @@ read-only 전환 결정"에 따라 삭제되어 현재 소스에는 없다(`data
 `static/js/detections.js`, `tests/test_database.py` 등). 현재 담당 범위는
 `docs/SYSTEM_MONITOR_SCOPE.md`를 기준으로 확인한다.
 
-## 3. 실행 및 설정 파일
+## 3. 실행 및 설정 파일 (`backend/`)
 
 | 파일 | 역할 | 주요 입력 | 주요 출력·효과 |
 |---|---|---|---|
-| `.env.example` | 서버, DB, 로봇 namespace, ROS 토픽, 맵 경로의 설정 예시 | 운영 환경별 값 | `Settings`가 읽을 환경변수 기준 |
-| `.gitignore` | DB, 캐시, 가상환경 등 커밋하지 않을 파일 지정 | 파일 경로 패턴 | Git 추적 대상 정리 |
+| `backend/.env.example` | 서버, 로봇 namespace, ROS 토픽, 맵 경로의 설정 예시 | 운영 환경별 값 | `Settings`가 읽을 환경변수 기준 |
+| `.gitignore` | 캐시, 가상환경 등 커밋하지 않을 파일 지정 | 파일 경로 패턴 | Git 추적 대상 정리 |
 | `README.md` | 설치, Mock/ROS 실행, 구현·미구현 상태 설명 | 프로젝트 현재 상태 | 개발자 실행 안내 |
-| `requirements.txt` | Flask, Pillow 등 Python 의존성 고정 | `pip` 설치 명령 | 실행 가능한 Python 환경 |
-| `run_mock.sh` | 실행 모드를 `mock`으로 고정해 서버 시작 | 환경변수, Python | Mock Flask 서버 |
-| `run_ros.sh` | `rclpy` 및 ROS 환경을 확인하고 `ros` 모드로 시작 | source된 ROS 환경 | ROS Bridge가 포함된 Flask 서버 |
+| `backend/requirements.txt` | Flask, Pillow 등 Python 의존성 고정 | `pip` 설치 명령 | 실행 가능한 Python 환경 |
+| `backend/run_mock.sh` | 실행 모드를 `mock`으로 고정해 서버 시작 | 환경변수, Python | Mock Flask 서버 |
+| `backend/run_ros.sh` | `rclpy` 및 ROS 환경을 확인하고 `ros` 모드로 시작 | source된 ROS 환경 | ROS Bridge가 포함된 Flask 서버 |
 
-## 4. 백엔드 핵심 파일
+## 4. 백엔드 핵심 파일 (`backend/system_monitor/`)
 
 | 파일 | 책임 | 코드 리뷰 핵심 |
 |---|---|---|
 | `system_monitor/__init__.py` | 패키지 선언 | 애플리케이션 코드가 `system_monitor` 패키지로 import됨 |
-| `system_monitor/app.py` | Flask 앱 생성, 로그인·로그아웃, 화면과 API 라우트, 런타임 시작 | 라우트가 Mock/ROS를 직접 분기하지 않고 공통 `RuntimeService`를 사용 |
+| `system_monitor/app.py` | Flask 앱 생성, 화면과 API 라우트, 런타임 시작 | 라우트가 Mock/ROS를 직접 분기하지 않고 공통 `RuntimeService`를 사용, frontend/ 폴더를 template/static으로 명시 연결 |
 | `system_monitor/config.py` | 환경변수 검증, 로봇별 namespace와 토픽 이름 생성 | 로봇 저장소 변경 시 우선 수정할 통신 경계 |
-| `system_monitor/detection_service.py` | 탐지 저장, 상태 갱신, 사건 생성, 대상 유실·저전압·트랩 처리 | Mock과 ROS가 같은 처리 순서를 사용하게 만드는 공통 계층 |
+| `system_monitor/detection_service.py` | 탐지 저장, 상태 갱신, 사건 생성, 대상 유실·저전압·트랩·배터리 복구 처리 | Mock과 ROS가 같은 처리 순서를 사용하게 만드는 공통 계층 |
 | `system_monitor/map_service.py` | `my_map.yaml`/PGM 읽기, PNG 변환, map 좌표를 이미지 픽셀로 변환 | `resolution`, `origin`, Y축 반전을 사용한 좌표 변환 |
-| `system_monitor/mock_manager.py` | 두 로봇 이동, 예약 탐지, 역할 배정, 테스트 사건을 재현 | ROS 장비 없이 화면·DB·사건 전체 흐름을 검증 |
-| `system_monitor/risk_signals.py` | 센서별 객체 라벨을 표준 위험신호로 변환 | DB와 UI가 세 가지 표준 이름만 사용하도록 정규화 |
+| `system_monitor/mock_manager.py` | 두 로봇 이동, 예약 탐지, 역할 배정, 테스트 사건을 재현 | ROS 장비 없이 화면·사건 전체 흐름을 검증 |
+| `system_monitor/risk_signals.py` | 센서별 객체 라벨을 표준 위험신호로 변환 | UI가 세 가지 표준 이름만 사용하도록 정규화 |
 | `system_monitor/ros_bridge.py` | Detection3DArray, Odometry, BatteryState 구독 및 공통 상태 변환 | 실제 토픽·메시지·좌표계가 연결되는 핵심 ROS 통신 파일 |
-| `system_monitor/runtime_service.py` | `start`, `stop`, `snapshot`, `command` 공통 계약 정의 | Flask와 실행 모드의 결합도를 낮추는 경계 |
-| `system_monitor/state_manager.py` | 로봇, 위치, 대상, 사건, 탐지, 트랩을 단일 스냅샷으로 집계 | 최초 쥐 탐지 기반 역할 배정, 상태 검증, Offline 판정의 중심 |
+| `system_monitor/runtime_service.py` | `start`, `stop`, `status`, `available`, `running` 공통 계약 정의 | Flask와 실행 모드의 결합도를 낮추는 경계 |
+| `system_monitor/state_manager.py` | 로봇, 위치, 대상, 사건, 탐지, 트랩, 전체 임무 상태를 단일 스냅샷으로 집계 | 최초 쥐 탐지 기반 역할 배정, 상태 검증, Offline 판정, 임무 상태 자동계산의 중심 |
 
 ## 5. 웹 화면 파일 (`frontend/`)
 
@@ -117,11 +117,11 @@ read-only 전환 결정"에 따라 삭제되어 현재 소스에는 없다(`data
 
 | 파일 | 검증 내용 |
 |---|---|
-| `tests/test_app.py` | 백그라운드 서비스 시작, Mock/ROS 응답 구조와 공통 화면 계약 |
-| `tests/test_map_service.py` | YAML/PGM 로드, PNG 변환, 실제 좌표 변환, 맵 누락 시 fallback |
-| `tests/test_mock_manager.py` | 탐지 좌표, 최초 탐지 역할 배정, 표준 사건 이름, 트랩 기록, 임무 완료 유지 |
-| `tests/test_ros_bridge.py` | 토픽 생성, 좌표 frame 보존, Detection/Odometry 변환, 대상 유실과 저전압 중복 방지 |
-| `tests/test_state_manager.py` | 상태 갱신·검증, 명령 전이, 활성 경고, 역할 배정, 역할별 명령 검증 |
+| `backend/tests/test_app.py` | 백그라운드 서비스 시작, Mock/ROS 응답 구조와 공통 화면 계약 |
+| `backend/tests/test_map_service.py` | YAML/PGM 로드, PNG 변환, 실제 좌표 변환, 맵 누락 시 fallback |
+| `backend/tests/test_mock_manager.py` | 탐지 좌표, 최초 탐지 역할 배정, 표준 사건 이름, 트랩 기록, 전체 임무 상태 자동계산 |
+| `backend/tests/test_ros_bridge.py` | 토픽 생성, 좌표 frame 보존, Detection/Odometry 변환, 대상 유실과 저전압 중복 방지 |
+| `backend/tests/test_state_manager.py` | 상태 갱신·검증(잘못된 state 거부 포함), 연결 요약 집계, 최초 쥐 탐지 기반 역할 자동배정, 세션 로컬 ID 발급 |
 
 테스트 실행 명령은 다음과 같다(`backend/`가 CWD여야 `system_monitor` 패키지를 import할 수 있다).
 
@@ -160,10 +160,10 @@ python3 -m unittest discover -s tests -v
 참조하며, YAML과 같은 폴더의 PGM을 읽는다. 향후 실제 토픽과 맵 정보가 확정되면
 로봇 코드를 복사해 넣는 대신 아래 접점만 맞춘다.
 
-1. `.env.example`의 namespace, 토픽, frame, 맵 경로
-2. `system_monitor/config.py`의 설정 규칙
-3. `system_monitor/ros_bridge.py`의 메시지 구독·변환
-4. `docs/ROS_INTERFACE_SPEC.md`의 확정 명세
+1. `backend/.env.example`의 namespace, 토픽, frame, 맵 경로
+2. `backend/system_monitor/config.py`의 설정 규칙
+3. `backend/system_monitor/ros_bridge.py`의 메시지 구독·변환
+4. 같은 폴더의 `ROS_INTERFACE_SPEC.md`의 확정 명세
 
 이 구조를 유지하면 시스템 모니터링 코드와 로봇 동작 코드가 직접 뒤섞이지 않아
 코드 리뷰와 후속 통합이 쉬워진다.
