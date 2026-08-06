@@ -123,7 +123,9 @@ class RosBridgeTest(unittest.TestCase):
         self.assertEqual(robot["state"], "SEARCHING")
         self.assertEqual(robot["current_task"], "창고 순찰 중")
         self.assertEqual(robot["battery"], 85.0)
-        self.assertEqual(self.state.snapshot()["mission"]["status"], "RUNNING")
+        # 전체 임무 상태는 로봇 state로부터 매번 계산된다. SEARCHING은
+        # "주변 위험요소 확인 중"(VERIFYING) 우선순위 버킷에 속한다.
+        self.assertEqual(self.state.snapshot()["mission"]["status"], "VERIFYING")
 
     def test_malformed_or_unregistered_fleet_status_is_ignored(self):
         self.bridge._on_fleet_status(SimpleNamespace(data="invalid"))

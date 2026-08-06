@@ -17,7 +17,7 @@
 
   <main class="shell">
     <section class="page-heading">
-      <div><p class="eyebrow">LIVE OPERATIONS</p><h1>다중 로봇 통합 관제</h1><p class="muted">공동 탐색 → 최초 발견 로봇 자동 추적 → 다른 로봇 쥐구멍 탐색·트랩 설치 과정을 확인합니다.</p></div>
+      <div><p class="eyebrow">LIVE OPERATIONS</p><h1>다중 로봇 통합 관제</h1><p class="muted">공동 탐색 → 최초 발견 로봇 자동 추적 → 다른 로봇 침입구·트랩 상태 확인 과정을 확인합니다.</p></div>
       <div class="heading-actions">
         <div class="fleet-connection-summary" title="현재 서버에서 상태를 수신 중인 로봇 수">
           <span id="fleet-connection-dot"></span>
@@ -28,7 +28,7 @@
           {% if mode == "mock" %}
           <button id="mock-panel-toggle" class="ghost-button" type="button">테스트</button>
           <div id="mock-controls" class="mock-controls hidden">
-            <button data-event="RAT_DETECTED">쥐 탐지</button><button data-event="RAT_HOLE_DETECTED">쥐구멍</button><button data-event="DROPPINGS_DETECTED">배설물</button><button data-event="TARGET_LOST">대상 유실</button><button data-event="LOW_BATTERY">배터리 부족</button><button data-event="TRAP_INSTALLED">덫 설치 완료</button>
+            <button data-event="RAT_DETECTED">쥐 탐지</button><button data-event="RAT_HOLE_DETECTED">쥐구멍</button><button data-event="DROPPINGS_DETECTED">배설물</button><button data-event="TARGET_LOST">대상 유실</button><button data-event="LOW_BATTERY">배터리 부족</button><button data-event="BATTERY_RECOVERED">배터리 복구</button><button data-event="TRAP_INSTALLED">트랩 상태 확인 완료</button>
           </div>
           {% endif %}
         </div>

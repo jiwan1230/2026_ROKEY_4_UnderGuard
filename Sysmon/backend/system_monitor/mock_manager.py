@@ -104,6 +104,7 @@ class MockManager:
             ),
             "TARGET_LOST": lambda: self._target_lost(robot_id),
             "LOW_BATTERY": lambda: self._low_battery(robot_id),
+            "BATTERY_RECOVERED": lambda: self._battery_recovered(robot_id),
             "TRAP_INSTALLED": lambda: self._trap_installed(robot_id),
         }
         handler = handlers.get(event_type)
@@ -157,7 +158,7 @@ class MockManager:
         if role == "RAT_TRACKER":
             return "TRACKING", "쥐 추적 중", LIVE_RODENT
         if role == "SURVEY_TRAP":
-            return "SEARCHING", "쥐구멍 탐색 및 트랩 설치", ENTRY_POINT
+            return "SEARCHING", "침입구·트랩 상태 확인", ENTRY_POINT
         return "SEARCHING", "쥐 공동 탐색 중", None
 
     def _move_on_patrol(
@@ -218,23 +219,23 @@ class MockManager:
             self._detection(support_ids[0], DROPPINGS, 0.83, "OAK-D")
 
     def _update_mission(self) -> None:
+        """장시간 시연 시 자동 종료 시점만 관리한다.
+
+        화면에 보이는 전체 임무 상태 문구는 이제 ``StateManager.snapshot()``이
+        각 로봇의 실제 state로부터 매번 다시 계산하므로(2.2 개선), 여기서는
+        시연용 활동 tick 카운트와 ``_scenario_completed`` 플래그만 관리한다.
+        """
+
         states = [robot["state"] for robot in self.state.snapshot()["robots"]]
         active = any(state in {"TRACKING", "SEARCHING", "RETURNING"} for state in states)
         if active:
             self._scenario_active_ticks += 1
-            mission_status = "RUNNING"
         elif states and all(state == "COMPLETED" for state in states):
-            mission_status = "COMPLETED"
             self._scenario_completed = True
-        else:
-            mission_status = "READY"
 
         if self._scenario_active_ticks >= 50 and active:
             self._complete_active_robots()
             self._scenario_completed = True
-            mission_status = "COMPLETED"
-
-        self.state.set_mission(status=mission_status)
 
     def _complete_active_robots(self) -> None:
         for robot_id in self.robot_ids:
@@ -306,6 +307,21 @@ class MockManager:
     def _low_battery(self, robot_id: str) -> dict:
         value = max(0.0, self.low_battery_threshold - 1.0)
         return record_low_battery(self.state, robot_id, value)
+
+    def _battery_recovered(self, robot_id: str) -> dict:
+        """배터리 부족 → 경고 → 복구 시연 흐름의 마지막 단계를 재현한다.
+
+        배터리 값을 정상 범위로 되돌리면 이후 tick에서 정상 순찰 배터리
+        곡선이 재개되고(``_move_on_patrol``), 화면의 저전압 경고와 카드의
+        운영 제한 문구는 실시간 배터리 값 기준으로 자동 사라진다.
+        """
+
+        self.state.update_robot(robot_id, battery=80.0)
+        return self.state.add_event(
+            "배터리가 복구되어 신규 확인 임무 제한이 해제되었습니다.",
+            robot_id=robot_id,
+            event_type="BATTERY_RECOVERED",
+        )
 
     def _trap_installed(self, robot_id: str) -> dict:
         event = record_trap_installed(

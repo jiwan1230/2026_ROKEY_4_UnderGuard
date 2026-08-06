@@ -42,6 +42,15 @@ except ImportError:
 try:  # colcon 설치 환경과 저장소에서 직접 실행하는 환경을 모두 지원한다.
     from turtle_project import fleet_msg
 except ImportError:
+    import sys
+    from pathlib import Path
+
+    # colcon build/source 없이 저장소에서 바로 실행하는 경우, turtle_project는
+    # <repo_root>/src/turtle_project에 있다. Sysmon/backend가 실행 CWD와
+    # 무관하게 항상 찾도록 그 src/를 sys.path에 추가한다.
+    _TURTLE_SRC_DIR = Path(__file__).resolve().parents[3] / "src"
+    if str(_TURTLE_SRC_DIR) not in sys.path:
+        sys.path.insert(0, str(_TURTLE_SRC_DIR))
     from turtle_project.turtle_project import fleet_msg
 
 

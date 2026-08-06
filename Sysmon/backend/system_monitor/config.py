@@ -62,7 +62,9 @@ class Settings:
     poll_interval_ms: int
     target_loss_timeout_sec: float = 1.5
     low_battery_threshold: float = 15.0
-    map_yaml_path: Path = Path("../minipjt/mini_turtle4/resource/my_map.yaml")
+    # app.py가 Path.cwd() 기준으로 상대경로를 푸므로(run_mock.sh/run_ros.sh가
+    # cd하는 Sysmon/backend/ 기준), Desktop/minipjt까지 3단계 위로 올라간다.
+    map_yaml_path: Path = Path("../../../minipjt/mini_turtle4/resource/my_map.yaml")
     ros_interface: RosInterfaceConfig = field(default_factory=RosInterfaceConfig)
 
 
@@ -98,7 +100,7 @@ def load_settings() -> Settings:
         map_yaml_path=Path(
             os.getenv(
                 "MAP_YAML_PATH",
-                "../minipjt/mini_turtle4/resource/my_map.yaml",
+                "../../../minipjt/mini_turtle4/resource/my_map.yaml",
             )
         ),
         ros_interface=RosInterfaceConfig(

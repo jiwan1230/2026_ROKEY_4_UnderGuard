@@ -82,11 +82,18 @@ def record_low_battery(
     robot_id: str,
     battery: float,
 ) -> dict[str, Any]:
-    """배터리 값을 반영하고 현재 세션에 저전압 경고를 추가한다."""
+    """배터리 값을 반영하고 현재 세션에 저전압 경고를 추가한다.
+
+    로봇의 실제 이동 상태(state)는 Fleet/ROS가 보고하는 값이 최종 권위를
+    가지므로 여기서 임의로 덮어쓰지 않는다. 배터리 기준 운영 의미(복귀 권장·
+    신규 확인 임무 제한)는 화면(dashboard.js)에서 배터리 수치로부터 매번
+    다시 계산해 표시한다.
+    """
 
     state.update_robot(robot_id, battery=battery)
     return state.add_event(
-        f"배터리가 부족합니다({battery:.1f}%). 복귀를 권장합니다.",
+        f"배터리가 부족합니다({battery:.1f}%). 복귀를 권장하며 "
+        "신규 확인 임무 배정을 제한합니다.",
         robot_id=robot_id,
         severity="WARNING",
         event_type="LOW_BATTERY",
@@ -126,10 +133,10 @@ def record_trap_installed(
         robot_id,
         state="COMPLETED",
         speed=0.0,
-        current_task="쥐덫 설치 완료 · 다음 지시 대기",
+        current_task="트랩 상태 확인 완료 · 다음 지시 대기",
     )
     return state.add_event(
-        "쥐덫 설치가 완료되었습니다.",
+        "등록된 트랩 상태 확인이 완료되었습니다.",
         robot_id=robot_id,
         event_type="TRAP_INSTALLED",
     )
@@ -153,7 +160,7 @@ def _update_robot_target(
         next_task = "쥐 추적 중"
     elif robot_role == "SURVEY_TRAP":
         next_state = "SEARCHING"
-        next_task = "쥐구멍 탐색 및 트랩 설치"
+        next_task = "침입구·트랩 상태 확인"
     else:
         next_state = fallback_state
         next_task = fallback_task
@@ -179,7 +186,7 @@ def _record_role_assignment(
     support_text = ", ".join(assignment["support_robot_ids"]) or "없음"
     state.add_event(
         f"{robot_id}가 쥐를 최초 발견했습니다. "
-        f"{robot_id}는 쥐 추적, {support_text}는 쥐구멍 탐색·트랩 설치 "
+        f"{robot_id}는 설치류 추적, {support_text}는 침입구·트랩 상태 확인 "
         "역할로 자동 배정되었습니다.",
         robot_id=robot_id,
         event_type="ROLE_ASSIGNED",

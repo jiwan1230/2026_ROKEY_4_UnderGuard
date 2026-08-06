@@ -27,6 +27,35 @@ VALID_STATES = {
 
 VALID_ROLES = {"SCOUT", "RAT_TRACKER", "SURVEY_TRAP", "UNASSIGNED"}
 
+# 전체 임무 상태는 개별 로봇 state 중 가장 우선순위가 높은 것을 그대로 반영한다.
+# ERROR > TARGET_LOST > TRACKING > (확인 중 이동) > RETURNING 순이며, 해당하는
+# 로봇이 하나도 없으면 IDLE(대기 중)로 떨어진다. BRD상 Under-Guard는 설치류를
+# 직접 포획·트랩 설치하지 않으므로 라벨은 화면(dashboard.js)에서 "확인/대응"
+# 중심 문구로 옮긴다.
+_MISSION_STATUS_PRIORITY = (
+    ("ERROR", {"ERROR"}),
+    ("TARGET_LOST", {"TARGET_LOST"}),
+    ("TRACKING", {"TRACKING"}),
+    ("VERIFYING", {"SEARCHING", "APPROACHING", "NAVIGATING", "INSTALLING_TRAP"}),
+    ("RETURNING", {"RETURNING"}),
+)
+
+
+def _derive_mission_status(states: list[str]) -> str:
+    """개별 로봇 state 중 가장 우선순위가 높은 것을 전체 임무 상태로 반환한다.
+
+    입력: 현재 스냅샷에 포함된 로봇들의 state 목록이다.
+    출력: 화면에 표시할 전체 임무 상태 코드다. 해당하는 활성 상태가 없으면
+    ``IDLE``이다(모든 로봇이 대기·오프라인·임무 완료 상태인 경우 포함).
+    사용: ``StateManager.snapshot()``에서 매 호출마다 다시 계산해, 로봇 카드와
+    전체 임무 배너가 서로 다른 이야기를 하지 않게 한다.
+    """
+
+    for status, member_states in _MISSION_STATUS_PRIORITY:
+        if any(state in member_states for state in states):
+            return status
+    return "IDLE"
+
 def is_rat_object(object_type: str | None) -> bool:
     """객체 라벨이 현재 데모에서 쥐로 취급되는지 반환한다."""
 
@@ -211,10 +240,11 @@ class StateManager:
             self._mission.update(changes)
 
     def mark_mission_started(self) -> None:
-        """첫 탐지가 들어오면 화면의 전체 임무 상태를 실행 중으로 바꾼다."""
+        """호환용 훅이다. 전체 임무 상태는 이제 snapshot()이 로봇 state로부터
+        매번 다시 계산하므로 여기서 별도로 바꿀 값이 없다.
+        """
 
-        with self._lock:
-            self._mission["status"] = "RUNNING"
+        return None
 
     def get_robot(self, robot_id: str) -> dict[str, Any]:
         """외부 컴포넌트가 안전하게 읽도록 로봇 상태 복사본을 반환한다."""
@@ -250,7 +280,9 @@ class StateManager:
                     robot.role = "SURVEY_TRAP"
                     if robot.connection == "ONLINE":
                         robot.state = "SEARCHING"
-                        robot.current_task = "쥐구멍 탐색 및 트랩 설치"
+                        # BRD상 로봇은 트랩을 직접 설치하지 않고 침입구·트랩
+                        # 상태를 확인해 관리자·방제업체 대응을 지원한다.
+                        robot.current_task = "침입구·트랩 상태 확인"
 
             self._mission.update(
                 role_assignment_status="ASSIGNED",
@@ -277,6 +309,9 @@ class StateManager:
             self._refresh_connections()
             robots = [asdict(robot) for robot in self._robots.values()]
             mission = copy.deepcopy(self._mission)
+            mission["status"] = _derive_mission_status(
+                [robot["state"] for robot in robots]
+            )
             online = sum(robot["connection"] == "ONLINE" for robot in robots)
             return {
                 "server_time": time.time(),

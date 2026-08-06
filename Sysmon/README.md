@@ -51,7 +51,10 @@ ROS 입력과 제약은 [ROS 인터페이스 명세](docs/ROS_INTERFACE_SPEC.md)
 
 ## 실행
 
+이 문서 아래 `backend/`에 실제 실행 대상(Flask 패키지·스크립트)이 있습니다.
+
 ```bash
+cd backend
 python3 -m pip install --user -r requirements.txt
 ./run_mock.sh
 ```
@@ -65,6 +68,7 @@ source /opt/ros/humble/setup.bash
 source ~/turtlebot4_ws/install/setup.bash
 export ROBOT_NAMESPACES=robot4,robot6
 export ROBOT_ROLES=SCOUT,SCOUT
+cd backend
 ./run_ros.sh
 ```
 
@@ -83,28 +87,39 @@ export ROBOT_ROLES=SCOUT,SCOUT
 ## 테스트
 
 ```bash
+cd backend
 python3 -m unittest discover -s tests -v
 ```
 
-현재 앱 라우트, Mock/ROS 계약, 맵 변환, 상태 관리, Mock 시나리오, Fleet/ROS 메시지 변환을 포함한 30개 테스트가 통과합니다.
+현재 앱 라우트, Mock/ROS 계약, 맵 변환, 상태 관리, Mock 시나리오, Fleet/ROS 메시지 변환을 포함한 35개 테스트가 통과합니다.
 
 ## 프로젝트 구조
 
+저장소 루트에서 `src/`(main의 `turtle_project`/`turtle_interfaces`가 있는 곳)와
+같은 층에 있으며, 화면(frontend)과 서버 로직(backend)을 물리적으로 분리합니다.
+
 ```text
-├── system_monitor/
-│   ├── app.py               # Flask 화면/API와 실행 수집기 조립
-│   ├── config.py            # 실행 모드·로봇·맵·토픽 설정
-│   ├── state_manager.py     # 현재 실행 중 상태의 메모리 집계
-│   ├── detection_service.py # 탐지·경고를 공통 상태로 변환
-│   ├── mock_manager.py      # 장비 없는 시연 데이터 생성
-│   ├── ros_bridge.py        # ROS/Fleet 메시지의 읽기 전용 변환
-│   ├── map_service.py       # PGM/YAML 로딩과 PNG 변환
-│   ├── templates/dashboard.html
-│   └── static/
+Sysmon/
+├── README.md                  # 이 문서
 ├── docs/
-├── tests/
-├── run_mock.sh
-└── run_ros.sh
+├── backend/
+│   ├── requirements.txt
+│   ├── .env.example
+│   ├── run_mock.sh
+│   ├── run_ros.sh
+│   ├── tests/
+│   └── system_monitor/
+│       ├── app.py               # Flask 화면/API와 실행 수집기 조립 (frontend/ 폴더를 명시적으로 연결)
+│       ├── config.py            # 실행 모드·로봇·맵·토픽 설정
+│       ├── state_manager.py     # 현재 실행 중 상태의 메모리 집계
+│       ├── detection_service.py # 탐지·경고를 공통 상태로 변환
+│       ├── mock_manager.py      # 장비 없는 시연 데이터 생성
+│       ├── ros_bridge.py        # ROS/Fleet 메시지의 읽기 전용 변환
+│       ├── map_service.py       # PGM/YAML 로딩과 PNG 변환
+│       └── runtime_service.py   # Mock/ROS 공통 인터페이스
+└── frontend/
+    ├── templates/dashboard.html
+    └── static/
 ```
 
 ## 다음 통합 우선순위

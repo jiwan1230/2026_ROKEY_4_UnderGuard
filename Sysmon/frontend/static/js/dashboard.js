@@ -34,29 +34,35 @@ const stateLabels = {
   TRACKING : '추적 중',
   TARGET_LOST : '대상 유실',
   NAVIGATING : '이동 중',
-  INSTALLING_TRAP : '덫 설치 중',
+  INSTALLING_TRAP : '트랩 상태 확인 중',
   RETURNING : '복귀 중',
   COMPLETED : '임무 완료 · 대기 중',
   PAUSED : '일시정지',
   ERROR : '오류'
 };
 // PAUSED는 명령 API가 삭제되며 도달 불가능해져 제거했다(mock_manager.py 참고).
+// 전체 임무 상태는 이제 로봇 state 우선순위로 서버가 매번 계산한다(state_manager.py
+// _derive_mission_status 참고). 코드는 우선순위 그대로: ERROR > TARGET_LOST >
+// TRACKING > VERIFYING > RETURNING > IDLE.
 const missionLabels = {
-  READY : '임무 대기',
-  RUNNING : '진행 중',
-  COMPLETED : '전체 임무 완료 · 대기 중'
+  ERROR : '오류 확인 필요',
+  TARGET_LOST : '설치류 대응 중 · 대상 유실',
+  TRACKING : '설치류 대응 중',
+  VERIFYING : '주변 위험요소 확인 중',
+  RETURNING : '복귀 중',
+  IDLE : '대기 중'
 };
 const roleLabels = {
   SCOUT : '공동 탐색·역할 대기',
-  RAT_TRACKER : '쥐 추적',
-  SURVEY_TRAP : '쥐구멍 탐색·트랩 설치',
+  RAT_TRACKER : '설치류 관찰·추적',
+  SURVEY_TRAP : '침입구·트랩 상태 확인',
   UNASSIGNED : '역할 미지정'
 };
 // 좁은 로봇 선택 탭에는 역할의 핵심만 표시하고 상세 카드에는 전체명을 쓴다.
 const shortRoleLabels = {
   SCOUT : '공동 탐색',
-  RAT_TRACKER : '쥐 추적',
-  SURVEY_TRAP : '쥐구멍 탐색',
+  RAT_TRACKER : '설치류 추적',
+  SURVEY_TRAP : '위험요소 확인',
   UNASSIGNED : '역할 대기'
 };
 const objectLabels = {
@@ -403,12 +409,17 @@ function renderOperationsStatus(snapshot) {
   const banner = $('#operations-alert-banner');
   const message = $('#operations-alert-message');
   const allConnected = total > 0 && online === total;
+  // Mock 모드는 실제 네트워크 연결이 아니라 시뮬레이션이므로 "연결됨" 대신
+  // "활성"으로 표현해 평가자가 실연동과 시뮬레이션을 혼동하지 않게 한다.
+  const isMock = cfg.mode === 'mock';
+  const unit = isMock ? '활성' : '연결';
+  const noneText = isMock ? '활성 Mock 로봇 없음' : '연결된 로봇 없음';
 
   dot.className = allConnected ? 'online' : (online > 0 ? 'warning' : 'danger');
   state.textContent =
-      allConnected ? `로봇 ${total}대 연결됨`
-                   : (online > 0 ? `로봇 ${online}/${total}대 연결`
-                                 : '연결된 로봇 없음');
+      allConnected
+          ? (isMock ? `Mock 로봇 ${total}대 활성` : `로봇 ${total}대 연결됨`)
+          : (online > 0 ? `로봇 ${online}/${total}대 ${unit}` : noneText);
 
   const warnings = [];
   const offline = snapshot.robots
@@ -473,18 +484,19 @@ function renderRobots(robots, runtime = {}, mission = {}) {
       <i class="${item.connection === 'ONLINE' ? '' : 'offline'}"></i>
     </button>`)
               .join('')}</div>`;
-  // 전체 임무 상태는 선택 탭 바로 아래에 두어 로봇 상태와 함께 읽는다.
-  const waitingForRoleAssignment =
-      mission.role_assignment_status === 'WAITING' &&
-      [ 'READY', 'RUNNING' ].includes(mission.status);
+  // 전체 임무 상태는 선택 탭 바로 아래에 두어 로봇 상태와 함께 읽는다. 역할
+  // 배정 전(WAITING)에는 계산된 상태 대신 "역할 배정 전"을 우선 보여준다.
+  // role_assignment_status는 한 번 ASSIGNED가 되면 되돌아가지 않으므로 status
+  // 값과 별도로만 확인하면 된다.
+  const waitingForRoleAssignment = mission.role_assignment_status === 'WAITING';
   const missionText = waitingForRoleAssignment
       ? '역할 배정 전'
-      : (missionLabels[mission.status] || mission.status || '임무 대기');
+      : (missionLabels[mission.status] || mission.status || '대기 중');
   const missionSummary = `
     <div class="fleet-mission-summary">
       <span>전체 임무</span>
       <strong id="mission-status" class="mission-summary-state state-${
-          String(mission.status || 'READY').toLowerCase()}">${
+          String(mission.status || 'IDLE').toLowerCase()}">${
           escapeHtml(missionText)}</strong>
     </div>`;
   const detail =
@@ -506,7 +518,12 @@ function renderRobots(robots, runtime = {}, mission = {}) {
                                               : '오프라인'}</span></div>
       <div class="robot-task state-text state-${
                 String(robot.state).toLowerCase()}">${
-                escapeHtml(localizeObjectText(robot.current_task))}</div>
+                escapeHtml(localizeObjectText(robot.current_task))}</div>${
+                battery < lowBatteryThreshold
+                    ? `<div class="battery-advisory">배터리 ${
+                          n(robot.battery,
+                            0)}% · 복귀 권장 · 신규 확인 임무 제한</div>`
+                    : ''}
       <div class="robot-metrics robot-metrics-compact">
         <div class="metric battery-metric"><small>배터리</small><strong>${
                 n(robot.battery, 0)}%</strong><span class="battery-mini ${
