@@ -64,7 +64,11 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
         map_img = Image.open(io.BytesIO(map_bytes))
 
         def world_to_plot(x, y):
-            return pf["y_high"] - y, pf["x_high"] - x
+            # plot_y는 x_high - x가 아니라 x - x_low여야 한다. B(사용자가 확인한 회전
+            # 방향)의 픽셀 좌표를 직접 역산해서 교차검증한 결과, 이전 공식은 세로
+            # 방향으로 반사(mirror)까지 들어가 있어서 지도 배경은 맞아도 로봇/트랩
+            # 점들이 자유공간과 반대되는 위치(벽 위)에 찍히는 원인이었다.
+            return pf["y_high"] - y, x - pf["x_low"]
 
         xlim = (0, pf["y_high"] - pf["y_low"])
         ylim = (0, pf["x_high"] - pf["x_low"])
