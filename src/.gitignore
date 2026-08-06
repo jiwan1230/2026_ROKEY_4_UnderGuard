@@ -6,6 +6,9 @@
 # herding_controller는 ../intelligence1_algorithm/herding_controller를 가리키는
 # 심볼릭 링크 -- colcon이 src/ 밑만 스캔하므로 빌드 대상에 넣기 위해 추가.
 !/herding_controller
+# herding_controller_dual = 플랜 B(로봇 2대 동적 역할배정) 실험 브랜치 전용 사본.
+# 플랜 A(herding_controller)는 건드리지 않고 별도 패키지로 분리.
+!/herding_controller_dual
 
 # 파이썬/빌드 산출물
 __pycache__/
