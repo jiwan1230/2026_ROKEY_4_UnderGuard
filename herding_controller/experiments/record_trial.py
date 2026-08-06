@@ -90,7 +90,13 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
     for spine in ax.spines.values():
         spine.set_color(LINE)
     if is_real_map:
-        ax.imshow(map_img, extent=[xlim[0], xlim[1], ylim[0], ylim[1]], origin="upper")
+        # extent의 bottom/top이 (ylim[1], ylim[0])로 "뒤집힌" 순서인 게 맞다 -- 실수로
+        # (ylim[0], ylim[1])로 "정상화"했다가 로봇이 지도 벽 위에 찍히는 버그를 낸 적이
+        # 있다. ax.set_ylim(*ylim)으로 정상(비반전) 축을 쓰는 상태에서, 이 이미지는
+        # world_to_plot()과 같은 회전 변환으로 만들어졌기 때문에 세로축이 함께
+        # 뒤집혀야 장애물 픽셀과 실제 좌표(로봇/트랩 등)가 맞아떨어진다. 바꾸기 전에
+        # 반드시 장애물 좌표를 점으로 겹쳐 그려서 지도와 정렬되는지 확인할 것.
+        ax.imshow(map_img, extent=[xlim[0], xlim[1], ylim[1], ylim[0]], origin="upper")
     else:
         wx0, wx1 = data["wall"]["x"]
         wy0, wy1 = data["wall"]["y"]
