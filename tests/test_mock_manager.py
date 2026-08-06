@@ -82,6 +82,54 @@ class MockManagerTest(unittest.TestCase):
         self.assertEqual(snapshot["robots"][0]["state"], "COMPLETED")
         self.assertEqual(snapshot["detections"], [])
 
+    def test_mission_reports_running_while_a_robot_is_active(self):
+        # setUp이 robot4를 이미 SEARCHING(활동 상태)으로 두었다.
+        self.mock._update_mission()
+
+        self.assertEqual(self.state.snapshot()["mission"]["status"], "RUNNING")
+        self.assertEqual(self.mock._scenario_active_ticks, 1)
+
+    def test_mission_is_ready_when_no_robot_is_active(self):
+        self.state.update_robot("robot4", state="IDLE")
+
+        self.mock._update_mission()
+
+        self.assertEqual(self.state.snapshot()["mission"]["status"], "READY")
+        self.assertEqual(self.mock._scenario_active_ticks, 0)
+
+    def test_mission_completes_once_all_robots_report_completed(self):
+        self.state.update_robot("robot4", state="COMPLETED")
+
+        self.mock._update_mission()
+
+        self.assertEqual(self.state.snapshot()["mission"]["status"], "COMPLETED")
+        self.assertTrue(self.mock._scenario_completed)
+
+    def test_mission_auto_completes_after_fifty_active_ticks(self):
+        # 49에서 시작해, 이번 호출의 +1로 임계값(50)에 닿는지 확인한다.
+        self.mock._scenario_active_ticks = 49
+
+        self.mock._update_mission()
+
+        snapshot = self.state.snapshot()
+        self.assertEqual(snapshot["mission"]["status"], "COMPLETED")
+        self.assertTrue(self.mock._scenario_completed)
+        self.assertEqual(snapshot["robots"][0]["state"], "COMPLETED")
+        self.assertEqual(self.mock._scenario_holds["robot4"], "COMPLETED")
+
+    def test_mission_falls_back_to_ready_for_unproducible_states(self):
+        """명령 API가 삭제되며 로봇을 PAUSED로 만들 방법 자체가 없어져,
+        ``_update_mission``의 PAUSED 전용 분기를 제거했다(정리 완료). 그
+        분기가 없어도 활동·완료가 아닌 나머지는 전부 READY로 떨어지는
+        기본 동작만 남았다는 걸 확인한다.
+        """
+
+        self.state.update_robot("robot4", state="PAUSED")
+
+        self.mock._update_mission()
+
+        self.assertEqual(self.state.snapshot()["mission"]["status"], "READY")
+
 
 if __name__ == "__main__":
     unittest.main()

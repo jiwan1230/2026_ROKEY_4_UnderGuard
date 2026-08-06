@@ -223,8 +223,6 @@ class MockManager:
         if active:
             self._scenario_active_ticks += 1
             mission_status = "RUNNING"
-        elif states and all(state == "PAUSED" for state in states):
-            mission_status = "PAUSED"
         elif states and all(state == "COMPLETED" for state in states):
             mission_status = "COMPLETED"
             self._scenario_completed = True

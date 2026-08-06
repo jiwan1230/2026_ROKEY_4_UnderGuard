@@ -40,10 +40,10 @@ const stateLabels = {
   PAUSED : '일시정지',
   ERROR : '오류'
 };
+// PAUSED는 명령 API가 삭제되며 도달 불가능해져 제거했다(mock_manager.py 참고).
 const missionLabels = {
   READY : '임무 대기',
   RUNNING : '진행 중',
-  PAUSED : '일시정지',
   COMPLETED : '전체 임무 완료 · 대기 중'
 };
 const roleLabels = {
