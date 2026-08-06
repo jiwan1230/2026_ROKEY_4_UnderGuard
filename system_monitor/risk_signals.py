@@ -26,7 +26,7 @@ def normalize_risk_signal(object_type: str | None) -> str:
 
     입력: ROS 모델 또는 Mock에서 받은 객체 라벨이다.
     출력: 알려진 별칭은 세 표준값 중 하나이며, 미등록 라벨은 원문을 유지한다.
-    사용: 저장·상태 전이 전에 호출해 모드와 무관한 계약을 만든다.
+    사용: 화면 상태 전이 전에 호출해 모드와 무관한 계약을 만든다.
     """
 
     value = str(object_type or "").strip()

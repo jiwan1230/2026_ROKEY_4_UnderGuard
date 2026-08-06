@@ -8,7 +8,6 @@ import time
 from typing import Any
 
 from .config import RobotConfig, RosInterfaceConfig
-from .database import Database
 from .detection_service import (
     process_detection,
     record_low_battery,
@@ -55,24 +54,12 @@ FLEET_STATE_MAP = {
     "HERDING": ("NAVIGATING", "쥐 몰이 중"),
 }
 
-# UI 명령 중 main의 fleet command로 의미가 보존되는 항목만 송신한다.
-FLEET_COMMAND_MAP = {
-    "START_SCOUTING": "PATROL",
-    "START_TRACKING": "TRACK",
-    "START_SEARCH": "PATROL",
-    "RETURN_HOME": "DOCK",
-    "STOP": "STOP",
-}
-ROS_COMMAND_CAPABILITIES = frozenset({*FLEET_COMMAND_MAP, "RESUME"})
-
-
 class RosBridge:
     """main Fleet 인터페이스와 보조 센서 토픽을 웹 상태로 변환한다.
 
     main 기준 1순위 인터페이스:
       - /fleet/status  : ``robot:state:battery``
       - /fleet/event   : ``event_name:x:y``
-      - /fleet/command : ``robot:command``
 
     선택적 보조 입력:
       - /<namespace>/webcam/detections : vision_msgs/Detection3DArray
@@ -83,7 +70,6 @@ class RosBridge:
     def __init__(
         self,
         state: StateManager,
-        db: Database,
         robots: tuple[RobotConfig, ...],
         *,
         target_loss_timeout_sec: float = 1.5,
@@ -91,16 +77,13 @@ class RosBridge:
         interface: RosInterfaceConfig | None = None,
     ) -> None:
         self.state = state
-        self.db = db
         self.robots = robots
         self.target_loss_timeout_sec = target_loss_timeout_sec
         self.low_battery_threshold = low_battery_threshold
         self.interface = interface or RosInterfaceConfig()
         self._thread: threading.Thread | None = None
         self._node = None
-        self._command_publisher = None
-        # 초기화와 ROS 콜백 저장이 교차해 삭제 직후 이전 기록이 되살아나는
-        # 일을 막는다. 위치 heartbeat처럼 DB를 쓰지 않는 콜백은 계속 동작한다.
+        # 여러 ROS 콜백이 역할 배정·경고 상태를 동시에 바꾸지 않도록 보호한다.
         self._data_lock = threading.RLock()
         self._last_live_rodent_at: dict[str, float] = {}
         self._target_lost_reported: set[str] = set()
@@ -122,8 +105,7 @@ class RosBridge:
             "mode": "ros",
             "available": self.available,
             "running": self.running,
-            "commands_enabled": self.running and self._command_publisher is not None,
-            "command_capabilities": sorted(ROS_COMMAND_CAPABILITIES),
+            "read_only": True,
             "mock_events_enabled": False,
             "mission_progress_available": False,
             "data_source": "ROS2",
@@ -154,74 +136,6 @@ class RosBridge:
         self._thread.join(timeout=2.0)
         self._thread = None
 
-    def send_command(self, robot_id: str, command: str) -> dict[str, Any]:
-        """웹 명령을 main의 ``/fleet/command`` String 포맷으로 발행한다.
-
-        입력: 명령 대상 로봇 ID와 요청 명령이다.
-        출력: 송신 여부, UI 명령, 타임라인 사건을 담은 API 응답 딕셔너리다.
-        사용: ROS 모드의 명령 API가 호출하며 실제 상태는 /fleet/status로 확정한다.
-        """
-
-        self.state.validate_command(robot_id, command)
-        fleet_command = self._to_fleet_command(robot_id, command)
-        if fleet_command is None:
-            return {
-                "accepted": False,
-                "robot_id": robot_id,
-                "command": command,
-                "event": None,
-                "reason": "main Fleet 계약이 지원하지 않는 명령입니다.",
-            }
-        if self._command_publisher is None:
-            return {
-                "accepted": False,
-                "robot_id": robot_id,
-                "command": command,
-                "event": None,
-                "reason": "ROS Fleet 명령 발행기가 아직 준비되지 않았습니다.",
-            }
-
-        self._command_publisher.publish(
-            String(data=fleet_msg.command(robot_id, fleet_command))
-        )
-        event = self.state.add_event(
-            f"Fleet 명령을 전송했습니다: {fleet_command}",
-            robot_id=robot_id,
-            event_type="COMMAND",
-        )
-        self.db.insert_event(event)
-        return {
-            "accepted": True,
-            "robot_id": robot_id,
-            "command": command,
-            "event": event,
-            "reason": None,
-        }
-
-    def _to_fleet_command(self, robot_id: str, command: str) -> str | None:
-        """UI 명령을 main의 명령 enum으로 변환하며 의미 없는 변환은 거부한다."""
-
-        if command != "RESUME":
-            return FLEET_COMMAND_MAP.get(command)
-        role = self.state.get_robot(robot_id)["role"]
-        return "TRACK" if role == "RAT_TRACKER" else "PATROL"
-
-    def reset_operational_data(self) -> dict[str, int]:
-        """ROS 수집기는 유지하고 저장·화면 이력만 초기화한다.
-
-        입력: 없음. 출력: 탐지·사건·트랩 테이블별 삭제 건수다.
-        사용: 관리자용 운영 데이터 초기화 API가 ROS 모드일 때 호출한다.
-        현재 로봇 위치·연결·임무는 보존하며 다음 토픽부터 다시 기록한다.
-        """
-
-        with self._data_lock:
-            deleted = self.db.clear_operational_data()
-            self.state.clear_operational_history()
-            self._last_live_rodent_at.clear()
-            self._target_lost_reported.clear()
-            self._low_battery_reported.clear()
-            return deleted
-
     def _spin(self) -> None:
         """로봇별 ROS 구독을 생성하고 종료 요청까지 콜백을 처리한다.
 
@@ -238,10 +152,6 @@ class RosBridge:
         class MonitorNode(Node):
             def __init__(self) -> None:
                 super().__init__("system_monitor_bridge")
-                self.command_pub = self.create_publisher(
-                    String, bridge.interface.fleet_command_topic, 10
-                )
-                bridge._command_publisher = self.command_pub
                 self.create_subscription(
                     String,
                     bridge.interface.fleet_status_topic,
@@ -297,7 +207,6 @@ class RosBridge:
         finally:
             self._node.destroy_node()
             self._node = None
-            self._command_publisher = None
             if rclpy.ok():
                 rclpy.shutdown()
 
@@ -327,7 +236,7 @@ class RosBridge:
             not_reported = robot_id not in self._low_battery_reported
             is_new_low_battery = below_threshold and not_reported
             if is_new_low_battery:
-                record_low_battery(self.state, self.db, robot_id, battery_value)
+                record_low_battery(self.state, robot_id, battery_value)
                 self._low_battery_reported.add(robot_id)
             elif battery_value >= self.low_battery_threshold + 2:
                 self._low_battery_reported.discard(robot_id)
@@ -363,7 +272,6 @@ class RosBridge:
                 object_type = LIVE_RODENT if name == "rat_detected" else ENTRY_POINT
                 process_detection(
                     self.state,
-                    self.db,
                     {
                         "robot_id": robot_id,
                         "object_type": object_type,
@@ -383,7 +291,6 @@ class RosBridge:
             if name == "trap_ok":
                 record_trap_installed(
                     self.state,
-                    self.db,
                     robot_id,
                     map_frame=self.interface.map_frame,
                     map_x=map_x,
@@ -401,7 +308,7 @@ class RosBridge:
         """Detection3DArray의 유효 항목을 공통 탐지 서비스로 전달한다.
 
         입력: 구독 토픽의 로봇 ID, 센서 이름, ``Detection3DArray`` 메시지다.
-        출력: 없음. 상태 heartbeat와 탐지 DB/타임라인을 갱신한다.
+        출력: 없음. 상태 heartbeat와 현재 세션의 탐지·타임라인을 갱신한다.
         사용: webcam/oakd detection 구독 콜백으로 등록한다.
         """
 
@@ -413,7 +320,6 @@ class RosBridge:
                     continue
                 item = process_detection(
                     self.state,
-                    self.db,
                     data,
                     event_message=f"{source}에서 {data['object_type']}를 탐지했습니다.",
                     fallback_state=(
@@ -449,7 +355,7 @@ class RosBridge:
         center = detection_msg.bbox.center.position
         distance = math.hypot(center.x, center.y) if center.z == 0 else abs(center.z)
 
-        # Bounding box 중심은 header 좌표계에 속하므로 map 좌표만 저장한다.
+        # Bounding box 중심은 header 좌표계에 속하므로 map 좌표만 지도에 쓴다.
         # 다른 좌표계는 TF 변환을 연결하기 전까지 지도 좌표에서 제외한다.
         header = getattr(array_msg, "header", None)
         frame_id = str(getattr(header, "frame_id", "")).strip("/")
@@ -509,7 +415,7 @@ class RosBridge:
             not_reported = robot_id not in self._low_battery_reported
             is_new_low_battery = below_threshold and not_reported
             if is_new_low_battery:
-                record_low_battery(self.state, self.db, robot_id, value)
+                record_low_battery(self.state, robot_id, value)
                 self._low_battery_reported.add(robot_id)
                 return
 
@@ -529,5 +435,5 @@ class RosBridge:
                 robot = self.state.get_robot(robot_id)
                 if robot["state"] != "TRACKING":
                     continue
-                record_target_lost(self.state, self.db, robot_id)
+                record_target_lost(self.state, robot_id)
                 self._target_lost_reported.add(robot_id)

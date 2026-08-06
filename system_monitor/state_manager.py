@@ -27,25 +27,6 @@ VALID_STATES = {
 
 VALID_ROLES = {"SCOUT", "RAT_TRACKER", "SURVEY_TRAP", "UNASSIGNED"}
 
-COMMAND_TRANSITIONS = {
-    "START_SCOUTING": ("SEARCHING", "쥐 공동 탐색"),
-    "START_TRACKING": ("TRACKING", "쥐 추적"),
-    "START_SEARCH": ("SEARCHING", "쥐구멍 탐색"),
-    "PAUSE": ("PAUSED", "임무 일시정지"),
-    "RESUME": ("NAVIGATING", "임무 재개"),
-    "RETURN_HOME": ("RETURNING", "시작 위치 복귀"),
-    "INSTALL_TRAP": ("INSTALLING_TRAP", "쥐덫 설치"),
-    "STOP": ("IDLE", "임무 중단"),
-}
-
-COMMAND_REQUIRED_ROLES = {
-    "START_SCOUTING": "SCOUT",
-    "START_TRACKING": "RAT_TRACKER",
-    "START_SEARCH": "SURVEY_TRAP",
-    "INSTALL_TRAP": "SURVEY_TRAP",
-}
-
-
 def is_rat_object(object_type: str | None) -> bool:
     """객체 라벨이 현재 데모에서 쥐로 취급되는지 반환한다."""
 
@@ -125,6 +106,8 @@ class StateManager:
         self._detections: list[dict[str, Any]] = []
         self._traps: list[dict[str, Any]] = []
         self._next_event_id = 1
+        self._next_detection_id = 1
+        self._next_trap_id = 1
         self._mission = {
             "status": "READY",
             "progress": 0,
@@ -134,29 +117,6 @@ class StateManager:
             "tracker_robot_id": None,
             "support_robot_ids": [],
         }
-
-    def reset(self) -> None:
-        """로봇·임무·탐지·사건·트랩을 생성 직후 상태로 되돌린다.
-
-        입력과 출력은 없다. 관리자용 Mock 초기화에서 DB 삭제 후 사용하며,
-        잠금 안에서 전체 상태를 교체해 폴링 요청이 중간 상태를 보지 않게 한다.
-        """
-
-        with self._lock:
-            self._reset_unlocked()
-
-    def clear_operational_history(self) -> None:
-        """현재 로봇·임무 상태는 유지하고 수집 이력만 비운다.
-
-        입력과 출력은 없다. ROS 운영 데이터 초기화에서 탐지·사건·트랩의
-        메모리 사본을 DB와 함께 비우되 마지막 ROS 위치와 연결은 보존한다.
-        """
-
-        with self._lock:
-            self._events.clear()
-            self._detections.clear()
-            self._traps.clear()
-            self._next_event_id = 1
 
     def update_robot(self, robot_id: str, **changes: Any) -> None:
         """로봇 상태 일부를 갱신하고 통신 시각을 기록한다.
@@ -226,10 +186,12 @@ class StateManager:
 
         with self._lock:
             item = {
+                "id": self._next_detection_id,
                 "timestamp": time.time(),
                 "status": "UNREVIEWED",
                 **detection,
             }
+            self._next_detection_id += 1
             self._detections.append(item)
             self._detections = self._detections[-100:]
             return copy.deepcopy(item)
@@ -238,7 +200,13 @@ class StateManager:
         """설치된 트랩 위치를 최근 목록에 추가하고 복사본을 반환한다."""
 
         with self._lock:
-            item = {"timestamp": time.time(), "status": "INSTALLED", **trap}
+            item = {
+                "id": self._next_trap_id,
+                "timestamp": time.time(),
+                "status": "INSTALLED",
+                **trap,
+            }
+            self._next_trap_id += 1
             self._traps.append(item)
             self._traps = self._traps[-100:]
             return copy.deepcopy(item)
@@ -304,42 +272,6 @@ class StateManager:
                 },
             }
 
-    def apply_command(self, robot_id: str, command: str) -> dict[str, Any]:
-        """Mock 이동 명령을 상태 전이로 적용한다.
-
-        입력: 등록 로봇 ID와 ``START_SCOUTING`` 같은 허용 명령 문자열이다.
-        출력: 대시보드와 DB에 기록할 명령 사건 딕셔너리다.
-        사용: Mock 모드의 ``POST /api/commands``에서만 호출한다.
-        """
-
-        with self._lock:
-            state, task = self.validate_command(robot_id, command)
-            self.update_robot(robot_id, state=state, current_task=task)
-            return self.add_event(
-                f"{task} 명령이 요청되었습니다.",
-                robot_id=robot_id,
-                event_type="COMMAND",
-            )
-
-    def validate_command(self, robot_id: str, command: str) -> tuple[str, str]:
-        """모드와 무관하게 로봇 ID·명령·역할 조합을 검증한다.
-
-        입력: 명령 대상 로봇 ID와 명령 이름이다.
-        출력: 명령이 의미하는 다음 상태와 작업 문구다.
-        사용: Mock은 적용 전, ROS는 송신 가능 여부 응답 전에 호출한다.
-        """
-
-        with self._lock:
-            if command not in COMMAND_TRANSITIONS:
-                raise ValueError(f"지원하지 않는 명령: {command}")
-            robot = self._require_robot(robot_id)
-            required_role = COMMAND_REQUIRED_ROLES.get(command)
-            if required_role and robot.role != required_role:
-                raise ValueError(
-                    f"{command} 명령은 {required_role} 역할에서만 사용할 수 있습니다."
-                )
-            return COMMAND_TRANSITIONS[command]
-
     def snapshot(self) -> dict[str, Any]:
         """현재 시스템 전체 상태를 대시보드 응답 형태로 반환한다.
 
@@ -370,7 +302,6 @@ class StateManager:
                     "robots_online": online,
                     "robots_total": len(robots),
                     "active_alerts": active_alerts,
-                    "detections": len(self._detections),
                 },
                 "mission": mission,
                 "robots": robots,
