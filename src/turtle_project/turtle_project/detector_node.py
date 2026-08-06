@@ -18,9 +18,10 @@ from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, CompressedImage
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformException, TransformListener
 
+from turtle_interfaces.msg import TrapJob
 from turtle_interfaces.srv import QueryHole
 from turtle_project import fleet_msg
 from turtle_project.depth_math import (decode_depth, depth_at, depth_spread,
@@ -28,6 +29,39 @@ from turtle_project.depth_math import (decode_depth, depth_at, depth_spread,
 from turtle_project.nav_controller import approach_point, make_pose
 
 FRAME = 'map'
+
+
+class RatTracker:
+    """쥐 추적 판정 — 좌표 스트림으로 포획/놓침을 가린다. ROS 무관(시각 주입).
+
+    포획: 쥐가 capture_radius 안에서 capture_secs 이상 머무름 (안 움직임).
+    놓침: lost_secs 이상 쥐가 안 보임 (감지 끊김).
+    좌표 추정값은 떨리므로 '정확히 같음'이 아니라 반경으로 판정한다.
+    """
+
+    def __init__(self, capture_radius=0.3, capture_secs=10.0, lost_secs=5.0):
+        self.capture_radius = capture_radius
+        self.capture_secs = capture_secs
+        self.lost_secs = lost_secs
+        self.anchor = None      # 머무는 중심 (x, y)
+        self.anchor_time = None  # anchor에 자리잡은 시각
+        self.last_seen = None   # 마지막 감지 시각
+
+    def seen(self, x, y, now):
+        """쥐 감지 갱신. 반경 밖으로 움직이면 anchor 재설정. 포획이면 True."""
+        if self.anchor is None or \
+                math.hypot(x - self.anchor[0], y - self.anchor[1]) > self.capture_radius:
+            self.anchor = (x, y)        # 새로 자리잡음 (또는 반경 벗어나 이동)
+            self.anchor_time = now
+        self.last_seen = now
+        return now - self.anchor_time >= self.capture_secs
+
+    def is_lost(self, now):
+        """마지막 감지 후 lost_secs 넘게 안 보였으면 True (한 번도 못 봤으면 False)."""
+        return self.last_seen is not None and now - self.last_seen >= self.lost_secs
+
+    def reset(self):
+        self.anchor = self.anchor_time = self.last_seen = None
 
 
 class DetectorNode(Node):
@@ -41,6 +75,10 @@ class DetectorNode(Node):
         self.depth_gap = self.declare_parameter('depth_gap', 0.05).value
         self.side_margin = self.declare_parameter('side_margin', 0.05).value
         self.verify_timeout = self.declare_parameter('verify_timeout', 30).value
+        cap_r = self.declare_parameter('capture_radius', 0.3).value
+        cap_s = self.declare_parameter('capture_secs', 10.0).value
+        lost_s = self.declare_parameter('lost_secs', 5.0).value
+        self.reinstall_max = self.declare_parameter('reinstall_max', 3).value
 
         self.model = self._load_model()
         self.bridge = CvBridge()
@@ -52,11 +90,20 @@ class DetectorNode(Node):
         self.target = None      # 검증 대상 opening의 map 좌표
         self.goal = None        # 발행한 접근 goal (TF 도착 판정용)
         self.verify_count = 0
+        self.hole = None        # 점검 대상 구멍의 map 좌표 (INSPECTING/재설치용)
+        self.reinstall_count = 0  # trap_bad/미검출로 인한 재설치 횟수
+        # 쥐 추적 판정기 (포획/놓침). tracking True일 때만 굴린다.
+        self.rat = RatTracker(cap_r, cap_s, lost_s)
+        self.tracking = False
 
         self.event_pub = self.create_publisher(String, '/fleet/event', 10)
         # detector는 goal을 직접 안 쏜다. 접근·추적 목표는 target_pose로 발행만
         # 하고, 실제 Nav2 주행은 robot_agent가 한다 (로봇당 Nav2 주인 1개).
         self.pose_pub = self.create_publisher(PoseStamped, 'target_pose', 10)
+        # opening 처리 동안 순찰을 멈춰둔다 (명시 신호). robot_agent가 구독.
+        self.hold_pub = self.create_publisher(Bool, 'patrol_hold', 10)
+        # trap 설치/점검 지시 — trap_check가 받아 주행/판정만 한다.
+        self.job_pub = self.create_publisher(TrapJob, 'trap_job', 10)
         self.db = self.create_client(QueryHole, '/db/query_hole')
 
         self.rgb_sub = Subscriber(self, CompressedImage, 'synced/rgb',
@@ -69,6 +116,12 @@ class DetectorNode(Node):
             [self.rgb_sub, self.depth_sub, self.info_sub],
             queue_size=10, slop=0.1)
         self.sync.registerCallback(self.synced_cb)
+        # 쥐 추적은 central의 TRACK 명령으로 켠다 (내 로봇이 A일 때만).
+        self.create_subscription(String, '/fleet/command', self.command_cb, 10)
+        # trap_check가 발행하는 설치완료/점검결과를 받아 상태를 전이한다.
+        self.create_subscription(String, '/fleet/event', self.trap_event_cb, 10)
+        # 놓침은 감지가 끊긴 걸로 판단 — 프레임 콜백이 안 오므로 타이머로 감시.
+        self.create_timer(1.0, self.lost_tick)
         self.get_logger().info(
             f'감지 시작 — gap 임계 {self.depth_gap}m, 접근 {self.approach_dist}m')
 
@@ -91,6 +144,8 @@ class DetectorNode(Node):
         if self.state == 'APPROACHING':     # 주행은 robot_agent — 도착만 감시
             self._check_arrival()
             return
+        if self.state in ('QUERYING', 'AWAIT_TRAP'):
+            return                          # db 응답/trap_check 응답 대기 — 지각 불필요
         self.K = np.array(info_msg.k).reshape(3, 3)
         img = self.bridge.compressed_imgmsg_to_cv2(rgb_msg, 'bgr8')
         depth = decode_depth(depth_msg.data, depth_msg.format)
@@ -101,19 +156,39 @@ class DetectorNode(Node):
         # 잡아 map 좌표 계산 후 self._emit_rat(x, y) + target_pose 추적 goal.
         self._detect_rat(result, img.shape, depth, depth_frame)
 
-        box = self._pick(result, 'opening', img.shape)
         if self.state == 'SEARCHING':
+            box = self._pick(result, 'opening', img.shape)
             if box is not None:
                 self._on_opening(box, img.shape, depth, depth_frame)
         elif self.state == 'VERIFYING':
-            self._verify(box, img.shape, depth)
+            self._verify(self._pick(result, 'opening', img.shape), img.shape, depth)
+        elif self.state == 'INSPECTING':
+            self._inspect(result, img.shape, depth, depth_frame)
 
     def _detect_rat(self, result, img_shape, depth, depth_frame):
-        """TODO(팀원): rat 박스 → map좌표 → event+target_pose. 뼈대는 감지만 로그."""
+        """쥐 감지 → map좌표 → RatTracker 판정. 포획이면 rat_captured 발행.
+
+        TRACK 모드(self.tracking)일 때만 포획/놓침을 판정한다. 순찰 중 우연히
+        쥐가 보이면 rat_detected만 쏴 central이 쥐대응을 시작하게 한다.
+        """
         box = self._pick(result, 'rat', img_shape)
-        if box is not None:
-            self.get_logger().info('rat 감지 — TODO: 추적 goal/event 발행',
-                                   throttle_duration_sec=1.0)
+        if box is None:
+            return
+        xy = self._box_to_map(box, img_shape, depth, depth_frame)
+        if xy is None:
+            return
+        if not self.tracking:
+            # 아직 쥐대응 전 — 최초 감지만 알림 (central이 역할배정 시작).
+            self.event_pub.publish(String(data=fleet_msg.event(
+                'rat_detected', *xy)))
+            return
+        # 추적 중 — 추적 goal 발행 + 포획 판정.
+        # TODO(팀원): self.pose_pub.publish(추적 target_pose) — 쥐 위치로 접근.
+        if self.rat.seen(xy[0], xy[1], self._now()):
+            self.get_logger().info(f'쥐 포획 판정 ({xy[0]:.2f}, {xy[1]:.2f})')
+            self.event_pub.publish(String(data=fleet_msg.event(
+                'rat_captured', *xy)))
+            self._stop_tracking()
 
     def _pick(self, result, cls_name, img_shape):
         """cls_name 박스 중 화면 중앙에 가장 가까운 것 -> xyxy or None."""
@@ -131,26 +206,38 @@ class DetectorNode(Node):
         return best
 
     def _on_opening(self, box, img_shape, depth, depth_frame):
-        """opening 감지 → map좌표 → DB조회 분기. 좌표계산은 기존 로직."""
+        """opening 감지 → 순찰 정지 + 홀 앞 접근. 좌표 확정/조회는 도착 후."""
         xy = self._box_to_map(box, img_shape, depth, depth_frame)
         if xy is None:
             return
-        # TODO(팀원): DB 조회. 뼈대는 조회 요청만 보내고 바로 접근 검증으로 간다.
-        # if exists: trap 점검 단계로. else: 아래 접근·검증.
-        self._request_db(*xy)
+        self._hold_patrol(True)             # 처리 시작 — 순찰 멈춤
         self._start_approach(xy, depth_frame)
 
     def _request_db(self, x, y):
-        """/db/query_hole 비동기 호출. 뼈대는 결과 로그만 (분기는 TODO)."""
+        """/db/query_hole 비동기 호출 → 응답으로 신구 분기 (QUERYING 진입)."""
         if not self.db.service_is_ready():
-            self.get_logger().warn('db 서비스 아직 없음', throttle_duration_sec=5.0)
+            self.get_logger().warn('db 서비스 아직 없음 — 검증으로 진행',
+                                   throttle_duration_sec=5.0)
+            self._enter_verify()            # db 없으면 처음 본 셈 치고 검증
             return
+        self.state = 'QUERYING'
         req = QueryHole.Request()
         req.x, req.y = float(x), float(y)
-        self.db.call_async(req).add_done_callback(
-            lambda f: self.get_logger().info(
-                f'DB 응답: exists={f.result().exists} '
-                f'trap={f.result().trap_installed}'))
+        self.db.call_async(req).add_done_callback(self._db_done)
+
+    def _db_done(self, fut):
+        """db 응답 처리 — 처음이면 검증, 기존이면 점검(저장좌표 보관)."""
+        resp = fut.result()
+        if resp.exists:
+            self.hole = (resp.hole_x, resp.hole_y)   # 15cm 비교 기준
+            self.state = 'INSPECTING'
+            self.get_logger().info('기존 구멍 — trap 점검 시작')
+        else:
+            self._enter_verify()
+
+    def _enter_verify(self):
+        self.state = 'VERIFYING'
+        self.verify_count = 0
 
     def _box_to_map(self, box, img_shape, depth, depth_frame):
         """bbox 중심 → depth → deproject → TF map좌표 (x, y). 무효면 None."""
@@ -189,19 +276,46 @@ class DetectorNode(Node):
         self.get_logger().info(f'opening ({xy[0]:.2f}, {xy[1]:.2f}) 접근 goal 발행')
 
     def _check_arrival(self):
-        """APPROACHING 중 로봇이 goal 근처(arrive_tol)에 오면 검증으로 전환.
+        """APPROACHING 중 로봇이 goal 근처(arrive_tol)에 오면 db 조회로 전환.
 
         Nav2 완료 콜백 대신 TF 거리로 판정 (detector는 주행을 안 하므로 도착
         신호가 없다). robot_agent가 실제로 그 goal로 몰고 있다고 전제한다.
+        도착 후 감지 좌표(self.target)로 db에 신구를 물어 분기한다.
         """
         robot = self.robot_xy()
         if robot is None or self.goal is None:
             return
         d = math.hypot(self.goal[0] - robot[0], self.goal[1] - robot[1])
         if d <= self.arrive_tol:
-            self.get_logger().info('도착 — 검증 시작')
-            self.state = 'VERIFYING'
-            self.verify_count = 0
+            self.get_logger().info('도착 — db 조회')
+            self._request_db(*self.target)
+
+    def command_cb(self, msg):
+        """내 로봇이 A(TRACK)로 배정되면 추적 판정 시작, 끝나면 끈다."""
+        _, cmd = fleet_msg.parse_command(msg.data)
+        if cmd == 'TRACK' and not self.tracking:
+            self.tracking = True
+            self.rat.reset()
+            self.get_logger().info('TRACK 시작 — 쥐 포획/놓침 판정 on')
+        elif cmd in ('PATROL', 'STOP', 'DOCK') and self.tracking:
+            self._stop_tracking()   # 쥐대응 종료 명령 — 추적 판정 off
+
+    def lost_tick(self):
+        """추적 중 lost_secs 넘게 쥐가 안 보이면 rat_lost 발행 (감지 끊김)."""
+        if not self.tracking or not self.rat.is_lost(self._now()):
+            return
+        self.get_logger().info('쥐 놓침 판정 — rat_lost 발행')
+        # 놓친 위치는 마지막 anchor (없으면 0,0 — central은 이름만 보고 판단).
+        x, y = self.rat.anchor or (0.0, 0.0)
+        self.event_pub.publish(String(data=fleet_msg.event('rat_lost', x, y)))
+        self._stop_tracking()
+
+    def _stop_tracking(self):
+        self.tracking = False
+        self.rat.reset()
+
+    def _now(self):
+        return self.get_clock().now().nanoseconds / 1e9
 
     def _verify(self, box, img_shape, depth):
         if box is None:
@@ -216,27 +330,109 @@ class DetectorNode(Node):
             self._verify_miss('depth 유효 픽셀 부족')
             return
         if gap >= self.depth_gap:
-            self.get_logger().info(f'진짜 opening 확인 (gap={gap:.3f}m)')
-            if self.target:
-                self.event_pub.publish(String(data=fleet_msg.event(
-                    'opening_confirmed', *self.target)))
-            # TODO(팀원): trap 설치 단계 + DB 기록
+            self.get_logger().info(f'진짜 opening 확인 (gap={gap:.3f}m) — 설치 지시')
+            # db 저장(opening_confirmed) 후 최초 설치. 이후 재점검/재설치는
+            # trap_check 이벤트로 이어진다. 최초 설치는 재설치 카운트에 안 넣음.
+            self.event_pub.publish(String(data=fleet_msg.event(
+                'opening_confirmed', *self.target)))
+            self.hole = self.target
+            self.reinstall_count = 0
+            self._send_install()
         else:
             self.get_logger().info(
-                f'opening 아님 (gap={gap:.3f}m < {self.depth_gap})')
-        self._reset()
+                f'opening 아님 (gap={gap:.3f}m < {self.depth_gap}) — 순찰 재개')
+            self._finish_opening()
 
     def _verify_miss(self, why):
         self.verify_count += 1
         if self.verify_count >= self.verify_timeout:
             self.get_logger().info(f'{why} — 포기, 복귀')
-            self._reset()
+            self._finish_opening()
+
+    def _inspect(self, result, img_shape, depth, depth_frame):
+        """구멍 점검 — trap 감지해 좌표 뽑고 trap_check에 inspect job.
+
+        trap이 verify_timeout 프레임까지 안 보이면 사람이 아직 안 놓은 것으로 보고
+        재설치(_reinstall)로 넘긴다.
+        """
+        box = self._pick(result, 'trap', img_shape)
+        if box is None:
+            self._inspect_miss('trap 미검출')
+            return
+        xy = self._box_to_map(box, img_shape, depth, depth_frame)
+        if xy is None:
+            self._inspect_miss('trap 좌표 실패')
+            return
+        job = self._make_job('inspect', self.hole, trap=xy)
+        self.job_pub.publish(job)           # 판정은 trap_check → trap_ok/bad 이벤트
+        self.state = 'AWAIT_TRAP'           # trap_ok/bad 이벤트 대기
+        self.get_logger().info(f'trap 감지 ({xy[0]:.2f}, {xy[1]:.2f}) — 점검 요청')
+
+    def _inspect_miss(self, why):
+        """점검 중 trap 못 봄 — timeout 넘으면 재설치 (아직 안 놓인 것으로 봄)."""
+        self.verify_count += 1
+        if self.verify_count >= self.verify_timeout:
+            self.get_logger().info(f'{why} — 재설치')
+            self._reinstall()
+
+    def _send_install(self):
+        """install job 발행 후 설치완료 대기 (AWAIT_TRAP)."""
+        self.job_pub.publish(self._make_job('install', self.hole))
+        self.state = 'AWAIT_TRAP'
+        self.verify_count = 0
+
+    def _reinstall(self):
+        """trap 이상/미검출 → beep+설치동작 재요청. 한도 넘으면 경고 후 순찰재개."""
+        self.reinstall_count += 1
+        if self.reinstall_count > self.reinstall_max:
+            self.get_logger().warn(
+                f'재설치 {self.reinstall_max}회 초과 — 경고, 순찰 재개')
+            self._finish_opening()
+            return
+        self.get_logger().info(f'재설치 {self.reinstall_count}회차 — install job')
+        self._send_install()
+
+    def trap_event_cb(self, msg):
+        """trap_check 응답으로 상태 전이. AWAIT_TRAP일 때만, 이벤트 이름으로 분기.
+
+        설치완료(trap_installed) → 다시 봐서 15cm 재점검(INSPECTING). 정상(trap_ok)
+        → 순찰 재개. 이상(trap_bad) → 재설치. opening_confirmed 등은 자연 무시.
+        """
+        if self.state != 'AWAIT_TRAP':
+            return
+        name, x, y = fleet_msg.parse_event(msg.data)
+        if name == 'trap_installed':
+            self.state = 'INSPECTING'       # 설치동작 끝 — 15cm 재점검
+            self.verify_count = 0
+        elif name == 'trap_ok':
+            self.get_logger().info('점검 정상 — 순찰 재개')
+            self._finish_opening()
+        elif name == 'trap_bad':
+            self.get_logger().info('설치 이상 — 재설치')
+            self._reinstall()
+
+    def _make_job(self, phase, hole, trap=(0.0, 0.0)):
+        job = TrapJob()
+        job.phase = phase
+        job.hole_x, job.hole_y = float(hole[0]), float(hole[1])
+        job.trap_x, job.trap_y = float(trap[0]), float(trap[1])
+        return job
+
+    def _hold_patrol(self, hold):
+        self.hold_pub.publish(Bool(data=hold))
+
+    def _finish_opening(self):
+        """opening 처리 종료 — 순찰 재개하고 SEARCHING으로."""
+        self._hold_patrol(False)
+        self._reset()
 
     def _reset(self):
         self.state = 'SEARCHING'
         self.target = None
         self.goal = None
+        self.hole = None
         self.verify_count = 0
+        self.reinstall_count = 0
 
     def robot_xy(self):
         try:
@@ -258,5 +454,27 @@ def main():
     rclpy.shutdown()
 
 
+def _self_check():
+    # 포획: 반경 안에서 capture_secs 머무르면 True
+    rt = RatTracker(capture_radius=0.3, capture_secs=10.0, lost_secs=5.0)
+    assert rt.seen(1.0, 1.0, 0.0) is False          # 방금 자리잡음
+    assert rt.seen(1.1, 1.05, 5.0) is False          # 반경 안, 아직 5초
+    assert rt.seen(1.05, 1.1, 10.0) is True          # 10초 경과 → 포획
+    # 움직이면 anchor 리셋되어 타이머 다시 시작
+    rt.reset()
+    assert rt.seen(0.0, 0.0, 0.0) is False
+    assert rt.seen(0.0, 0.0, 9.0) is False
+    assert rt.seen(5.0, 5.0, 9.5) is False           # 반경 밖 → 재설정(t=9.5)
+    assert rt.seen(5.0, 5.0, 20.0) is True           # 9.5+10.5초 → 새 자리서 포획
+    # 놓침: 마지막 감지 후 lost_secs 경과
+    rt.reset()
+    assert rt.is_lost(100.0) is False                # 한 번도 못 봄 → 놓침 아님
+    rt.seen(2.0, 2.0, 100.0)
+    assert rt.is_lost(104.0) is False                # 4초 → 아직
+    assert rt.is_lost(105.0) is True                 # 5초 → 놓침
+    print('detector RatTracker self-check ok')
+
+
 if __name__ == '__main__':
-    main()
+    import sys
+    _self_check() if '--check' in sys.argv else main()

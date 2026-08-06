@@ -46,6 +46,8 @@ class CentralNode(Node):
         self.robots = {}        # robot -> (state, battery)
         self.patroller = None   # 현재 순찰 로봇 (역할 A)
         self.rat_mode = False   # 쥐대응 모드 (중복 트리거 방지)
+        self.rat_roles = None   # 쥐대응 중인 (A, B) — 종료 시 복귀 명령에 사용
+        self.rat_caught = False  # 마지막 쥐대응 결과 표출 (포획 성공 여부)
 
         self.cmd_pub = self.create_publisher(String, '/fleet/command', 10)
         self.create_subscription(String, '/fleet/status', self.status_cb, 10)
@@ -71,6 +73,10 @@ class CentralNode(Node):
         self.get_logger().info(f'이벤트 {name} at ({x:.2f}, {y:.2f})')
         if name == 'rat_detected':
             self._on_rat()
+        elif name == 'rat_captured':
+            self._end_rat(caught=True)
+        elif name == 'rat_lost':
+            self._end_rat(caught=False)
         # TODO(팀원): opening_confirmed/trap_ok 등 나머지 이벤트 처리.
 
     def _on_rat(self):
@@ -86,9 +92,28 @@ class CentralNode(Node):
             return
         robot_a, robot_b = roles
         self.rat_mode = True
+        self.rat_roles = roles          # 종료 시 A→PATROL, B→DOCK에 사용
         self.get_logger().info(f'쥐대응 진입 — A(추적)={robot_a}, B(몰이)={robot_b}')
         self.send(robot_a, 'TRACK')
         self.send(robot_b, 'HERD')
+
+    def _end_rat(self, caught):
+        """포획/놓침 -> 쥐대응 종료. A는 순찰 복귀, B는 도킹 복귀.
+
+        detector가 포획(rat_captured)/놓침(rat_lost)을 판정해 보내면 여기서
+        받는다. 어느 쪽이든 쥐대응은 끝 — A는 다시 순찰, B는 원래 쉬던 로봇이라
+        도킹으로 돌아가 '한 대씩 순찰' 상태로 복귀한다.
+        """
+        if not self.rat_mode:
+            return                      # 쥐대응 중 아님 — 무시 (중복 이벤트)
+        robot_a, robot_b = self.rat_roles
+        self.rat_mode = False
+        self.rat_roles = None
+        self.rat_caught = caught        # 결과 표출 (포획 성공/놓침)
+        result = '포획 성공' if caught else '놓침'
+        self.get_logger().info(f'쥐대응 종료 ({result}) — {robot_a} 순찰, {robot_b} 도킹')
+        self.send(robot_a, 'PATROL')
+        self.send(robot_b, 'DOCK')
 
     def send(self, robot, cmd):
         self.cmd_pub.publish(String(data=fleet_msg.command(robot, cmd)))

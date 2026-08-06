@@ -14,7 +14,7 @@ from geometry_msgs.msg import PoseStamped
 from nav2_simple_commander.robot_navigator import BasicNavigator, TaskResult
 from rclpy.node import Node
 from sensor_msgs.msg import BatteryState
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 from turtle_project import fleet_msg
 
@@ -58,6 +58,7 @@ class RobotAgent(Node):
         self.nav = BasicNavigator(namespace=f'/{self.ns}')
         self.poses = None       # 로드된 순찰 waypoint (첫 PATROL 때 lazy 로드)
         self.patrolling = False  # followWaypoints 진행 중
+        self.hold = False       # opening 처리 중 순찰 정지 (detector가 신호)
 
         self.status_pub = self.create_publisher(String, '/fleet/status', 10)
         self.create_subscription(String, '/fleet/command', self.command_cb, 10)
@@ -65,6 +66,8 @@ class RobotAgent(Node):
                                  self.battery_cb, 10)
         self.create_subscription(PoseStamped, f'{self.ns}/target_pose',
                                  self.target_cb, 10)
+        self.create_subscription(Bool, f'{self.ns}/patrol_hold',
+                                 self.hold_cb, 10)
         self.create_timer(period, self.report)
         # 순찰 진행 감시 — 한 바퀴 끝나면 다음 바퀴 재시작 (무한 순찰).
         self.create_timer(1.0, self.patrol_tick)
@@ -115,8 +118,11 @@ class RobotAgent(Node):
             self.patrolling = False
 
     def patrol_tick(self):
-        """순찰 중 한 바퀴가 끝났으면 다음 바퀴를 이어 돈다 (무한 순찰)."""
-        if not self.patrolling or not self.nav.isTaskComplete():
+        """순찰 중 한 바퀴가 끝났으면 다음 바퀴를 이어 돈다 (무한 순찰).
+
+        hold 중이면 다음 바퀴를 안 돈다 (opening 처리 동안 순찰 정지 유지).
+        """
+        if self.hold or not self.patrolling or not self.nav.isTaskComplete():
             return
         result = self.nav.getResult()
         if result == TaskResult.CANCELED:
@@ -124,6 +130,19 @@ class RobotAgent(Node):
             return
         # SUCCEEDED든 실패든 계속 순찰 (실패는 다음 바퀴에 재시도).
         self._send_lap()
+
+    def hold_cb(self, msg):
+        """detector가 opening 처리 시작(True)/끝(False)을 알린다.
+
+        True면 진행 중 순찰을 멈추고, False면 다시 순찰을 시작한다.
+        """
+        self.hold = msg.data
+        if self.hold:
+            self.stop_patrol()              # 처리 시작 — 순찰 멈춤
+            self.get_logger().info('순찰 정지 (opening 처리)')
+        elif self.state == 'PATROLLING':
+            self.get_logger().info('순찰 재개')
+            self.start_patrol()             # 처리 끝 — 다시 순찰
 
     def battery_cb(self, msg):
         if math.isnan(msg.percentage):
