@@ -220,7 +220,8 @@ def nearest_trap(point):
     return name, TRAPS[name]
 
 
-def run_trial(herding_config, planner_config, grid_map, distance_field, target_model_name, seed, mouse_spawn):
+def run_trial(herding_config, planner_config, grid_map, distance_field, target_model_name, seed, mouse_spawn,
+              record_frames=True, blocker_active=True):
     core_like = _CoreLike(grid_map)
     escape_model = EscapeModel(EscapeModelConfig(
         wall_follow_p=herding_config.markov_wall_follow_p, wall_hug_p=herding_config.markov_wall_hug_p,
@@ -261,17 +262,29 @@ def run_trial(herding_config, planner_config, grid_map, distance_field, target_m
     discovered = False
     patrol_idx = 0
     goal_name, goal_pos = None, None
+    discovery_time = None
+    min_blocker_dist_after_discovery = float("inf")
+    blocker_dist_at_capture = None
+    escape_max_at_capture = None
+    last_t = 0.0
+    ever_in_radius = False
+    ever_concentrated = False
+    ever_both = False
+    min_dist_to_goal_ever = float("inf")
 
     for i in range(steps):
         t = i * dt
+        last_t = t
 
         if not discovered:
             dist_to_mouse = float(np.linalg.norm(target_state[:2] - driver_pos))
             if dist_to_mouse <= SENSOR_RANGE_M:
                 discovered = True
+                discovery_time = t
                 estimator.update(target_state[:2].copy())
                 goal_name, goal_pos = nearest_trap(target_state[:2])
 
+        escape_estimate = None
         if discovered:
             estimator.predict(dt)
             estimator.update(target_state[:2].copy())
@@ -281,7 +294,10 @@ def run_trial(herding_config, planner_config, grid_map, distance_field, target_m
             escape_estimate = escape_model.compute(est.position, est.velocity, [driver_pos, blocker_pos])
             blocking_point = compute_blocking_point(est.position, goal_pos, escape_estimate, grid_map, planner_config)
             driver_goal_point, driver_panic = driving.point, driving.is_panic
-            blocker_goal_point = blocking_point
+            # blocker_active=False는 "로봇 B가 아예 없거나 손 놓고 있으면
+            # 어떻게 되는가"를 재는 소거(ablation) 실험용 스위치다. 정상
+            # 운용에서는 항상 True.
+            blocker_goal_point = blocking_point if blocker_active else ROBOT_B_SPAWN
         else:
             waypoint = PATROL_WAYPOINTS[patrol_idx]
             if np.linalg.norm(driver_pos - waypoint) <= PATROL_WAYPOINT_TOLERANCE_M:
@@ -291,7 +307,26 @@ def run_trial(herding_config, planner_config, grid_map, distance_field, target_m
             blocker_goal_point = ROBOT_B_SPAWN  # 대기
 
         dist_to_goal = float(np.linalg.norm(target_state[:2] - goal_pos)) if discovered else float("inf")
-        if dist_to_goal <= CAPTURE_RADIUS_M:
+        # 정식 알고리즘(state_machine.py의 HERD->CORNER 전이)과 동일하게,
+        # "포획반경 안"이라는 위치 조건만으로는 부족하고 "도주 확률이 한
+        # 방향으로 집중되어 있다"(escape_prob_concentrated)는 조건까지 함께
+        # 요구한다. 이 게이트가 없으면 표적이 그저 우연히 트랩 근처를
+        # 스쳐 지나가기만 해도 포획으로 잡히므로, Blocker(로봇 B)가 실제로
+        # 도주로를 막았는지와 무관하게 "성공"이 나올 수 있다 -- 정확히
+        # 사용자가 지적한 "쥐구멍 근처만 가도 성공" 문제의 원인이었다.
+        escape_concentrated = bool(
+            escape_estimate is not None
+            and escape_estimate.probabilities.max() >= herding_config.escape_concentration_threshold
+        )
+        if discovered:
+            min_dist_to_goal_ever = min(min_dist_to_goal_ever, dist_to_goal)
+        in_radius = dist_to_goal <= CAPTURE_RADIUS_M
+        if in_radius:
+            ever_in_radius = True
+        if escape_concentrated:
+            ever_concentrated = True
+        if in_radius and escape_concentrated:
+            ever_both = True
             capture_timer += dt
         else:
             capture_timer = 0.0
@@ -299,6 +334,8 @@ def run_trial(herding_config, planner_config, grid_map, distance_field, target_m
         dist_driver = float(np.linalg.norm(target_state[:2] - driver_pos))
         dist_blocker = float(np.linalg.norm(target_state[:2] - blocker_pos))
         tick_min = min(dist_driver, dist_blocker)
+        if discovered:
+            min_blocker_dist_after_discovery = min(min_blocker_dist_after_discovery, dist_blocker)
 
         if not discovered:
             state = "SEARCH"
@@ -309,23 +346,26 @@ def run_trial(herding_config, planner_config, grid_map, distance_field, target_m
         else:
             state = "HERD"
 
-        frames.append({
-            "t": round(t, 2),
-            "target": [round(float(target_state[0]), 3), round(float(target_state[1]), 3)],
-            "driver": [round(float(driver_pos[0]), 3), round(float(driver_pos[1]), 3)],
-            "blocker": [round(float(blocker_pos[0]), 3), round(float(blocker_pos[1]), 3)],
-            "driver_goal": [round(float(driver_goal_point[0]), 3), round(float(driver_goal_point[1]), 3)],
-            "blocker_goal": [round(float(blocker_goal_point[0]), 3), round(float(blocker_goal_point[1]), 3)],
-            "driver_panic": bool(driver_panic),
-            "state": state,
-            "discovered": discovered,
-            "panic": bool(discovered and tick_min < herding_config.panic_distance_m),
-            "dist": round(tick_min, 3),
-            "capture_progress": round(min(capture_timer / CAPTURE_HOLD_SEC, 1.0), 3),
-        })
+        if record_frames:
+            frames.append({
+                "t": round(t, 2),
+                "target": [round(float(target_state[0]), 3), round(float(target_state[1]), 3)],
+                "driver": [round(float(driver_pos[0]), 3), round(float(driver_pos[1]), 3)],
+                "blocker": [round(float(blocker_pos[0]), 3), round(float(blocker_pos[1]), 3)],
+                "driver_goal": [round(float(driver_goal_point[0]), 3), round(float(driver_goal_point[1]), 3)],
+                "blocker_goal": [round(float(blocker_goal_point[0]), 3), round(float(blocker_goal_point[1]), 3)],
+                "driver_panic": bool(driver_panic),
+                "state": state,
+                "discovered": discovered,
+                "panic": bool(discovered and tick_min < herding_config.panic_distance_m),
+                "dist": round(tick_min, 3),
+                "capture_progress": round(min(capture_timer / CAPTURE_HOLD_SEC, 1.0), 3),
+            })
 
         if capture_timer >= CAPTURE_HOLD_SEC:
             success = True
+            blocker_dist_at_capture = dist_blocker
+            escape_max_at_capture = float(escape_estimate.probabilities.max()) if escape_estimate is not None else None
             break
 
         speed = SIM_CONFIG.robot_max_speed_mps * SIM_CONFIG.robot_gain
@@ -342,9 +382,19 @@ def run_trial(herding_config, planner_config, grid_map, distance_field, target_m
     return {
         "model": target_model_name, "seed": seed, "success": success,
         "goal_name": goal_name, "mouse_spawn": mouse_spawn.tolist(),
-        "discovery_time": next((f["t"] for f in frames if f["discovered"]), None),
-        "duration": frames[-1]["t"] + dt if frames else 0.0,
+        "discovery_time": discovery_time,
+        "duration": (frames[-1]["t"] + dt) if frames else last_t + dt,
         "frames": frames,
+        "min_blocker_dist_after_discovery": (
+            None if min_blocker_dist_after_discovery == float("inf") else round(min_blocker_dist_after_discovery, 3)
+        ),
+        "blocker_dist_at_capture": None if blocker_dist_at_capture is None else round(blocker_dist_at_capture, 3),
+        "escape_max_at_capture": escape_max_at_capture,
+        "discovered": discovered,
+        "ever_in_radius": ever_in_radius,
+        "ever_concentrated": ever_concentrated,
+        "ever_both": ever_both,
+        "min_dist_to_goal_ever": None if min_dist_to_goal_ever == float("inf") else round(min_dist_to_goal_ever, 3),
     }
 
 

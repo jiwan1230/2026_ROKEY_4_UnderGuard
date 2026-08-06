@@ -43,7 +43,16 @@ class EscapeModel:
     def compute(
         self, target_pos: np.ndarray, target_vel: np.ndarray, robot_positions: list[np.ndarray]
     ) -> EscapeEstimate:
-        """target_pos로부터의 도주 확률 분포와 상위 K개 경로를 반환한다."""
+        """target_pos로부터의 도주 확률 분포와 상위 K개 경로를 반환한다.
+
+        세 가지 요인(벽 관계, 로봇 반발, 관성)을 **가산적으로** 결합한 뒤
+        마지막에 정규화하는 단순 가산 모델이다: 곱셈이 아니라 덧셈이므로
+        한 요인이 0이어도(예: 로봇이 아주 멀어 반발이 거의 없어도) 다른
+        요인들이 여전히 분포를 결정할 수 있다. 결합 후 `clip`으로 음수를
+        제거하고(각 항이 이미 음수를 clip했지만 합산 자체는 항상 양수이므로
+        이 줄은 방어적 안전장치), 장애물 방향을 마스킹한 뒤 마지막에
+        합이 1이 되도록 정규화한다.
+        """
         wall_dir = self._nearest_wall_direction(target_pos)
         base = self._base_weights(wall_dir)
         base += self._robot_repulsion(target_pos, robot_positions)
@@ -83,6 +92,21 @@ class EscapeModel:
         return nearest / norm if norm > 1e-9 else None
 
     def _base_weights(self, wall_dir: np.ndarray | None) -> np.ndarray:
+        """향촉성(thigmotaxis) 기본 확률: 벽과의 관계로 8방향에 확률을 나눠 준다.
+
+        `wall_dir`은 타겟에서 가장 가까운 장애물 셀을 향하는 단위벡터다.
+        `_DIRECTIONS @ wall_dir`(내적, dot product)은 각 도주 방향이 그
+        "벽 쪽 방향"과 얼마나 나란한지를 -1~1로 나타낸다:
+          - dot > 0.5  → 그 방향은 대략 벽을 향한다 → "벽에 붙는다"(hug)
+          - dot < -0.5 → 그 방향은 대략 벽 반대쪽(방 중앙)을 향한다 → center
+          - 그 사이     → 벽과 대략 수직, 즉 "벽을 따라간다"(follow)
+        실제 쥐/설치류가 개활지 중앙보다 벽을 따라 도주하는 습성
+        (thigmotaxis)을 반영해 `wall_follow_p`(기본 0.70)가 가장 크고,
+        `center_p`(0.10)가 가장 작다. 각 카테고리 안에서는 균등하게 나눠
+        가지므로(`/ follow.sum()` 등), 해당 카테고리에 방향이 여러 개일수록
+        방향 하나당 확률은 낮아진다. 근처에 벽이 없으면(`wall_dir is None`)
+        선호할 벽이 없으므로 8방향 균등분포로 대체한다.
+        """
         if wall_dir is None:
             return np.full(8, 1.0 / 8.0)
         dots = _DIRECTIONS @ wall_dir
@@ -99,6 +123,18 @@ class EscapeModel:
         return weights
 
     def _robot_repulsion(self, target_pos: np.ndarray, robot_positions: list[np.ndarray]) -> np.ndarray:
+        """로봇이 가까울수록, 그 로봇과 반대 방향의 도주 확률을 더해준다.
+
+        각 로봇에 대해 `away`(로봇→타겟 단위벡터)와의 내적이 클수록(그
+        방향이 "로봇으로부터 멀어지는" 방향에 가까울수록) 가산 가중치를
+        더 준다. `np.clip(..., 0.0, None)`으로 음수 내적(로봇 쪽으로
+        향하는 방향)은 0으로 잘라내 감점이 아니라 단순 무가산 처리한다 —
+        여러 로봇의 위협이 겹칠 때 서로 상쇄되어 "덜 위험해 보이는" 왜곡을
+        막기 위함이다. `weight = robot_repulsion_weight / dist`로 거리에
+        반비례시키는 것은 "가까운 로봇일수록 훨씬 급하게 도망친다"는
+        직관 — 위협이 2배 가까워지면 그 방향에 대한 반발은 2배가 아니라
+        더 크게(반비례이므로) 증폭된다.
+        """
         contribution = np.zeros(8)
         for robot_pos in robot_positions:
             away = target_pos - robot_pos
@@ -111,6 +147,16 @@ class EscapeModel:
         return contribution
 
     def _momentum(self, target_vel: np.ndarray) -> np.ndarray:
+        """현재 진행 방향과 가까운 도주 방향에 관성(momentum) 가중치를 더한다.
+
+        방향을 갑자기 반전하기보다 하던 대로 계속 가려는 관성을 반영한다.
+        `_DIRECTIONS @ heading`(현재 속도 방향과의 내적)이 클수록(진행
+        방향과 가까울수록) 더 큰 가중치를 받고, 반대 방향(내적 음수)은
+        `clip`으로 0 처리해 감점하지 않는다 — 관성은 "계속 갈 이유를
+        더해주는 것"이지 "반대로 갈 이유를 깎는 것"이 아니기 때문에
+        `_robot_repulsion`과 동일한 clip 패턴을 쓴다. 타겟이 거의 정지해
+        있으면(speed < 1e-6) 참고할 진행 방향 자체가 없으므로 기여 없음.
+        """
         speed = np.linalg.norm(target_vel)
         if speed < 1e-6:
             return np.zeros(8)

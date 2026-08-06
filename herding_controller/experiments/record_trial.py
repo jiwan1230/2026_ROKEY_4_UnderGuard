@@ -291,6 +291,24 @@ def render_gif(data_path, trial_index, out_path, max_seconds=None, subsample=3, 
     print(f"saved {out_path} ({len(frames)} frames, {os.path.getsize(out_path)/1024:.0f} KB)")
 
 
+def _next_numbered_path(path: str) -> str:
+    """path가 이미 존재하면 파일명 뒤에 _001, _002, ...를 붙여 절대 겹치지 않는 경로를 찾는다.
+
+    `--number` 플래그가 켜졌을 때만 쓰인다. 매번 같은 out_gif 경로로 재실행하면
+    이전 GIF가 조용히 덮어써지는("자꾸 초기화된다") 문제를, 이전 산출물을
+    그대로 둔 채 새 번호로 저장하는 방식으로 해결한다.
+    """
+    if not os.path.exists(path):
+        return path
+    root, ext = os.path.splitext(path)
+    n = 1
+    while True:
+        candidate = f"{root}_{n:03d}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        n += 1
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("data_json")
@@ -299,6 +317,11 @@ if __name__ == "__main__":
     parser.add_argument("--max-seconds", type=float, default=None)
     parser.add_argument("--subsample", type=int, default=3)
     parser.add_argument("--fps", type=int, default=15)
+    parser.add_argument(
+        "--number", action="store_true",
+        help="out_gif가 이미 존재하면 덮어쓰지 않고 _001, _002... 번호를 붙여 새 파일로 저장",
+    )
     args = parser.parse_args()
-    render_gif(args.data_json, args.trial_index, args.out_gif,
+    out_path = _next_numbered_path(args.out_gif) if args.number else args.out_gif
+    render_gif(args.data_json, args.trial_index, out_path,
               max_seconds=args.max_seconds, subsample=args.subsample, fps=args.fps)

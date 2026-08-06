@@ -24,6 +24,10 @@
 - `record_trial.py`
   화면 녹화 없이, `*_frames.json`에 저장된 좌표 데이터를 직접 matplotlib으로 렌더링해서 GIF로
   저장하는 스크립트. `media/`에 트러블슈팅 노트용으로 미리 뽑아둔 예시가 들어 있다.
+- `success_rate_check.py`
+  `real_map_sim.py`의 `run_trial()`을 GIF/JSON 생성 없이 다회 반복 실행해서 성공률과 로봇
+  B(Blocker) 실질 기여도(소거 실험 포함)를 통계로 뽑는 스크립트. `python3 success_rate_check.py 25
+  --ablation`처럼 실행 (트러블슈팅 노트 8번 항목 참고).
 
 ## 재실행 방법
 
@@ -46,13 +50,36 @@ for prefix in ['single_robot', 'real_map']:
 
 ## GIF로 시행 하나 뽑기
 
+**GIF는 자동으로 생성되지 않는다.** `real_map_sim.py`/`single_robot_sim.py`를 실행하면
+그 결과가 `*_frames.json`에 저장될 뿐이고, 그 안의 원하는 시행 번호를 골라
+`record_trial.py`를 **수동으로 한 번 더 실행**해야 GIF가 만들어진다.
+
 ```bash
-# python3 record_trial.py <데이터.json> <시행 번호(0부터)> <출력.gif> [--max-seconds N] [--fps N] [--subsample N]
+# python3 record_trial.py <데이터.json> <시행 번호(0부터)> <출력.gif> [--max-seconds N] [--fps N] [--subsample N] [--number]
 python3 record_trial.py real_map_frames.json 0 media/my_clip.gif --fps 15
 ```
 
 `--max-seconds`로 앞부분만 잘라낼 수 있고(정지해버린 실패 시행을 끝까지 렌더링할 필요는 없으니),
 `--subsample`로 프레임을 건너뛰어 재생 속도를 조절한다 (기본 3 = 원본 대비 3배속 근처).
+
+### 파일이 덮어써지는 문제 (`--number`)
+
+같은 `out_gif` 경로로 다시 실행하면 이전 GIF가 **조용히 덮어써진다** — "자꾸
+초기화된다"고 느꼈던 원인이 이것이다. `--number` 플래그를 붙이면 대상 파일이
+이미 있을 때 덮어쓰는 대신 자동으로 `_001`, `_002`... 번호를 붙여 새 파일로
+저장하므로 이전 산출물이 항상 남는다:
+
+```bash
+python3 record_trial.py real_map_frames.json 0 media/trial.gif --number
+# 처음 실행 -> media/trial.gif
+# 두 번째 실행(같은 명령 그대로) -> media/trial_001.gif
+# 세 번째 실행 -> media/trial_002.gif ...
+```
+
+트러블슈팅 노트나 코드 리뷰에 "before/after"를 남기고 싶을 때는, 파일명
+자체에 의미를 담아 번호 대신 라벨을 붙이는 것도 방법이다 (예:
+`media/real_map_v1_before_wall_avoid.gif`, `media/real_map_v2_after_wall_avoid.gif`).
+`--number`는 라벨을 매번 생각해내기 귀찮을 때 쓰는 안전장치로 보면 된다.
 
 ## 알려진 한계 (다음에 이어서 할 사람을 위해)
 
@@ -61,6 +88,12 @@ python3 record_trial.py real_map_frames.json 0 media/my_clip.gif --fps 15
 - **목표 쥐구멍 0.3~0.4m 앞에서 멈추는 미해결 실패 케이스**가 있다 (손그림 맵의 "좌측 쥐구멍",
   실제 맵의 "상단 쥐구멍" 시나리오에서 재현). 로봇이 위협 위치로 이동하는 경로가 표적의 반응
   반경을 스치면서 표적이 엉뚱한 방향으로 먼저 도망치는 게 원인으로 보임.
+- **실측 성공률이 목표(90%)에 크게 못 미친다 (42%, n=50, `success_rate_check.py`).** 포획 판정에
+  "도주확률 집중" 조건이 빠져 있던 버그를 고친 뒤 드러난 수치다 (트러블슈팅 노트 8번 항목).
+  로봇 B(Blocker)의 실질 기여도도 소거 실험 결과 거의 0으로 측정됐다 — 원인은 미로형 실제 맵에서
+  Driver/Blocker의 목표점 계산이 벽 구조를 고려하지 않는 단순 기하학이기 때문으로 보이며,
+  파라미터 튜닝만으로는 개선 폭이 작다(43%→47%). 근본 해결에는 벽을 고려한 경로 인지형
+  유도/차단 로직 재설계가 필요 — 다음 작업 항목으로 트러블슈팅 노트에 정리해 둠.
 - `SENSOR_RANGE_M`(1.5m), `WALL_AVOID_RADIUS_M`(0.4m) 등은 전부 스펙에 없는 실험적 가정값이다.
 
-자세한 트러블슈팅 히스토리는 저장소 루트의 `herding_controller_포트폴리오_노트.md` 참고.
+자세한 트러블슈팅 히스토리는 저장소 루트의 `herding_controller_트러블슈팅_노트.md` 참고.
