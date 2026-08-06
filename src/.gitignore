@@ -1,0 +1,9 @@
+# 우리 패키지만 추적 — 나머지 워크스페이스 패키지 제외
+/*
+!.gitignore
+!/turtle_project/
+!/turtle_interfaces/
+
+# 파이썬/빌드 산출물
+__pycache__/
+*.pyc

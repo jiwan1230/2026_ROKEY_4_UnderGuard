@@ -1,0 +1,17 @@
+# ROS 2 워크스페이스 산출물 — 우리 소스(src/turtle_project, src/turtle_interfaces)만 추적한다.
+/build/
+/install/
+/log/
+
+# 워크스페이스 루트 잡동사니 (모델·homography 등 대용량 바이너리)
+/*.pt
+/*.npy
+
+# src 안에서 우리 패키지 2개만 남기고 나머지 워크스페이스 패키지 제외
+/src/*
+!/src/turtle_project/
+!/src/turtle_interfaces/
+
+# 파이썬/빌드 산출물
+__pycache__/
+*.pyc
