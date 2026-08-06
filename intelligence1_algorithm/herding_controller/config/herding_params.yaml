@@ -1,0 +1,116 @@
+herding_controller:
+  ros__parameters:
+    frame_id: "map"
+    control_rate_hz: 5.0
+
+    # --- Capture Zone ---
+    # 2026-08-06: 실제 방(maps/room_map.pgm)에는 포획구역 후보가 3곳
+    # (top/left/bottom, test/real_map_arena.py의 TRAPS) 있다. 아래 값은
+    # "top" 후보 좌표를 기본값으로 둔 것 -- 실제 시연에서는
+    # docs/operator_protocol.md의 블라인드 선택 절차에 따라 미션별로 바뀐다.
+    capture_zone_x_m: -2.81
+    capture_zone_y_m: -5.36
+    # 0.5 -> 0.3: 방이 작아 0.5m 반경은 트랩끼리·벽과 겹친다 (트러블슈팅 노트 8번 항목).
+    capture_radius_m: 0.3
+    # 3.0 -> 1.5 (2026-08-06, 트러블슈팅 노트 10번 항목): 실제 맵에서 표적이
+    # 반경 0.3m 안에 실제로 들어오는 것 자체는 거의 항상 성공했지만(최근접
+    # 거리 0~0.02m가 흔함), 3.0초 연속 체류는 방이 좁아 표적이 자연스럽게
+    # 반경 경계를 들락거리는 진동 때문에 실패했다. 1.5초로 낮추자 성공률이
+    # 0.3% -> 65%(reactive_flee, 3개 트랩 통합, N=300)로 뛰었다 -- 여전히
+    # "우연히 스쳐서" 성공하는 게 아니라 실제 체류를 요구하는 값이다
+    # (포획 판정에는 escape_prob 집중 조건도 함께 걸려 있음, §escape_concentration_threshold).
+    capture_hold_sec: 1.5
+
+    # --- Grid ---
+    # 2026-08-06: maps/room_map.yaml(실제 SLAM 맵)의 실측값으로 교체.
+    # herding_node.py는 /map 수신 시 이 값들과 다르면 경고를 낸다 -- 반드시
+    # 실제로 발행되는 맵과 일치해야 한다.
+    grid_resolution_m: 0.05
+    grid_width_cells: 106
+    grid_height_cells: 147
+    # World coordinates of the grid's lower-left corner. These MUST match the
+    # origin of the map published on /map (Nav2 maps are rarely at (0, 0)), or
+    # every world<->cell conversion is offset and the obstacle mask, escape
+    # model, and occlusion belief all address the wrong cells.
+    grid_origin_x_m: -3.19
+    grid_origin_y_m: -9.03
+
+    # --- Target Estimator (KF) ---
+    kf_process_noise: 0.1
+    kf_measurement_noise: 0.05
+    occlusion_timeout_sec: 3.0
+
+    # --- Escape Model (Markov) ---
+    markov_wall_follow_p: 0.70
+    markov_wall_hug_p: 0.20
+    markov_center_p: 0.10
+    momentum_weight: 0.4
+    robot_repulsion_weight: 1.5
+    wall_detect_radius_cells: 1
+    escape_route_top_k: 3
+    # Max escape-direction probability at or above which the distribution counts as
+    # "concentrated", gating the HERD->CORNER transition (and the CORNER->HERD fallback).
+    escape_concentration_threshold: 0.5
+
+    # --- Herding Control ---
+    # Task 15 tuning (historical, 10x10m abstract arena): drive_distance_m=0.75,
+    # flee_reaction_distance_m=1.0, panic_distance_m=0.35. THESE THREE VALUES ARE
+    # INTERDEPENDENT -- do not change one in isolation. Two hard geometric
+    # constraints drive them regardless of arena size (still true for the
+    # 2026-08-06 real-map values below):
+    #   (1) drive_distance_m * drive_distance_ease_factor MUST stay below
+    #       flee_reaction_distance_m. The Driver converges onto its driving point and
+    #       stops there; if that point sits outside the target's reaction radius the
+    #       target never flees and the whole system deadlocks with zero progress.
+    #   (2) drive_distance_m must exceed panic_distance_m by enough that normal
+    #       tracking overshoot does not trip the panic retreat.
+    # 2026-08-06: re-swept for the real 5.3x7.35m room (트러블슈팅 노트 10번 항목) --
+    # the abstract-arena values above made the robots panic almost constantly
+    # (up to 84%) in the room's ~1m-wide corridors. Current shipped values:
+    drive_distance_m: 0.3
+    flee_reaction_distance_m: 0.42
+    panic_distance_m: 0.12
+    alignment_threshold: 0.7
+    drive_distance_ease_factor: 1.15
+    # Raised 1.2 -> 3.0: the highest-leverage parameter measured, BUT only once
+    # constraint (1) above holds. Applying this change alone, on a config that still
+    # violates (1), takes the success rate from 20% DOWN to 2.5%. Fix the ratio first.
+    #
+    # Mechanism: NOT "distorting the flee vector" -- ReactiveFlee gates on a hard
+    # cutoff at flee_reaction_distance_m, so a robot at 1.2 m (or 3.0 m) contributes
+    # exactly zero to the flee sum. What actually changes is TRANSIT interference: the
+    # Blocker continuously chases a goal that moves with the target, and at a short
+    # lookahead its path repeatedly crosses inside the 1.0 m radius, injecting flee
+    # impulses that fight the Driver's push. Measured fraction of HERD/CORNER cycles
+    # with a robot inside the reaction radius: 34.9% at bl=1.2 -> 21.0% at bl=3.0.
+    # The Blocker's role in this regime is geometric containment, not applied force.
+    #
+    # Measured on reactive_flee (holding drive_distance_m=0.7, ease=1.0):
+    # 1.2 -> 25%, 2.0 -> 62%, 3.0 -> 82%. Beyond ~6 m every candidate bearing leaves
+    # the 10x10 m grid, compute_blocking_point falls through to target_pos, and the
+    # Blocker rams the target (12.0 -> 82% panic rate), so 3.0 is an interior optimum,
+    # not a "disable the Blocker" degenerate value.
+    # NOTE: 3.0 m was scaled to the (old) 10x10m abstract validation arena.
+    # 2026-08-06: real room is 5.3m x 7.35m (maps/room_map.yaml) -- applying
+    # the documented rule (~1/3 of the arena's shorter side) gives 1.8m.
+    block_lookahead_m: 1.8
+
+    # 2026-08-06 실제 맵 재튜닝 (트러블슈팅 노트 10번 항목): drive_distance_m/
+    # panic_distance_m/flee_reaction_distance_m는 원래 10x10m 열린 아레나
+    # 기준으로 튜닝된 값이었다. 실제 방은 폭 1m 안팎의 좁은 복도가 많아서,
+    # 그 값 그대로는 로봇이 표적을 쫓을 때 거의 항상 panic_distance_m 안에
+    # 들어가 버렸다(패닉률 최대 84%). 방 규모에 맞게 함께 스윕한 결과,
+    # 아래 조합에서 패닉률이 3~19%로 정상화됐다 -- 위 (1)/(2) 제약(비율)은
+    # 그대로 유지된다: 0.3 * 1.15 = 0.345 < 0.42 (제약 1), 0.3 > 0.12 (제약 2).
+
+    # --- Minimum robot separation ---
+    # Driver(robot1, controlled by an upstream system, not this package) and
+    # Blocker(robot2, this package's only commanded output) must stay this far
+    # apart. Roles are NOT reassigned by cost here: robot1 is always the robot
+    # that discovered the target while patrolling (assigned upstream and fixed
+    # for the whole herding episode); robot2 is always the other robot.
+    min_robot_separation_m: 0.6
+
+    # --- Occlusion Grid ---
+    diffusion_rate: 0.2
+    decay_factor: 0.9
