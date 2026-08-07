@@ -74,12 +74,12 @@ const objectLabels = {
   droppings : '배설물'
 };
 const detectionColors = {
-  LIVE_RODENT : '#ff6b6b',
-  ENTRY_POINT : '#b58cff',
-  DROPPINGS : '#e2ad4f',
-  rc_car : '#ff6b6b',
-  rat_hole : '#b58cff',
-  droppings : '#e2ad4f'
+  LIVE_RODENT : '#ff453a',
+  ENTRY_POINT : '#bf5af2',
+  DROPPINGS : '#b9975b',
+  rc_car : '#ff453a',
+  rat_hole : '#bf5af2',
+  droppings : '#b9975b'
 };
 const detectionClassNames = {
   LIVE_RODENT : 'target-rodent',
@@ -105,12 +105,12 @@ const localizeObjectText = value => String(value ?? '')
  * 사용: 현재 대상과 이번 실행 중 수신한 탐지를 같은 규칙으로 표시한다.
  */
 function drawDetectionMarker(ctx, objectType, point, size = 5, alpha = 1) {
-  const color = detectionColors[objectType] || '#ff6b6b';
+  const color = detectionColors[objectType] || '#ff453a';
   ctx.save();
   ctx.translate(point.x, point.y);
   ctx.globalAlpha = alpha;
   ctx.fillStyle = color;
-  ctx.strokeStyle = 'rgba(237,243,248,.85)';
+  ctx.strokeStyle = 'rgba(245,245,247,.85)';
   ctx.lineWidth = 1;
   if ([ 'ENTRY_POINT', 'rat_hole' ].includes(objectType)) {
     ctx.rotate(Math.PI / 4);
@@ -219,7 +219,7 @@ function drawMapLabel(ctx, text, point, color, occupied, viewport) {
     ctx.stroke();
     ctx.globalAlpha = 1;
   }
-  ctx.fillStyle = 'rgba(8,13,18,.88)';
+  ctx.fillStyle = 'rgba(0,0,0,.88)';
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   ctx.fillRect(box.x, box.y, box.width, box.height);
@@ -263,12 +263,12 @@ function addMapMarkerHit(point, kind, data, radius = 17) {
 function drawTrapMarker(ctx, trap, point) {
   ctx.save();
   ctx.translate(point.x, point.y);
-  ctx.fillStyle = '#66d18f';
-  ctx.strokeStyle = '#edf3f8';
+  ctx.fillStyle = '#32d74b';
+  ctx.strokeStyle = '#f5f5f7';
   ctx.lineWidth = 1;
   ctx.fillRect(-6, -6, 12, 12);
   ctx.strokeRect(-6, -6, 12, 12);
-  ctx.strokeStyle = '#173222';
+  ctx.strokeStyle = '#1c1c1e';
   ctx.beginPath();
   ctx.moveTo(-3, 0);
   ctx.lineTo(3, 0);
@@ -800,17 +800,17 @@ function drawMap(snapshot) {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(mapImage, area.x, area.y, area.width, area.height);
     ctx.restore();
-    ctx.strokeStyle = 'rgba(142,160,178,.45)';
+    ctx.strokeStyle = 'rgba(152,152,157,.45)';
     ctx.lineWidth = 1;
     ctx.strokeRect(area.x, area.y, area.width, area.height);
   } else {
-    ctx.strokeStyle = 'rgba(142,160,178,.22)';
+    ctx.strokeStyle = 'rgba(152,152,157,.22)';
     ctx.lineWidth = 2;
     const zoneA = toCanvas(.4, 4.5), zoneB = toCanvas(5.6, .5);
     ctx.strokeRect(zoneA.x, zoneA.y, zoneB.x - zoneA.x, zoneB.y - zoneA.y);
     ctx.setLineDash([ 10, 12 ]);
     ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(86,194,182,.12)';
+    ctx.strokeStyle = 'rgba(41,151,255,.12)';
     [1.55, 3, 4.45].forEach(x => {
       const a = toCanvas(x, .6), b = toCanvas(x, 4.4);
       ctx.beginPath();
@@ -819,7 +819,7 @@ function drawMap(snapshot) {
       ctx.stroke();
     });
     ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(142,160,178,.42)';
+    ctx.fillStyle = 'rgba(152,152,157,.42)';
     ctx.font = '12px Arial';
     ctx.fillText('입구', toCanvas(.45, .4).x, toCanvas(.45, .4).y);
   }
@@ -832,7 +832,7 @@ function drawMap(snapshot) {
       if (trail.length < 2)
         return;
       ctx.strokeStyle =
-          index === 0 ? 'rgba(86,194,182,.42)' : 'rgba(242,166,90,.42)';
+          index === 0 ? 'rgba(41,151,255,.42)' : 'rgba(255,159,10,.42)';
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       trail.forEach((point, i) => {
@@ -901,7 +901,7 @@ function drawMap(snapshot) {
             objectLabels[det.object_type] || det.object_type ||
             '대상'} 감지${count}`;
         drawMapLabel(ctx, text, p,
-                     detectionColors[det.object_type] || '#ffb0b0',
+                     detectionColors[det.object_type] || '#ffb4ab',
                      occupiedLabels, {width : w, height : h});
       }
     });
@@ -911,7 +911,7 @@ function drawMap(snapshot) {
       return;
     const p = toCanvas(trap.map_x, trap.map_y);
     drawTrapMarker(ctx, trap, p);
-    drawMapLabel(ctx, `덫 #${trap.id}`, p, '#a9e8c0', occupiedLabels,
+    drawMapLabel(ctx, `덫 #${trap.id}`, p, '#b7f0c1', occupiedLabels,
                  {width : w, height : h});
     addMapMarkerHit(p, 'trap', trap);
   });
@@ -920,10 +920,10 @@ function drawMap(snapshot) {
     if (projection.imageRect && robot.position_frame !== mapFrame)
       return;
     const p = toCanvas(robot.position.x, robot.position.y);
-    const color = index === 0 ? '#56c2b6' : '#f2a65a';
+    const color = index === 0 ? '#2997ff' : '#ff9f0a';
     const isSelected = robot.robot_id === selectedRobot;
     if (isSelected) {
-      ctx.strokeStyle = '#edf3f8';
+      ctx.strokeStyle = '#f5f5f7';
       ctx.lineWidth = 2.5;
       ctx.globalAlpha = .8;
       ctx.beginPath();
@@ -974,7 +974,7 @@ function drawMap(snapshot) {
               objectLabels[t.object_type] || t.object_type || '대상'}`;
       if (isSelected)
         drawMapLabel(ctx, targetLabel, tp,
-                     detectionColors[t.object_type] || '#edf3f8',
+                     detectionColors[t.object_type] || '#f5f5f7',
                      occupiedLabels, {width : w, height : h});
       const recentDetection =
           (snapshot.detections || [])
@@ -997,7 +997,7 @@ function drawMap(snapshot) {
         snapshot.robots.filter(robot => robot.position_frame !== mapFrame)
             .map(robot => robot.robot_id);
     if (unmapped.length) {
-      ctx.fillStyle = '#f6c77d';
+      ctx.fillStyle = '#ffd60a';
       ctx.font = '12px Arial';
       ctx.fillText(`TF 미연동: ${unmapped.join(', ')}`, 18, h - 12);
     }
