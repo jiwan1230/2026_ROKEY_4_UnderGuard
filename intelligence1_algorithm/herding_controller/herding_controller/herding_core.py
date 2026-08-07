@@ -83,6 +83,12 @@ class HerdingConfig:
     # 협공 각도를 풀어준다. flee_reaction_distance_m보다 확실히 커야
     # 표적의 반응 범위 밖으로 완전히 빠져나간다.
     deadlock_release_distance_m: float = 1.0
+    # Blocker(로봇 2)의 escape_model 반발항 활성화 거리(m) -- 트러블슈팅
+    # 노트 11-9/11-10/12 참고. 표적이 Blocker로부터 이 거리보다 멀면
+    # Blocker의 존재를 EscapeModel._robot_repulsion() 계산에서 아예
+    # 제외한다. 기본값 inf는 게이팅 없음(기존 동작과 완전히 동일) --
+    # 최적값은 experiments/blocker_contribution_ablation.py 스윕으로 정한다.
+    robot_repulsion_activation_distance_m: float = float("inf")
 
     def __post_init__(self) -> None:
         """herd를 교착 상태에 빠뜨리는 것으로 알려진 파라미터 조합을 거부한다.
@@ -171,6 +177,7 @@ class HerdingCore:
             robot_repulsion_weight=config.robot_repulsion_weight,
             wall_detect_radius_cells=config.wall_detect_radius_cells,
             escape_route_top_k=config.escape_route_top_k,
+            robot_repulsion_activation_distance_m=config.robot_repulsion_activation_distance_m,
         ), self.grid_map)
         self.planner_config = PlannerConfig(
             drive_distance_m=config.drive_distance_m, panic_distance_m=config.panic_distance_m,

@@ -76,10 +76,14 @@ def test_load_config_declares_every_herdingconfig_field_without_crashing():
         f"HerdingConfig fields with no default are missing from _PARAM_DEFAULTS: "
         f"{fields_without_default - declared_names}"
     )
-    # grid_origin_x_m/grid_origin_y_m은 dataclass 기본값을 갖고 있지만
-    # 여전히 ROS 파라미터로 명시적으로 선언되어 있으므로(_PARAM_DEFAULTS 참조),
-    # 부분집합 검사가 아니라 정확히 일치하는지 검사한다.
-    assert field_names == declared_names
+    # 모든 _PARAM_DEFAULTS는 HerdingConfig에 있어야 한다. 필드는 ROS 파라미터로
+    # 명시적으로 선언되거나 dataclass 기본값을 가질 수 있다 -- 후자의 경우,
+    # 실험적 토글(예: robot_repulsion_activation_distance_m)처럼 YAML에 없는
+    # 필드는 _PARAM_DEFAULTS에서도 생략될 수 있다.
+    assert declared_names <= field_names, (
+        f"_PARAM_DEFAULTS contains fields not in HerdingConfig: "
+        f"{declared_names - field_names}"
+    )
 
 
 def _make_output(**overrides):

@@ -460,3 +460,13 @@ def test_shipping_yaml_config_satisfies_the_invariant():
     config = load_herding_config(CONFIG_PATH)  # 예외가 발생하면 안 됨
     eased = config.drive_distance_m * config.drive_distance_ease_factor
     assert eased < config.flee_reaction_distance_m
+
+
+def test_robot_repulsion_activation_distance_defaults_to_unbounded():
+    core = HerdingCore(make_config())
+    assert core.escape_model.config.robot_repulsion_activation_distance_m == float("inf")
+
+
+def test_robot_repulsion_activation_distance_wired_to_escape_model():
+    core = HerdingCore(make_config(robot_repulsion_activation_distance_m=1.0))
+    assert core.escape_model.config.robot_repulsion_activation_distance_m == 1.0
