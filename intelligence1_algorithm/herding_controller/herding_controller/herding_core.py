@@ -66,6 +66,23 @@ class HerdingConfig:
     # Blocker가 계속 도착 전에 목표가 바뀌는 지연(lag)을 만든다"는 게 밝혀져
     # 하드코딩에서 이 필드로 뺐다. 최적값은 run_real_map_algo_suite 스윕으로 정한다.
     blocking_point_commit_sec: float = 1.0
+    # 교착(deadlock) 감지 -- 트러블슈팅 노트 11-8 참고. Driver와 Blocker가
+    # 서로 다른 각도에서 밀다가, 지정된 포획존이 아닌 방 안의 다른 벽
+    # 구석에 표적을 우연히 핀서(pincer)로 가둬버리는 경우가 있다. 표적이
+    # 이 시간(초) 이상 거의 안 움직이는데도 아직 포획존 근처가 아니면,
+    # "몰이 성공"이 아니라 "우연히 낀 것"으로 판단한다.
+    deadlock_stall_sec: float = 3.0
+    # 표적이 이 반경(m) 안에 머무르면 "그 자리에 갇혀 있다"고 본다. 순간
+    # 속도가 아니라 반경으로 판정하는 이유: 벽 충돌회피 물리엔진이 갇힌
+    # 상태에서도 스텝마다 미세하게 위치를 밀어내는데(실측 0.01~0.03m/스텝),
+    # 이게 순간속도 기준으로는 매번 "움직였다"로 잡혀 정지 누적이 리셋돼
+    # 버린다(트러블슈팅 노트 11-8) -- 그래서 "기준점에서 이 반경을 벗어났나"
+    # 로만 리셋을 판단한다.
+    deadlock_drift_radius_m: float = 0.1
+    # 교착 판정 시, Blocker를 표적으로부터 이 거리(m)만큼 뒤로 물러나게 해
+    # 협공 각도를 풀어준다. flee_reaction_distance_m보다 확실히 커야
+    # 표적의 반응 범위 밖으로 완전히 빠져나간다.
+    deadlock_release_distance_m: float = 1.0
 
     def __post_init__(self) -> None:
         """herd를 교착 상태에 빠뜨리는 것으로 알려진 파라미터 조합을 거부한다.
@@ -121,6 +138,7 @@ class HerdingOutput:
     latency_ms: float = 0.0
     panic: bool = False
     role_swapped: bool = False
+    deadlock_release: bool = False
 
 
 class HerdingCore:
@@ -180,6 +198,9 @@ class HerdingCore:
         # Blocking Point 이력현상(hysteresis) 상태 -- 아래 _stabilize_blocking_point() 참고.
         self._committed_blocking_point: np.ndarray | None = None
         self._committed_blocking_time: float = 0.0
+        # 교착 감지 상태 -- 아래 _update_deadlock_state() 참고.
+        self._deadlock_anchor_position: np.ndarray | None = None
+        self._deadlock_anchor_time_sec: float = 0.0
 
     # ------------------------------------------------------------------ #
     # 그리드 헬퍼                                                          #
@@ -282,6 +303,43 @@ class HerdingCore:
             return candidate
         return self._committed_blocking_point
 
+    def _update_deadlock_state(self, target_pos: np.ndarray, now_sec: float) -> bool:
+        """표적이 한 자리(반경 deadlock_drift_radius_m 안)에 오래 머물렀는지
+        갱신하고, 교착 판정 여부를 반환한다.
+
+        기준점(anchor)을 두고, 표적이 그 반경을 벗어날 때만 기준점을
+        새로 잡는다 -- 매 스텝의 순간 이동량으로 판단하면 벽 충돌회피
+        물리엔진의 미세한 스텝별 흔들림에도 매번 리셋돼버려 실제로 갇혀
+        있어도 절대 누적되지 않는다(트러블슈팅 노트 11-8, seed=1200008로
+        실측).
+        """
+        if self._deadlock_anchor_position is None:
+            self._deadlock_anchor_position = np.asarray(target_pos, dtype=float).copy()
+            self._deadlock_anchor_time_sec = now_sec
+            return False
+        drift = float(np.linalg.norm(target_pos - self._deadlock_anchor_position))
+        if drift > self.config.deadlock_drift_radius_m:
+            self._deadlock_anchor_position = np.asarray(target_pos, dtype=float).copy()
+            self._deadlock_anchor_time_sec = now_sec
+            return False
+        return (now_sec - self._deadlock_anchor_time_sec) >= self.config.deadlock_stall_sec
+
+    def _reset_deadlock_state(self) -> None:
+        self._deadlock_anchor_position = None
+        self._deadlock_anchor_time_sec = 0.0
+
+    def _deadlock_release_point(self, target_pos: np.ndarray, robot2_pos: np.ndarray) -> np.ndarray:
+        """Blocker를 표적으로부터 deadlock_release_distance_m만큼 뒤로 물러나게 한다.
+
+        표적 위치에서 로봇 2의 *현재* 위치를 지나는 직선 방향으로 물러나므로,
+        Blocker가 어느 각도에서 핀서에 가담하고 있었든 그 각도 그대로
+        벌어지기만 한다 (엉뚱한 새 방향으로 튀지 않음).
+        """
+        away = robot2_pos - target_pos
+        norm = np.linalg.norm(away)
+        away = away / norm if norm > 1e-6 else np.array([1.0, 0.0])
+        return target_pos + away * self.config.deadlock_release_distance_m
+
     def _reset_occlusion_memory(self) -> None:
         """LOST 에피소드의 시드를 초기화하여 다음 에피소드가 새로 시드되도록 한다."""
         self._last_known_cell = None
@@ -359,6 +417,7 @@ class HerdingCore:
 
         panic = False
         role_swapped = False
+        deadlock_release = False
 
         # 역할은 항상 고정이다: 로봇 1 = Driver(로봇 A, 상위 시스템이 이미
         # 배정한 값을 그대로 받아들임), 로봇 2 = Blocker(로봇 B, 아래에서
@@ -386,6 +445,7 @@ class HerdingCore:
             # 재관측 후 HERD로 돌아왔을 때 LOST 이전의 낡은 목표점을
             # 이어받지 않도록 이력현상 상태를 지운다.
             self._committed_blocking_point = None
+            self._reset_deadlock_state()
         else:
             self._reset_occlusion_memory()
             if fsm_state in (FSMState.HERD, FSMState.CORNER):
@@ -413,6 +473,8 @@ class HerdingCore:
                     raw_blocking_point = compute_blocking_point(
                         target_state.position, direction_goal, escape_estimate,
                         self.grid_map, self.planner_config,
+                        geodesic_field=self._geodesic_field,
+                        previous_point=self._committed_blocking_point,
                     )
                     # 방금 계산한 후보를 즉시 채택하지 않고 이력현상을 거친다
                     # -- _stabilize_blocking_point() 참고. resolve_separation은
@@ -432,12 +494,28 @@ class HerdingCore:
                     blocking_point = np.asarray(observation.robot2_pos, dtype=float).copy()
                     self._committed_blocking_point = None
 
+                # 교착(deadlock) 감지: Driver+Blocker가 서로 다른 각도에서
+                # 밀다가 지정된 포획존이 아닌 곳에서 표적을 우연히 가둘 수
+                # 있다 (트러블슈팅 노트 11-8). 표적이 오래 안 움직이는데
+                # 아직 포획존 근처가 아니면 "몰이 성공"이 아니라 "우연히
+                # 낀 것"이므로, Blocker를 뒤로 물러나게 해 협공 각도를
+                # 풀어준다. 표적이 다시 움직이면(_update_deadlock_state가
+                # 정지 누적을 리셋) 자동으로 정상 블로킹으로 복귀한다.
+                in_deadlock = self._update_deadlock_state(target_state.position, observation.sim_time_sec)
+                deadlock_release = in_deadlock and distance_to_goal > self.config.capture_radius_m
+                if deadlock_release:
+                    blocking_point = self._deadlock_release_point(
+                        target_state.position, observation.robot2_pos
+                    )
+                    self._committed_blocking_point = None
+
                 robot1_goal, robot2_goal = driving.point, blocking_point
             else:
                 # IDLE / SEARCH / TRACK / CAPTURED: 위치를 유지한다. 새
                 # 에피소드가 HERD로 다시 들어갈 때 지난 목표점을 이어받지
                 # 않도록 이력현상 상태도 같이 지운다.
                 self._committed_blocking_point = None
+                self._reset_deadlock_state()
                 robot1_goal = np.asarray(observation.robot1_pos, dtype=float).copy()
                 robot2_goal = np.asarray(observation.robot2_pos, dtype=float).copy()
 
@@ -450,4 +528,5 @@ class HerdingCore:
             escape_directions=escape_estimate.directions if escape_estimate else None,
             escape_probabilities=escape_estimate.probabilities if escape_estimate else None,
             latency_ms=latency_ms, panic=panic, role_swapped=role_swapped,
+            deadlock_release=deadlock_release,
         )

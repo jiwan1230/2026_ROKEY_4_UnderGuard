@@ -78,12 +78,51 @@ def compute_driving_point(
     return DrivingResult(point=target_pos + drive_distance * u, is_panic=False)
 
 
+def _geodesic_distance_to_goal(position: np.ndarray, grid_map: GridMap, geodesic_field) -> float | None:
+    """geodesic_field가 있으면 position 셀의 벽을 피한 실제 거리-to-goal, 없거나
+    계산 불가(그리드 밖/도달 불가능한 고립 셀)하면 None."""
+    if geodesic_field is None:
+        return None
+    try:
+        row, col = grid_map.world_to_cell(*position)
+    except ValueError:
+        return None
+    distance = geodesic_field.distance[row, col]
+    return float(distance) if np.isfinite(distance) else None
+
+
+def _leads_away_from_goal(
+    point: np.ndarray, target_pos: np.ndarray, grid_map: GridMap, geodesic_field,
+) -> bool:
+    """point가 target_pos보다 실제로(벽을 피해서) goal에서 더 먼지 확인한다.
+
+    geodesic_field가 없으면(하위호환) 항상 True를 반환해 기존 동작을 그대로
+    유지한다. 있으면, Euclidean lookahead 점 하나만으로는 "장애물이 아니다"밖에
+    확인할 수 없어 놓치는 두 가지 오판을 막아준다: (a) 그 점이 벽 뒤 작은
+    알코브 같은 막다른 골목이라 실제로는 그리로 가려면 트랩 쪽을 크게 돌아야
+    하는 경우, (b) 얇은 벽 건너편이라 Euclidean으로는 열려 보여도 실제 경로로는
+    오히려 트랩에 더 가까운 경우. target_pos 자신의 거리를 계산할 수 없으면
+    (표적이 고립된 셀에 있는 등) 비교 기준이 없으므로 필터링하지 않는다.
+    """
+    if geodesic_field is None:
+        return True
+    point_dist = _geodesic_distance_to_goal(point, grid_map, geodesic_field)
+    if point_dist is None:
+        return False
+    target_dist = _geodesic_distance_to_goal(target_pos, grid_map, geodesic_field)
+    if target_dist is None:
+        return True
+    return point_dist > target_dist
+
+
 def compute_blocking_point(
     target_pos: np.ndarray,
     goal_pos: np.ndarray,
     escape_estimate: EscapeEstimate,
     grid_map: GridMap,
     config: PlannerConfig,
+    geodesic_field=None,
+    previous_point: np.ndarray | None = None,
 ) -> np.ndarray:
     """Blocker의 목표점을 반환한다: 목표 반구(goal hemisphere) 밖에서 가장 가능성 높은 도주 경로.
 
@@ -92,11 +131,15 @@ def compute_blocking_point(
     그 방향은 Driver가 이미 처리 중이므로 Blocker가 갈 필요가 없다.
     (2) 남은 후보 중 그 방향의 lookahead 지점이 장애물이면 건너뛴다 —
     자연적으로 막힌 도주로는 애초에 표적이 쓸 수 없으므로 지킬 필요가
-    없다. (3) 살아남은 첫 후보(= 목표 반구 밖에서 가장 확률 높고 실제로
+    없다. geodesic_field가 주어졌으면 여기서 추가로, 그 지점이 벽을 피해서도
+    실제로 target_pos보다 goal에서 더 먼지 확인한다 — Euclidean 검사만으로는
+    막다른 알코브나 얇은 벽 건너편(오히려 더 가까움)을 "뚫려 있다"고 오판하기
+    때문이다. (3) 살아남은 첫 후보(= 목표 반구 밖에서 가장 확률 높고 실제로
     갈 수 있는 도주로)를 Blocker의 목표점으로 채택. (4) 목표 반구 밖
     후보가 전부 막혀 있으면 반구 조건을 완화해 전체 8방향 중 최고확률
-    빈 경로를 대신 취하고, 그마저 없으면(사방이 막힘) 제자리를 지킨다 —
-    아래 코드의 세 개 루프가 각각 이 (3)/(4-완화)/(4-완전차단) 단계다.
+    빈 경로를 대신 취하고, 그마저 없으면(사방이 막힘) previous_point가
+    있으면 그 자리를 지키고 없으면 제자리를 지킨다 — 아래 코드의 세 개
+    루프가 각각 이 (3)/(4-완화)/(4-완전차단) 단계다.
     """
     to_goal = goal_pos - target_pos
     norm = np.linalg.norm(to_goal)
@@ -117,6 +160,8 @@ def compute_blocking_point(
             continue
         if grid_map.is_obstacle(row, col):
             continue  # 경로가 이미 자연적으로 막혀 있으므로 차선책 경로 시도 (2-4 step 4)
+        if not _leads_away_from_goal(point, target_pos, grid_map, geodesic_field):
+            continue
         return point
 
     # 목표 반구 밖의 후보가 모두 막혀 있거나 그리드 밖에 있음: 목표 반구
@@ -131,9 +176,14 @@ def compute_blocking_point(
             continue
         if grid_map.is_obstacle(row, col):
             continue
+        if not _leads_away_from_goal(point, target_pos, grid_map, geodesic_field):
+            continue
         return point
 
-    # 모든 방향(8방향 전부)이 장애물에 막혀 있거나 그리드 밖에 있음: 타겟이
-    # 완전히 갇혀 있어 근처에 유효한 blocking point가 없다. Blocker를 벽이나
-    # 그리드 밖으로 보내는 대신 제자리에 머문다.
+    # 모든 방향(8방향 전부)이 장애물에 막혀 있거나 그리드 밖에 있거나 geodesic으로
+    # 검증 불가함: 타겟이 완전히 갇혀 있어 근처에 유효한 blocking point가 없다.
+    # 직전에 커밋된 위치가 있으면 그 자리를 유지하고(표적 위치로 돌진하는 대신),
+    # 없으면(첫 호출 등) 기존처럼 표적 위치로 폴백한다.
+    if previous_point is not None:
+        return np.asarray(previous_point, dtype=float).copy()
     return target_pos.copy()

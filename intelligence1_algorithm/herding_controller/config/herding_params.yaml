@@ -104,6 +104,18 @@ herding_controller:
     # run_real_map_algo_suite 스윕으로 재검증한 값을 쓴다.
     blocking_point_commit_sec: 1.0
 
+    # 교착(deadlock) 감지 -- herding_core.py의 _update_deadlock_state()/
+    # _deadlock_release_point() 참고 (트러블슈팅 노트 11-8). Driver와
+    # Blocker가 서로 다른 각도에서 밀다가, 지정된 포획존이 아닌 방 안의
+    # 다른 벽 구석에 표적을 우연히 핀서로 가둬버리는 경우가 있었다
+    # (left 트랩 기준 N=150 중 26건, 전부 벽에서 0.2m 이내 구석에서 표적이
+    # 완전히 정지). 표적이 deadlock_stall_sec 이상 거의 안 움직이는데도
+    # 아직 포획존 근처가 아니면, Blocker를 deadlock_release_distance_m만큼
+    # 뒤로 물러나게 해 협공 각도를 풀어준다.
+    deadlock_stall_sec: 3.0
+    deadlock_drift_radius_m: 0.1
+    deadlock_release_distance_m: 1.0
+
     # 2026-08-06 실제 맵 재튜닝 (트러블슈팅 노트 10번 항목): drive_distance_m/
     # panic_distance_m/flee_reaction_distance_m는 원래 10x10m 열린 아레나
     # 기준으로 튜닝된 값이었다. 실제 방은 폭 1m 안팎의 좁은 복도가 많아서,

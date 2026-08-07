@@ -2,6 +2,7 @@
 import numpy as np
 
 from herding_controller.escape_model import EscapeEstimate
+from herding_controller.geodesic_field import GeodesicField
 from herding_controller.grid_map import GridConfig, GridMap
 from herding_controller.herding_planner import PlannerConfig, compute_blocking_point, compute_driving_point
 
@@ -99,3 +100,81 @@ def test_blocking_point_stays_put_when_fully_boxed_in():
     point = compute_blocking_point(target_pos, goal_pos, estimate, grid, config)
     # 유효한 방향이 없음: Blocker를 벽으로 보내는 대신 제자리에 머무른다.
     np.testing.assert_array_equal(point, target_pos)
+
+
+def test_blocking_point_returns_previous_point_when_fully_boxed_in():
+    config = make_config()
+    grid = GridMap(GridConfig(resolution_m=0.25, width_cells=40, height_cells=40))
+    target_pos = np.array([5.0, 5.0])
+    goal_pos = np.array([8.0, 5.0])
+    directions = np.array(
+        [[0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1]], dtype=float
+    )
+    directions /= np.linalg.norm(directions, axis=1, keepdims=True)
+    for direction in directions:
+        point = target_pos + direction * config.block_lookahead_m
+        row, col = grid.world_to_cell(*point)
+        grid.obstacle_mask[row, col] = True
+    probabilities = np.full(8, 1.0 / 8.0)
+    estimate = EscapeEstimate(directions=directions, probabilities=probabilities, top_k_routes=[])
+    previous_point = np.array([4.0, 6.0])
+    point = compute_blocking_point(
+        target_pos, goal_pos, estimate, grid, config, previous_point=previous_point,
+    )
+    # 직전 커밋된 위치가 있으면, 표적 위치로 돌진하는 대신 그 자리를 지킨다.
+    np.testing.assert_array_equal(point, previous_point)
+
+
+def test_blocking_point_geodesic_filter_rejects_sealed_pocket():
+    config = make_config()
+    grid = GridMap(GridConfig(resolution_m=0.25, width_cells=40, height_cells=40))
+    target_pos = np.array([5.0, 5.0])
+    goal_pos = np.array([8.0, 5.0])  # goal은 target의 정확히 "E" 방향에 있음
+    directions = np.array(
+        [[0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1]], dtype=float
+    )
+    directions /= np.linalg.norm(directions, axis=1, keepdims=True)
+    probabilities = np.zeros(8)
+    probabilities[6] = 0.9  # "W" -- 확률상 가장 유력하지만, 아래에서 밀폐된
+    # 고립 셀로 만들 것이다 (그 지점 자체는 장애물이 아니므로 기존
+    # Euclidean 검사만으로는 "뚫려 있다"고 오판한다).
+    probabilities[7] = 0.1  # "NW" -- 차선책. 실제로 뚫려 있고 goal에서도 더 멂.
+
+    w_point = target_pos + directions[6] * config.block_lookahead_m
+    row, col = grid.world_to_cell(*w_point)
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr == 0 and dc == 0:
+                continue
+            grid.obstacle_mask[row + dr, col + dc] = True
+
+    estimate = EscapeEstimate(directions=directions, probabilities=probabilities, top_k_routes=[])
+    goal_row, goal_col = grid.world_to_cell(*goal_pos)
+    geodesic_field = GeodesicField(grid, goal_row, goal_col)
+
+    point = compute_blocking_point(
+        target_pos, goal_pos, estimate, grid, config, geodesic_field=geodesic_field,
+    )
+    # "W"는 사방이 막힌 고립 셀이라 geodesic으로는 도달 불가능(거부)하고,
+    # 대신 실제로 도달 가능하고 goal에서 더 먼 "NW"가 선택되어야 한다.
+    expected = target_pos + directions[7] * config.block_lookahead_m
+    np.testing.assert_allclose(point, expected)
+
+
+def test_blocking_point_ignores_geodesic_filter_when_field_is_none():
+    """geodesic_field를 안 넘기면(기본값 None) 기존 순수 Euclidean 동작과
+    동일해야 한다 -- 하위호환 회귀 가드."""
+    config = make_config()
+    grid = GridMap(GridConfig(resolution_m=0.25, width_cells=40, height_cells=40))
+    target_pos = np.array([5.0, 5.0])
+    goal_pos = np.array([8.0, 5.0])
+    directions = np.array(
+        [[0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1]], dtype=float
+    )
+    directions /= np.linalg.norm(directions, axis=1, keepdims=True)
+    probabilities = np.zeros(8)
+    probabilities[6] = 1.0  # "W"
+    estimate = EscapeEstimate(directions=directions, probabilities=probabilities, top_k_routes=[])
+    point = compute_blocking_point(target_pos, goal_pos, estimate, grid, config)
+    expected = target_pos + directions[6] * config.block_lookahead_m
+    np.testing.assert_allclose(point, expected)

@@ -163,6 +163,92 @@ def test_zero_commit_sec_adopts_every_candidate_immediately():
     assert core.occlusion_grid.grid_map is core.grid_map
 
 
+# --------------------------------------------------------------------------- #
+# 교착(deadlock) 감지 -- Driver+Blocker가 포획존이 아닌 곳에서 표적을 우연히    #
+# 가두는 문제 (트러블슈팅 노트 11-8)                                           #
+# --------------------------------------------------------------------------- #
+
+
+def test_deadlock_config_defaults():
+    core = HerdingCore(make_config())
+    assert core.config.deadlock_stall_sec == 3.0
+    assert core.config.deadlock_drift_radius_m == 0.1
+    assert core.config.deadlock_release_distance_m == 1.0
+
+
+def test_update_deadlock_state_stays_false_until_stall_sec_elapses():
+    core = HerdingCore(make_config(deadlock_stall_sec=1.0, deadlock_drift_radius_m=0.1))
+    pos = np.array([2.0, 2.0])
+    assert core._update_deadlock_state(pos, now_sec=0.0) is False  # 첫 호출: 기준점만 기록
+    assert core._update_deadlock_state(pos, now_sec=0.6) is False  # 아직 1.0s 안 지남
+    assert core._update_deadlock_state(pos, now_sec=1.1) is True  # 기준점에서 1.1s 경과
+
+
+def test_update_deadlock_state_resets_when_target_leaves_drift_radius():
+    core = HerdingCore(make_config(deadlock_stall_sec=1.0, deadlock_drift_radius_m=0.1))
+    anchor = np.array([2.0, 2.0])
+    core._update_deadlock_state(anchor, now_sec=0.0)
+    core._update_deadlock_state(anchor, now_sec=0.9)  # 거의 도달 직전까지 누적
+    moved = np.array([2.5, 2.0])  # drift_radius(0.1m)를 훌쩍 넘는 실제 이동
+    assert core._update_deadlock_state(moved, now_sec=1.0) is False
+    # 새 기준점이 잡혔으므로, 그 자리에서 다시 잠깐 있어서는 아직 안 걸림
+    assert core._update_deadlock_state(moved, now_sec=1.3) is False
+
+
+def test_update_deadlock_state_ignores_jitter_within_drift_radius():
+    """벽 충돌회피 물리엔진의 스텝별 미세한 흔들림(수 cm)에는 리셋되지
+    않아야 한다 -- seed=1200008에서 실측된, 순간속도 기준 구현이 놓쳤던
+    바로 그 문제(트러블슈팅 노트 11-8)."""
+    core = HerdingCore(make_config(deadlock_stall_sec=1.0, deadlock_drift_radius_m=0.1))
+    jitter_positions = [
+        np.array([1.95, -5.33]), np.array([1.95, -5.34]), np.array([1.94, -5.34]),
+        np.array([1.94, -5.37]), np.array([1.96, -5.36]), np.array([1.95, -5.35]),
+    ]
+    result = None
+    for i, pos in enumerate(jitter_positions):
+        result = core._update_deadlock_state(pos, now_sec=i * 0.2)
+    # 6번째 호출 시점(1.0s 경과)까지 전부 drift_radius(0.1m) 안의 흔들림이므로
+    # 기준점이 한 번도 안 바뀌고 그대로 누적돼 있어야 한다.
+    assert result is True
+
+
+def test_deadlock_release_point_moves_blocker_away_along_its_own_bearing():
+    core = HerdingCore(make_config(deadlock_release_distance_m=2.0))
+    target_pos = np.array([0.0, 0.0])
+    robot2_pos = np.array([1.0, 0.0])  # 표적의 +x 쪽에 서 있음
+    release = core._deadlock_release_point(target_pos, robot2_pos)
+    # 로봇이 서 있던 그 방향(+x) 그대로, 지정된 거리만큼 더 물러난 지점이어야 한다
+    np.testing.assert_allclose(release, np.array([2.0, 0.0]))
+
+
+def test_deadlock_release_point_falls_back_to_arbitrary_direction_when_coincident():
+    """표적과 로봇 2가 (거의) 같은 위치라 방향을 못 정할 때도 죽지 않아야 한다."""
+    core = HerdingCore(make_config(deadlock_release_distance_m=1.0))
+    same_pos = np.array([3.0, 3.0])
+    release = core._deadlock_release_point(same_pos, same_pos.copy())
+    assert np.isfinite(release).all()
+    assert np.linalg.norm(release - same_pos) == pytest.approx(1.0)
+
+
+def test_herd_state_triggers_deadlock_release_when_target_stays_put_off_goal():
+    """표적을 포획존과 먼 곳에 고정해두고 계속 같은 위치를 관측시키면,
+    deadlock_stall_sec가 지난 뒤 HerdingOutput.deadlock_release가 True로
+    바뀌고 로봇 2의 목표가 표적에서 확실히 멀어져야 한다."""
+    config = make_config(deadlock_stall_sec=0.4, deadlock_drift_radius_m=0.1)
+    runner = Runner(config=config, dt=0.2)
+    target = (0.5, 0.5)  # capture_zone(3,3)에서 멀리 떨어진 위치
+    output = runner.run_until(FSMState.HERD, measurement=target, limit=40)
+    assert output.deadlock_release is False, "HERD에 막 진입한 시점엔 아직 정지 누적이 안 됐어야 한다"
+
+    for _ in range(5):  # 0.2s * 5 = 1.0s >= deadlock_stall_sec(0.4s)
+        output = runner.run(1, measurement=target)
+        if output.deadlock_release:
+            break
+    assert output.deadlock_release is True
+    dist_to_target = float(np.linalg.norm(output.robot2_goal - np.array(target)))
+    assert dist_to_target >= config.deadlock_release_distance_m - 1e-6
+
+
 def test_escape_concentration_threshold_gates_the_corner_transition():
     """이 임계값은 하드코딩된 리터럴이 아니라 config에서 와야 하며, 실제로 게이팅 역할을 해야 한다."""
     import dataclasses

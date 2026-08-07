@@ -64,6 +64,9 @@ _PARAM_DEFAULTS = {
     "drive_distance_ease_factor": 1.15,
     "block_lookahead_m": 1.8,  # 2026-08-06: 5.3x7.35m 실제 방 기준 재조정 (기존 3.0m는 10x10m 아레나 기준)
     "blocking_point_commit_sec": 1.0,  # 2026-08-07: 하드코딩 상수에서 이전 (트러블슈팅 노트 10-7)
+    "deadlock_stall_sec": 3.0,  # 2026-08-07: 교착 감지 (트러블슈팅 노트 11-8)
+    "deadlock_drift_radius_m": 0.1,
+    "deadlock_release_distance_m": 1.0,
     # --- 최소 이격 거리 (로봇 A 실제 위치와 Blocker 목표점) ---
     "min_robot_separation_m": 0.6,
     # --- Occlusion 그리드 ---
