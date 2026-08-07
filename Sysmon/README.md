@@ -16,8 +16,14 @@
 - Offline 및 저전압 경고 표시
 - Mock 자동 시나리오와 수동 테스트 이벤트
 - main Fleet 상태·사건의 읽기 전용 수신
+- 카메라 실시간 프레임 구독·캐시·API 배선(`camera_service.py`), 탐지에 증거 이미지 링크 첨부
 
-카메라 카드는 현재 상태 UI와 Mock 자리 표시 화면입니다. 실제 영상 스트리밍은 아직 연결되지 않았습니다.
+카메라 배선은 main의 `camera_node.py`가 실제 발행하는 `synced/rgb`
+(`sensor_msgs/CompressedImage`)에 맞춰 구독·캐시·`/api/camera/<robot_id>/frame`
+API까지 준비됐고, 실제 ROS 메시지로 끝까지 확인했습니다. 다만 **실물 로봇
+카메라로는 아직 확인하지 못했습니다** — Mock 모드에서는 여전히 자리 표시
+화면이 나오고, ROS 모드는 프레임이 오기 전까지 동일한 자리 표시로
+자동 대체됩니다.
 
 ## 데이터 경계
 
@@ -87,7 +93,7 @@ cd backend
 python3 -m unittest discover -s tests -v
 ```
 
-현재 앱 라우트, Mock/ROS 계약, 맵 변환, 상태 관리, Mock 시나리오, Fleet/ROS 메시지 변환을 포함한 35개 테스트가 통과합니다.
+현재 앱 라우트, Mock/ROS 계약, 맵 변환, 상태 관리, Mock 시나리오, Fleet/ROS 메시지 변환, 카메라 프레임 캐시를 포함한 44개 테스트가 통과합니다.
 
 ## 프로젝트 구조
 
@@ -112,6 +118,7 @@ Sysmon/
 │       ├── mock_manager.py      # 장비 없는 시연 데이터 생성
 │       ├── ros_bridge.py        # ROS/Fleet 메시지의 읽기 전용 변환
 │       ├── map_service.py       # PGM/YAML 로딩과 PNG 변환
+│       ├── camera_service.py    # 로봇별 최신 카메라 프레임 메모리 캐시
 │       └── runtime_service.py   # Mock/ROS 공통 인터페이스
 └── frontend/
     ├── templates/dashboard.html
@@ -124,7 +131,8 @@ Sysmon/
 2. 실제 TF/odom과 정적 맵의 좌표계 일치
 3. `/fleet/event`의 로봇 ID 및 탐지 필드 계약 확정
 4. Offline·재연결·대상 유실 현장 시험
-5. 실제 카메라 영상 전달 방식 확정과 연결
+5. 실제 카메라(`synced/rgb`)로 배선 검증 — 토픽·메시지 형식은 main과 맞춰
+   구독·API까지 준비됐고 합성 메시지로는 확인함, 실물 카메라 확인만 남음
 6. 로봇 제어는 `central_node` 소유로 유지하고 관제 입력 계약 문서화
 
 사업 요구사항 문서는 참고 자료이며 현재 구현 순서의 기준이 아닙니다.

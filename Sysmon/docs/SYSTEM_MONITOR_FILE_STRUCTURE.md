@@ -47,6 +47,7 @@ Sysmon/
 │   ├── system_monitor/                # 시스템 모니터링 Flask 패키지
 │   │   ├── __init__.py                # Python 패키지 선언
 │   │   ├── app.py                     # Flask 앱 조립(../../frontend를 template/static으로 연결), 화면·API 라우트
+│   │   ├── camera_service.py          # 로봇별 최신 카메라 프레임 메모리 캐시
 │   │   ├── config.py                  # 환경변수와 ROS 인터페이스 설정
 │   │   ├── detection_service.py       # Mock/ROS 공통 탐지·사건 처리
 │   │   ├── map_service.py             # ROS 맵 로드와 좌표 변환
@@ -57,6 +58,7 @@ Sysmon/
 │   │   └── state_manager.py           # 로봇·사건·탐지 통합 상태
 │   └── tests/                         # System Monitor 단위 테스트
 │       ├── test_app.py                # Flask 및 모드 공통 API 계약
+│       ├── test_camera_service.py     # 카메라 프레임 캐시 저장·조회
 │       ├── test_map_service.py        # 맵 로드와 좌표 변환
 │       ├── test_mock_manager.py       # Mock 시나리오와 역할 배정
 │       ├── test_ros_bridge.py         # ROS 메시지 변환과 자동 경고
@@ -95,12 +97,13 @@ read-only 전환 결정"에 따라 삭제되어 현재 소스에는 없다(`data
 |---|---|---|
 | `system_monitor/__init__.py` | 패키지 선언 | 애플리케이션 코드가 `system_monitor` 패키지로 import됨 |
 | `system_monitor/app.py` | Flask 앱 생성, 화면과 API 라우트, 런타임 시작 | 라우트가 Mock/ROS를 직접 분기하지 않고 공통 `RuntimeService`를 사용, frontend/ 폴더를 template/static으로 명시 연결 |
+| `system_monitor/camera_service.py` | 로봇별 최신 카메라 프레임을 메모리에 캐시(재인코딩 없음) | `StateManager`와 분리 — 원본 바이트가 `/api/snapshot` JSON 직렬화 경로에 안 섞이게 함 |
 | `system_monitor/config.py` | 환경변수 검증, 로봇별 namespace와 토픽 이름 생성 | 로봇 저장소 변경 시 우선 수정할 통신 경계 |
 | `system_monitor/detection_service.py` | 탐지 저장, 상태 갱신, 사건 생성, 대상 유실·저전압·트랩·배터리 복구 처리 | Mock과 ROS가 같은 처리 순서를 사용하게 만드는 공통 계층 |
 | `system_monitor/map_service.py` | `my_map.yaml`/PGM 읽기, PNG 변환, map 좌표를 이미지 픽셀로 변환 | `resolution`, `origin`, Y축 반전을 사용한 좌표 변환 |
 | `system_monitor/mock_manager.py` | 두 로봇 이동, 예약 탐지, 역할 배정, 테스트 사건을 재현 | ROS 장비 없이 화면·사건 전체 흐름을 검증 |
 | `system_monitor/risk_signals.py` | 센서별 객체 라벨을 표준 위험신호로 변환 | UI가 세 가지 표준 이름만 사용하도록 정규화 |
-| `system_monitor/ros_bridge.py` | Detection3DArray, Odometry, BatteryState 구독 및 공통 상태 변환 | 실제 토픽·메시지·좌표계가 연결되는 핵심 ROS 통신 파일 |
+| `system_monitor/ros_bridge.py` | Detection3DArray, Odometry, BatteryState, CompressedImage(카메라 프레임) 구독 및 공통 상태 변환 | 실제 토픽·메시지·좌표계가 연결되는 핵심 ROS 통신 파일 |
 | `system_monitor/runtime_service.py` | `start`, `stop`, `status`, `available`, `running` 공통 계약 정의 | Flask와 실행 모드의 결합도를 낮추는 경계 |
 | `system_monitor/state_manager.py` | 로봇, 위치, 대상, 사건, 탐지, 트랩, 전체 임무 상태를 단일 스냅샷으로 집계 | 최초 쥐 탐지 기반 역할 배정, 상태 검증, Offline 판정, 임무 상태 자동계산의 중심 |
 
@@ -117,11 +120,12 @@ read-only 전환 결정"에 따라 삭제되어 현재 소스에는 없다(`data
 
 | 파일 | 검증 내용 |
 |---|---|
-| `backend/tests/test_app.py` | 백그라운드 서비스 시작, Mock/ROS 응답 구조와 공통 화면 계약 |
+| `backend/tests/test_app.py` | 백그라운드 서비스 시작, Mock/ROS 응답 구조와 공통 화면 계약, 카메라 프레임 라우트 |
+| `backend/tests/test_camera_service.py` | 카메라 프레임 캐시 저장·조회, 로봇별 독립성 |
 | `backend/tests/test_map_service.py` | YAML/PGM 로드, PNG 변환, 실제 좌표 변환, 맵 누락 시 fallback |
 | `backend/tests/test_mock_manager.py` | 탐지 좌표, 최초 탐지 역할 배정, 표준 사건 이름, 트랩 기록, 전체 임무 상태 자동계산 |
-| `backend/tests/test_ros_bridge.py` | 토픽 생성, 좌표 frame 보존, Detection/Odometry 변환, 대상 유실과 저전압 중복 방지 |
-| `backend/tests/test_state_manager.py` | 상태 갱신·검증(잘못된 state 거부 포함), 연결 요약 집계, 최초 쥐 탐지 기반 역할 자동배정, 세션 로컬 ID 발급 |
+| `backend/tests/test_ros_bridge.py` | 토픽 생성, 좌표 frame 보존, Detection/Odometry 변환, 대상 유실과 저전압 중복 방지, 카메라 프레임 캐시와 탐지의 image_url, 재접속 후 자동 복구 |
+| `backend/tests/test_state_manager.py` | 상태 갱신·검증(잘못된 state 거부 포함), 연결 요약 집계, 최초 쥐 탐지 기반 역할 자동배정, 세션 로컬 ID 발급, 오프라인 타임아웃 후 재접속 자동 복구 |
 
 테스트 실행 명령은 다음과 같다(`backend/`가 CWD여야 `system_monitor` 패키지를 import할 수 있다).
 
