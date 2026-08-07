@@ -79,7 +79,16 @@ def test_load_config_declares_every_herdingconfig_field_without_crashing():
     # 모든 _PARAM_DEFAULTS는 HerdingConfig에 있어야 한다. 필드는 ROS 파라미터로
     # 명시적으로 선언되거나 dataclass 기본값을 가질 수 있다 -- 후자의 경우,
     # 실험적 토글(예: robot_repulsion_activation_distance_m)처럼 YAML에 없는
-    # 필드는 _PARAM_DEFAULTS에서도 생략될 수 있다.
+    # 필드는 _PARAM_DEFAULTS에서도 생략될 수 있다. 다만 이 예외는 명시적으로
+    # 나열된 필드에만 적용된다 -- 그렇지 않으면 grid_origin_x_m/y_m처럼
+    # 기본값은 있지만 여전히 ROS 파라미터로 선언되어야 하는 필드가 조용히
+    # _PARAM_DEFAULTS에서 빠져도(=런타임에 launch yaml 오버라이드를 받지
+    # 못해도) 이 테스트가 잡아내지 못한다(최종 브랜치 리뷰 지적).
+    _INTENTIONALLY_UNDECLARED = {"robot_repulsion_activation_distance_m"}  # 실험 전용 토글, 프로덕션 ROS 파라미터 아님
+    assert field_names - declared_names <= _INTENTIONALLY_UNDECLARED, (
+        f"HerdingConfig fields missing from _PARAM_DEFAULTS without being in "
+        f"_INTENTIONALLY_UNDECLARED: {field_names - declared_names - _INTENTIONALLY_UNDECLARED}"
+    )
     assert declared_names <= field_names, (
         f"_PARAM_DEFAULTS contains fields not in HerdingConfig: "
         f"{declared_names - field_names}"

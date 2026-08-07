@@ -49,24 +49,33 @@ from test.simulator import run_trial_real_map  # noqa: E402
 
 @contextmanager
 def _frozen_blocker():
-    """HerdingCore._stabilize_blocking_point를 패치해 Blocker를 스폰 위치에 고정한다.
+    """HerdingCore._stabilize_blocking_point와 _deadlock_release_point를 함께
+    패치해 Blocker를 스폰 위치에 완전히 고정한다.
 
-    패치된 함수는 (candidate, now_sec)를 무시하고 항상
-    real_map_arena.ROBOT_B_SPAWN을 돌려주므로, resolve_separation()을
-    거쳐도 로봇 2의 목표는 사실상 자기 스폰 위치 그대로다 -- "로봇 B가
-    아예 관여하지 않았다면"을 근사한다(트러블슈팅 노트 11-3/11-9의 몽키패치
-    방식 재구현).
+    _stabilize_blocking_point()만 패치하면 불충분하다: herding_core.py의
+    step()은 그 반환값을 _deadlock_release_point()로 다시 덮어쓸 수 있다
+    (교착 감지 시, 11-8에서 도입, b9c374a). 이걸 놓치면 "frozen" 조건에서도
+    표적이 벽 근처에서 오래 정지할 때마다 Blocker가 스폰에서 최대 3m까지
+    실제로 이동해버려, "로봇 B가 아예 관여하지 않았다"는 근사가 깨진다
+    (최종 브랜치 리뷰에서 seed=999000/999003으로 실측 확인: 최대 변위 3.02m,
+    스텝의 69~70%를 스폰에서 0.5m 이상 떨어진 채 보냄).
     """
-    original = HerdingCore._stabilize_blocking_point
+    original_stabilize = HerdingCore._stabilize_blocking_point
+    original_release = HerdingCore._deadlock_release_point
 
-    def frozen(self, candidate, now_sec):
+    def frozen_stabilize(self, candidate, now_sec):
         return real_map_arena.ROBOT_B_SPAWN.copy()
 
-    HerdingCore._stabilize_blocking_point = frozen
+    def frozen_release(self, target_pos, robot2_pos):
+        return real_map_arena.ROBOT_B_SPAWN.copy()
+
+    HerdingCore._stabilize_blocking_point = frozen_stabilize
+    HerdingCore._deadlock_release_point = frozen_release
     try:
         yield
     finally:
-        HerdingCore._stabilize_blocking_point = original
+        HerdingCore._stabilize_blocking_point = original_stabilize
+        HerdingCore._deadlock_release_point = original_release
 
 
 def _make_evasion_model(herding_config, seed, args):
@@ -84,25 +93,32 @@ def _make_evasion_model(herding_config, seed, args):
 
 
 def run_paired_trap(herding_config_base, trap_name, trap_pos, trials, seed_base, args):
-    """한 트랩에서 능동/frozen Blocker를 동일 시드로 페어링해 rescue/regression을 센다."""
-    config = make_real_map_config(herding_config_base, trap_pos)
+    """한 트랩에서 능동/frozen Blocker를 동일 시드로 페어링해 rescue/regression을 센다.
+
+    --robot-repulsion-activation-distance는 active 조건에만 적용된다 -- frozen
+    조건은 항상 base_config(오버라이드 없음)를 써서, 스윕 값이 달라져도 대조군
+    자체는 흔들리지 않게 고정한다(최종 브랜치 리뷰에서 지적: 두 조건 모두에
+    오버라이드가 걸리면 대조군도 함께 바뀌어 스윕 결과를 비교할 수 없었다).
+    """
+    base_config = make_real_map_config(herding_config_base, trap_pos)
+    active_config = base_config
     if args.robot_repulsion_activation_distance is not None:
-        config = dataclasses.replace(
-            config, robot_repulsion_activation_distance_m=args.robot_repulsion_activation_distance,
+        active_config = dataclasses.replace(
+            base_config, robot_repulsion_activation_distance_m=args.robot_repulsion_activation_distance,
         )
 
     active_results = []
     for i in range(trials):
         seed = seed_base + i
-        model = _make_evasion_model(config, seed, args)
-        active_results.append(run_trial_real_map(config, model, seed, SIM_CONFIG))
+        model = _make_evasion_model(active_config, seed, args)
+        active_results.append(run_trial_real_map(active_config, model, seed, SIM_CONFIG))
 
     frozen_results = []
     with _frozen_blocker():
         for i in range(trials):
             seed = seed_base + i
-            model = _make_evasion_model(config, seed, args)
-            frozen_results.append(run_trial_real_map(config, model, seed, SIM_CONFIG))
+            model = _make_evasion_model(base_config, seed, args)
+            frozen_results.append(run_trial_real_map(base_config, model, seed, SIM_CONFIG))
 
     rescue = sum(1 for a, f in zip(active_results, frozen_results) if a.success and not f.success)
     regression = sum(1 for a, f in zip(active_results, frozen_results) if f.success and not a.success)
