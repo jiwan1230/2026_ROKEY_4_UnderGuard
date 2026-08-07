@@ -1,0 +1,7 @@
+float64 x
+float64 y
+---
+bool exists
+bool trap_installed
+float64 hole_x       # 저장된 구멍 좌표 — 점검 비교 기준 (exists=False면 무의미)
+float64 hole_y
