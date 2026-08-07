@@ -66,7 +66,10 @@ class Settings:
     low_battery_threshold: float = 15.0
     # app.py가 Path.cwd() 기준으로 상대경로를 푸므로(run_mock.sh/run_ros.sh가
     # cd하는 Sysmon/backend/ 기준), Desktop/minipjt까지 3단계 위로 올라간다.
-    map_yaml_path: Path = Path("../../../minipjt/mini_turtle4/resource/my_map.yaml")
+    # room_map.yaml은 main의 실제 로봇 실행 설정(robot_bringup.launch.py)과
+    # 쥐몰이 알고리즘이 참조하는 현재 맵이다(2026-08-06 실측). my_map.yaml은
+    # 이전 mini 프로젝트 때 쓰던 좌표계가 다른 옛 맵이라 대체했다.
+    map_yaml_path: Path = Path("../../../minipjt/mini_turtle4/resource/room_map.yaml")
     ros_interface: RosInterfaceConfig = field(default_factory=RosInterfaceConfig)
 
 
@@ -102,7 +105,7 @@ def load_settings() -> Settings:
         map_yaml_path=Path(
             os.getenv(
                 "MAP_YAML_PATH",
-                "../../../minipjt/mini_turtle4/resource/my_map.yaml",
+                "../../../minipjt/mini_turtle4/resource/room_map.yaml",
             )
         ),
         ros_interface=RosInterfaceConfig(
