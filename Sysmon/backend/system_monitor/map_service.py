@@ -52,12 +52,28 @@ class MapService:
         assert self._png is not None
         return self._png
 
+    def bounds(self) -> tuple[float, float, float, float]:
+        """맵의 origin(x, y)과 실제 폭·높이(m)를 반환한다.
+
+        입력: 없음. 출력: ``(origin_x, origin_y, width_m, height_m)``다.
+        로드 실패 시 ``ValueError``/``OSError``를 그대로 전파한다.
+        사용: MockManager가 맵 어디에 있든 그 범위 안에서만 로봇을
+        움직이도록 배선할 때 호출한다(맵 파일이 바뀌어도 코드 수정 불필요).
+        """
+
+        self._load()
+        assert self._metadata is not None
+        origin_x, origin_y, _ = self._metadata["origin"]
+        bounds = self._metadata["bounds"]
+        return origin_x, origin_y, bounds["local_width_m"], bounds["local_height_m"]
+
     def world_to_pixel(self, x: float, y: float) -> tuple[float, float]:
-        """map 좌표(m)를 원본 PGM 픽셀 좌표로 변환한다.
+        """map 좌표(m)를 화면에 표시되는(90도 시계방향 회전된) PNG 픽셀 좌표로 변환한다.
 
         입력: map frame 기준 ``x``, ``y`` 좌표다.
-        출력: 이미지 좌측 상단 기준 픽셀 ``x``, ``y``다.
-        사용: 프런트엔드 Canvas도 동일한 계산식으로 로봇과 마커를 배치한다.
+        출력: 회전된 이미지 좌측 상단 기준 픽셀 ``x``, ``y``다.
+        사용: 프런트엔드 Canvas도 동일한 계산식으로 로봇과 마커를 배치한다
+        (dashboard.js의 ``createMapProjection`` 참고, 이 함수와 항상 같이 바꾼다).
         """
 
         self._load()
@@ -70,10 +86,14 @@ class MapService:
         #    (표준 2D 회전 변환의 역행렬).
         local_x = math.cos(origin_yaw) * dx + math.sin(origin_yaw) * dy
         local_y = -math.sin(origin_yaw) * dx + math.cos(origin_yaw) * dy
-        # 3) m 단위를 픽셀로 바꾸고, y축은 이미지가 위→아래로 증가하므로
-        #    ROS 기준(아래→위 증가)과 반대로 뒤집는다.
-        pixel_x = local_x / self._metadata["resolution"]
-        pixel_y = self._metadata["height"] - local_y / self._metadata["resolution"]
+        # 3) m 단위를 픽셀로 바꾼다. 원래는 "pixel_x=local_x, pixel_y=height-local_y"
+        #    (y축만 뒤집음)였는데, _load()에서 PNG 자체를 90도 시계방향으로
+        #    돌려서 내려주므로 좌표 변환도 그 회전을 반영해야 한다. 90도 CW
+        #    회전 + 기존 y-뒤집기를 합성하면 "height - (height - local_y)" =
+        #    "local_y"로 상쇄되어, 결국 local_x/local_y가 그대로 자리를
+        #    바꾸는 것과 같아진다(추가 높이 보정 불필요).
+        pixel_x = local_y / self._metadata["resolution"]
+        pixel_y = local_x / self._metadata["resolution"]
         return pixel_x, pixel_y
 
     def _load(self) -> None:
@@ -105,6 +125,11 @@ class MapService:
             image = source.convert("L")
         if bool(config.get("negate", 0)):
             image = ImageOps.invert(image)
+        # 원본 ROS 맵은 보통 세로로 길게 나온다. 화면에는 가로(landscape)로
+        # 보는 게 더 보기 편해서 90도 시계방향으로 돌려서 내려준다 — 이
+        # 회전은 world_to_pixel()의 좌표 변환, dashboard.js의
+        # createMapProjection과 항상 함께 맞춰야 한다.
+        image = image.transpose(Image.Transpose.ROTATE_270)
         width, height = image.size
         resolution = float(config["resolution"])
         origin = [float(value) for value in config["origin"]]

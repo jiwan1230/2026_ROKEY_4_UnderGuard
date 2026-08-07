@@ -28,11 +28,26 @@ class MockManager:
         *,
         low_battery_threshold: float = 15.0,
         map_frame: str = "map",
+        map_origin: tuple[float, float] = (0.0, 0.0),
+        map_size: tuple[float, float] = (6.0, 5.0),
     ) -> None:
         self.state = state
         self.robot_ids = robot_ids
         self.low_battery_threshold = low_battery_threshold
         self.map_frame = map_frame.strip("/") or "map"
+        # 로봇 이동·탐지 좌표를 실제 맵의 origin/크기에 맞춰 계산한다 —
+        # 좌표를 (0,0) 언저리로 하드코딩하면 맵 파일이 바뀌어(예: origin이
+        # 먼 음수인 room_map.yaml) 마커가 화면 밖으로 나가버린다.
+        origin_x, origin_y = map_origin
+        width_m, height_m = map_size
+        margin = min(width_m, height_m) * 0.12
+        self._patrol_center_x = origin_x + width_m / 2
+        self._patrol_center_y = origin_y + height_m / 2
+        self._patrol_radius = max(0.3, min(width_m, height_m) / 2 - margin)
+        self._map_min_x = origin_x + margin
+        self._map_max_x = origin_x + width_m - margin
+        self._map_min_y = origin_y + margin
+        self._map_max_y = origin_y + height_m - margin
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._lock = threading.RLock()
@@ -138,7 +153,11 @@ class MockManager:
                 nav_status="MOVING",
                 current_task="쥐 공동 탐색 중",
                 position_frame=self.map_frame,
-                position={"x": 1.2 + index * 1.7, "y": 1.0 + index, "yaw": 0.0},
+                position={
+                    "x": self._patrol_center_x + (index - 0.5) * 0.9,
+                    "y": self._patrol_center_y + (index - 0.5) * 0.6,
+                    "yaw": 0.0,
+                },
             )
         self.state.add_event(
             "두 로봇이 쥐 공동 탐색을 시작했습니다. "
@@ -186,16 +205,20 @@ class MockManager:
             camera_status="NORMAL",
             slam_status="NORMAL",
             position={
-                "x": 2.5 + math.cos(phase) * (1.4 + index * 0.2),
-                "y": 2.0 + math.sin(phase) * (1.0 + index * 0.25),
+                "x": self._patrol_center_x +
+                     math.cos(phase) * (self._patrol_radius * 0.75 + index * 0.15),
+                "y": self._patrol_center_y +
+                     math.sin(phase) * (self._patrol_radius * 0.55 + index * 0.15),
                 "yaw": (phase + math.pi / 2) % (2 * math.pi),
             },
             target={
                 "object_type": target_type,
                 "confidence": round(0.82 + random.random() * 0.14, 3) if target_type else None,
                 "distance": round(0.9 + random.random() * 0.8, 2) if target_type else None,
-                "map_x": round(3.5 + math.cos(phase + 0.4), 2) if target_type else None,
-                "map_y": round(2.4 + math.sin(phase + 0.4), 2) if target_type else None,
+                "map_x": round(self._patrol_center_x + 0.3 + math.cos(phase + 0.4), 2)
+                         if target_type else None,
+                "map_y": round(self._patrol_center_y + 0.1 + math.sin(phase + 0.4), 2)
+                         if target_type else None,
                 "source": "OAK-D" if target_type else None,
             },
         )
@@ -281,8 +304,14 @@ class MockManager:
                 DROPPINGS: (0.30, -0.35),
             }
             offset_x, offset_y = offsets.get(object_type, (0.25, 0.25))
-            map_x = round(max(0.2, min(5.8, robot["position"]["x"] + offset_x)), 2)
-            map_y = round(max(0.2, min(4.8, robot["position"]["y"] + offset_y)), 2)
+            map_x = round(
+                max(self._map_min_x, min(self._map_max_x,
+                                          robot["position"]["x"] + offset_x)), 2
+            )
+            map_y = round(
+                max(self._map_min_y, min(self._map_max_y,
+                                          robot["position"]["y"] + offset_y)), 2
+            )
             distance = round(math.hypot(offset_x, offset_y), 2)
         detection = {
             "robot_id": robot_id,

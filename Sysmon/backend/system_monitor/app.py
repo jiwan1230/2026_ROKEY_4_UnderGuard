@@ -54,11 +54,20 @@ def create_app(settings: Settings | None = None) -> Flask:
         [(robot.robot_id, robot.role) for robot in settings.robots],
         offline_timeout_sec=settings.offline_timeout_sec,
     )
+    # Mock이 실제 맵 범위 밖으로 로봇을 움직이지 않도록, 맵을 못 읽는
+    # 경우에만 예전 my_map.yaml 언저리 크기로 대체한다(맵 자체가 없어도
+    # Mock 시연은 항상 동작해야 하므로).
+    try:
+        map_origin_x, map_origin_y, map_width_m, map_height_m = map_service.bounds()
+    except (OSError, ValueError):
+        map_origin_x, map_origin_y, map_width_m, map_height_m = 0.0, 0.0, 6.0, 5.0
     mock = MockManager(
         state,
         [robot.robot_id for robot in settings.robots],
         low_battery_threshold=settings.low_battery_threshold,
         map_frame=settings.ros_interface.map_frame,
+        map_origin=(map_origin_x, map_origin_y),
+        map_size=(map_width_m, map_height_m),
     )
     # 로봇별 최신 카메라 프레임 캐시. StateManager와 분리해서 원본 바이트가
     # /api/snapshot의 JSON 직렬화 경로에 안 섞이게 한다(camera_service.py).

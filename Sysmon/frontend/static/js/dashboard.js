@@ -764,8 +764,11 @@ function createMapProjection(width, height) {
       const dy = Number(y) - originY;
       const localX = cosYaw * dx + sinYaw * dy;
       const localY = -sinYaw * dx + cosYaw * dy;
-      const pixelX = localX / mapMetadata.resolution;
-      const pixelY = mapMetadata.height - localY / mapMetadata.resolution;
+      // 백엔드가 PNG를 90도 시계방향으로 돌려서 내려주므로(map_service.py
+      // _load 참고) localY가 가로(픽셀 x), localX가 세로(픽셀 y) 방향이
+      // 된다 — 두 함수는 항상 같이 바꿔야 한다.
+      const pixelX = localY / mapMetadata.resolution;
+      const pixelY = localX / mapMetadata.resolution;
       return {x : left + pixelX * imageScale, y : top + pixelY * imageScale};
     }
   };
