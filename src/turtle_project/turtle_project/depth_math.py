@@ -83,6 +83,13 @@ def _self_check():
     assert depth_at(d, 10, 10) is None         # 전부 0 -> 무효
     assert depth_at(d, 0, 0) is None           # 경계에서 안 터짐
 
+    # 구멍: 중심은 stereo 무효(0), 테두리 벽만 유효 -> 좁은 패치는 None,
+    # 넓히면 벽 깊이가 잡힌다 (detector _box_to_map 폴백이 기대는 성질)
+    holey = np.zeros((100, 100), np.uint16)
+    holey[:, :30] = holey[:, 70:] = 1000        # 좌우 벽 1m, 가운데는 구멍
+    assert depth_at(holey, 50, 50) is None      # 중심 5px 패치 -> 전부 0
+    assert depth_at(holey, 50, 50, patch=50) == 1.0
+
     assert to_depth_px(125, 125, (250, 250), (400, 640)) == (320, 200)
     assert to_depth_px(0, 0, (250, 250), (400, 640)) == (0, 0)
 

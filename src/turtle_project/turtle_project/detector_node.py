@@ -9,6 +9,7 @@ opening 검증만 실제 동작, rat·DB 분기는 TODO(팀원).
 """
 import math
 
+import cv2
 import numpy as np
 import rclpy
 import tf2_geometry_msgs  # noqa: F401  PointStamped TF 변환 등록
@@ -109,6 +110,8 @@ class DetectorNode(Node):
         self.reinstall_max = self.declare_parameter('reinstall_max', 3).value
         # 추적 goal 재발행 주기(초) — 매 프레임 쏘면 Nav2 goal이 폭주한다.
         self.rat_goal_period = self.declare_parameter('rat_goal_period', 1.0).value
+        # 디버그 창 (show:=true). headless/SSH에선 imshow가 터지므로 기본 off.
+        self.show = self.declare_parameter('show', False).value
 
         # fleet 명령의 대상 필터용 자기 ID — __ns:=/robot4 로 실행하면 'robot4'.
         # 네임스페이스 없이 띄우면 빈 문자열이라 모든 명령을 무시하게 된다
@@ -184,6 +187,8 @@ class DetectorNode(Node):
             return
         if self.state == 'APPROACHING':     # 주행은 robot_agent — 도착만 감시
             self._check_arrival()
+            if self.show:                   # 추론은 건너뛰되 창은 살려둔다
+                self._show(self.bridge.compressed_imgmsg_to_cv2(rgb_msg, 'bgr8'))
             return
         if self.state in ('QUERYING', 'AWAIT_TRAP'):
             return                          # db 응답/trap_check 응답 대기 — 지각 불필요
@@ -192,6 +197,8 @@ class DetectorNode(Node):
         depth = decode_depth(depth_msg.data, depth_msg.format)
         depth_frame = depth_msg.header.frame_id
         result = self.model(img, conf=self.conf, verbose=False)[0]
+        if self.show:
+            self._show(result.plot())       # ultralytics가 박스·라벨까지 그려준다
 
         # rat 감지 → 추적 goal/포획 판정 (SEARCHING·TRACK 무관하게 매 프레임 확인).
         self._detect_rat(result, img.shape, depth, depth_frame)
@@ -236,6 +243,13 @@ class DetectorNode(Node):
             self.event_pub.publish(String(data=fleet_msg.event(
                 'rat_captured', *xy)))
             self._stop_tracking()
+
+    def _show(self, img):
+        """디버그 창. 상태를 같이 찍어 지금 어느 단계인지 화면에서 보이게 한다."""
+        cv2.putText(img, f'{self.robot_id} {self.state}', (8, 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+        cv2.imshow('detector', img)
+        cv2.waitKey(1)
 
     def _pick(self, result, cls_name, img_shape):
         """cls_name 박스 중 화면 중앙에 가장 가까운 것 -> xyxy or None."""
@@ -291,10 +305,17 @@ class DetectorNode(Node):
 
     def _box_to_map(self, box, img_shape, depth, depth_frame):
         """bbox 중심 → depth → deproject → TF map좌표 (x, y). 무효면 None."""
-        u, v = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
-        du, dv = to_depth_px(u, v, img_shape, depth.shape)
-        z = depth_at(depth, du, dv)
+        du1, dv1 = to_depth_px(box[0], box[1], img_shape, depth.shape)
+        du2, dv2 = to_depth_px(box[2], box[3], img_shape, depth.shape)
+        du, dv = (du1 + du2) // 2, (dv1 + dv2) // 2
+        # 구멍 안쪽은 어둡고 텍스처가 없어 stereo가 매칭을 못 한다 — 중심 depth가
+        # 0(무효)으로 나오는 게 정상이다. 중심이 비면 bbox 전체로 넓혀 테두리 벽
+        # depth라도 잡는다 (접근점 계산용이라 벽 거리로 충분).
+        z = depth_at(depth, du, dv) or depth_at(
+            depth, du, dv, patch=max(du2 - du1, dv2 - dv1) // 2)
         if not z:
+            self.get_logger().warn('감지했지만 depth 전부 무효 — 좌표 못 냄',
+                                   throttle_duration_sec=2.0)
             return None
         pt = PointStamped()
         pt.header.frame_id = depth_frame

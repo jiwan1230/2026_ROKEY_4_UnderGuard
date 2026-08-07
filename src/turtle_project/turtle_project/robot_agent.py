@@ -70,6 +70,7 @@ class RobotAgent(Node):
         self.nav = TurtleBot4Navigator(namespace=f'/{self.ns}')
         self.poses = None       # 로드된 순찰 waypoint (첫 PATROL 때 lazy 로드)
         self.patrolling = False  # followWaypoints 진행 중
+        self.driving = False    # target_pose로 받은 goal(접근/추적) 주행 중
         self.hold = False       # opening 처리 중 순찰 정지 (detector가 신호)
         self.hold_at = 0.0      # 마지막 hold=True 수신 시각 (lease 판정용)
         # 도킹/언도킹 논블로킹 진행 단계. None=진행 중 아님.
@@ -101,14 +102,18 @@ class RobotAgent(Node):
         if robot != self.ns:
             return                          # 내 명령 아님
         self.get_logger().info(f'명령 수신: {cmd}')
-        was_docked = self.state == 'DOCKED'  # 상태 갱신 전에 도킹 여부 기억
+        # 도크에 붙어 있으면 Create3가 cmd_vel을 무시한다 — 주행 명령은 뭐든
+        # 언도킹이 먼저다. state('DOCKED')는 이 agent가 직접 도킹시켰을 때만
+        # 찍히므로 도크 센서를 본다 (도크 위에서 agent를 새로 띄운 경우도 잡힘).
+        was_docked = bool(self.nav.is_docked)
         # DOCK/PATROL은 여기서 상태를 안 바꾼다 — DOCKED는 도킹 완료(_dock_tick),
         # PATROLLING은 순찰 goal 발행(_send_lap)에서만. 성공 전에 방송하면
         # central이 조기에 교대/커버리지 판단을 잘못 내린다.
         self.state = {'UNDOCK': 'UNDOCKING',
                       'TRACK': 'TRACKING', 'HERD': 'HERDING',
                       'STOP': 'IDLE'}.get(cmd, self.state)
-        if cmd == 'UNDOCK':
+        if cmd == 'UNDOCK' or (cmd == 'PATROL' and was_docked):
+            self.state = 'UNDOCKING'
             self.after_undock = 'PATROL'
             self.start_undocking()          # 도크에서 빠져나온 뒤 순찰 시작
         elif cmd == 'PATROL':
@@ -156,6 +161,7 @@ class RobotAgent(Node):
         for p in self.poses:
             p.header.stamp = now
         self.nav.followWaypoints(self.poses)
+        self.driving = False        # 순찰이 goal 주인 — 접근 goal 감시 종료
         self.patrolling = True
         self.state = 'PATROLLING'       # goal 발행 성공 — 여기서만 PATROLLING
 
@@ -203,6 +209,18 @@ class RobotAgent(Node):
                 self.start_patrol()
         if self.dock_phase is not None:
             self._dock_tick()
+            return
+        if self.driving:            # 접근/추적 goal 진행 중 — 성패만 찍고 빠진다.
+            if not self.nav.isTaskComplete():
+                return
+            self.driving = False
+            result = self.nav.getResult()
+            if result == TaskResult.SUCCEEDED:
+                self.get_logger().info('목표 도착')
+            else:
+                # 조용히 묻히면 detector가 60초 timeout 날 때까지 원인을 못 본다.
+                self.get_logger().warn(f'목표 주행 실패 ({result}) — Nav2가 goal을 '
+                                       '거부/포기함 (경로 없음·costmap 막힘 등)')
             return
         if self.hold or not self.patrolling or not self.nav.isTaskComplete():
             return
@@ -284,10 +302,18 @@ class RobotAgent(Node):
         바꾼다 — 추적처럼 목표가 움직여도 계속 따라간다. goToPose는 도킹에서
         쓰는 것과 같은 논블로킹 호출이라 콜백에서 그대로 부른다.
         도킹/언도킹 중엔 도크 이동과 충돌하므로 무시한다.
+
+        순찰 goal을 반드시 '먼저' 끊고 내 goal을 보낸다. cancelTask는 마지막에
+        보낸 goal 하나를 끊으므로, 순서가 뒤집혀 hold_cb가 나중에 실행되면
+        방금 보낸 이 goal이 취소된다 (rclpy는 구독 생성순으로 콜백을 돌리는데
+        target_pose가 patrol_hold보다 먼저 만들어져 실제로 뒤집힌다).
+        여기서 먼저 끊어두면 patrolling=False라 뒤늦은 stop_patrol이 no-op이 된다.
         """
         if self.dock_phase is not None:
             return
+        self.stop_patrol()
         self.nav.goToPose(msg)
+        self.driving = True         # 결과 감시 대상 (patrol_tick이 성패를 찍는다)
         self.get_logger().info(
             f'목표 주행: ({msg.pose.position.x:.2f}, {msg.pose.position.y:.2f})',
             throttle_duration_sec=1.0)
@@ -324,13 +350,17 @@ class _FakeNav:
         self.is_docked = docked         # dock 센서값 (DockStatus 구독 대역)
         self.dock_sent = self.undock_sent = False
         self.goto_pose = None           # goToPose로 받은 마지막 목표 (target_cb 검증)
+        self.calls = []                 # 액션 호출 순서 — cancel이 goto를 죽였는지 검증
     def isTaskComplete(self): return self._task_done
     def getResult(self): return self._result
     def dock_send_goal(self): self.dock_sent = True
     def isDockComplete(self): return self._dock_done
     def undock_send_goal(self): self.undock_sent = True
     def isUndockComplete(self): return self._undock_done
-    def goToPose(self, pose): self.goto_pose = pose
+    def cancelTask(self): self.calls.append('cancel')
+    def goToPose(self, pose):
+        self.goto_pose = pose
+        self.calls.append('goto')
 
 
 class _FakeAgent:
@@ -339,12 +369,14 @@ class _FakeAgent:
     target_cb = RobotAgent.target_cb
     command_cb = RobotAgent.command_cb
     patrol_tick = RobotAgent.patrol_tick
+    hold_cb = RobotAgent.hold_cb
+    stop_patrol = RobotAgent.stop_patrol      # 진짜 취소 로직으로 순서 검증
     def __init__(self, nav, phase, state='RETURNING'):
         self.nav, self.dock_phase, self.state = nav, phase, state
         self.ns = 'robot4'
         self.after_undock = None
         self.hold, self.hold_at, self.hold_lease = False, 0.0, 3.0
-        self.patrolling = False
+        self.patrolling = self.driving = False
         self.patrol_started = self.docking_started = self.undocking_started = False
     def _now_s(self): return 10.0       # 고정 현재시각 (lease 판정 검증용)
     def get_logger(self):
@@ -352,7 +384,6 @@ class _FakeAgent:
         return types.SimpleNamespace(info=lambda *a, **k: None,
                                      warn=lambda *a, **k: None)
     def start_patrol(self): self.patrol_started = True
-    def stop_patrol(self): pass
     def start_docking(self): self.docking_started = True
     def start_undocking(self):
         self.undocking_started = True
@@ -411,10 +442,21 @@ def _self_check():
     a = _FakeAgent(_FakeNav(True, None, False, False), None, state='DOCKED')
     a.command_cb(types.SimpleNamespace(data='robot4:HERD'))
     assert a.undocking_started and a.after_undock is None and a.state == 'HERDING'
-    # 필드 위(PATROLLING) 로봇에 TRACK → 언도킹 없이 역할 전환만
-    a = _FakeAgent(_FakeNav(True, None, False, False), None, state='PATROLLING')
+    # 필드 위(도크 센서 off) 로봇에 TRACK → 언도킹 없이 역할 전환만
+    a = _FakeAgent(_FakeNav(True, None, False, False, docked=False), None,
+                   state='PATROLLING')
     a.command_cb(types.SimpleNamespace(data='robot4:TRACK'))
     assert not a.undocking_started and a.state == 'TRACKING'
+    # 도크 위인데 PATROL → 도크에선 못 움직이므로 언도킹 먼저, 끝나면 순찰
+    a = _FakeAgent(_FakeNav(True, None, False, False), None, state='IDLE')
+    a.command_cb(types.SimpleNamespace(data='robot4:PATROL'))
+    assert a.undocking_started and a.after_undock == 'PATROL' \
+        and a.state == 'UNDOCKING' and not a.patrol_started
+    # 도크 밖에서 PATROL → 바로 순찰 (언도킹 없음)
+    a = _FakeAgent(_FakeNav(True, None, False, False, docked=False), None,
+                   state='IDLE')
+    a.command_cb(types.SimpleNamespace(data='robot4:PATROL'))
+    assert not a.undocking_started and a.patrol_started
     # 언도킹 중 DOCK 명령 → 도킹은 언도킹 완료 후로 예약
     a = _FakeAgent(_FakeNav(False, None, False, False), 'UNDOCK')
     a.command_cb(types.SimpleNamespace(data='robot4:DOCK'))
@@ -445,6 +487,30 @@ def _self_check():
     a = _FakeAgent(_FakeNav(True, None, False, False), 'NAV')
     a.target_cb(msg)
     assert a.nav.goto_pose is None
+
+    # 접근 goal이 순찰 취소에 안 죽는지 — cancelTask는 마지막 goal 하나만 끊으므로
+    # 'goto' 뒤에 'cancel'이 오면 접근이 취소된 것이다. 두 콜백 순서 모두 검증.
+    for first_target in (True, False):      # rclpy 구독 생성순상 target이 먼저다
+        a = _FakeAgent(_FakeNav(False, None, False, False), None,
+                       state='PATROLLING')
+        a.patrolling = True                 # 순찰 중 opening 발견
+        hold = types.SimpleNamespace(data=True)
+        (a.target_cb(msg), a.hold_cb(hold)) if first_target \
+            else (a.hold_cb(hold), a.target_cb(msg))
+        assert a.nav.calls == ['cancel', 'goto'], a.nav.calls
+        assert not a.patrolling and a.hold and a.driving
+
+    # 접근 goal 실패는 조용히 묻히면 안 된다 (detector 60초 timeout까지 깜깜)
+    a = _FakeAgent(_FakeNav(True, TaskResult.FAILED, False, False), None,
+                   state='PATROLLING')
+    a.driving, a.hold, a.hold_at = True, True, 9.5   # lease 이내 heartbeat 수신 중
+    a.patrol_tick()
+    assert not a.driving and not a.patrol_started    # 감시 종료, 순찰 재시작 안 함
+    # 아직 주행 중이면 결과를 안 본다
+    a = _FakeAgent(_FakeNav(False, None, False, False), None, state='PATROLLING')
+    a.driving, a.hold, a.hold_at = True, True, 9.5
+    a.patrol_tick()
+    assert a.driving
     print('robot_agent self-check ok')
 
 
