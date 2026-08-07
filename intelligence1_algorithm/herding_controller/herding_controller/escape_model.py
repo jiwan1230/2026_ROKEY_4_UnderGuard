@@ -23,6 +23,13 @@ class EscapeModelConfig:
     robot_repulsion_weight: float
     wall_detect_radius_cells: int
     escape_route_top_k: int
+    # Blocker(robot_positions의 두 번째 원소)가 이 거리(m)보다 멀면
+    # _robot_repulsion() 계산에서 그 로봇의 기여를 아예 제외한다. 기본값
+    # inf는 게이팅 없음(기존 동작과 완전히 동일) -- 트러블슈팅 노트
+    # 11-9/11-10/12 참고: Blocker의 존재가 몰이 초반부터 표적 경로에
+    # 간접 영향을 줘, 한참 뒤 로봇 A 혼자 막다른 길에 갇히는 나비효과를
+    # 만든다는 가설을 검증하기 위한 필드.
+    robot_repulsion_activation_distance_m: float = float("inf")
 
 
 @dataclass
@@ -134,12 +141,24 @@ class EscapeModel:
         반비례시키는 것은 "가까운 로봇일수록 훨씬 급하게 도망친다"는
         직관 — 위협이 2배 가까워지면 그 방향에 대한 반발은 2배가 아니라
         더 크게(반비례이므로) 증폭된다.
+
+        두 번째 로봇(인덱스 1, 호출 규약상 항상 Blocker --
+        `herding_core.py`가 `[robot1_pos, robot2_pos]` 순서로 넘긴다)이
+        `robot_repulsion_activation_distance_m`보다 멀면 그 로봇의 기여를
+        건너뛴다. 첫 번째 로봇(Driver)은 이 게이팅의 영향을 받지 않는다 --
+        Driver는 표적을 실제로 추격하는 로봇이라 즉각적인 반발이 항상
+        타당하지만, Blocker는 몰이 초반 표적과 멀리 떨어진 대기 지점에서
+        시작하는데도 그 거리와 무관하게 항상 반발항에 반영돼 표적의 초반
+        도주 경로를 미묘하게 바꿔놓는다는 가설(트러블슈팅 노트 11-9)을
+        검증하기 위한 게이팅이다.
         """
         contribution = np.zeros(8)
-        for robot_pos in robot_positions:
+        for i, robot_pos in enumerate(robot_positions):
             away = target_pos - robot_pos
             dist = np.linalg.norm(away)
             if dist < 1e-6:
+                continue
+            if i == 1 and dist > self.config.robot_repulsion_activation_distance_m:
                 continue
             away = away / dist
             weight = self.config.robot_repulsion_weight / dist

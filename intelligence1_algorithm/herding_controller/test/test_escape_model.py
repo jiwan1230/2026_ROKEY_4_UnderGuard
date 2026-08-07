@@ -5,12 +5,13 @@ from herding_controller.escape_model import EscapeModel, EscapeModelConfig
 from herding_controller.grid_map import GridConfig, GridMap
 
 
-def make_model(grid=None):
+def make_model(grid=None, robot_repulsion_activation_distance_m=float("inf")):
     grid = grid or GridMap(GridConfig(resolution_m=0.25, width_cells=40, height_cells=40))
     config = EscapeModelConfig(
         wall_follow_p=0.70, wall_hug_p=0.20, center_p=0.10,
         momentum_weight=0.4, robot_repulsion_weight=1.5,
         wall_detect_radius_cells=1, escape_route_top_k=3,
+        robot_repulsion_activation_distance_m=robot_repulsion_activation_distance_m,
     )
     return EscapeModel(config, grid), grid
 
@@ -66,3 +67,40 @@ def test_top_k_routes_excludes_obstacle_cells_when_some_directions_invalid():
     for route in estimate.top_k_routes:
         r, c = grid.world_to_cell(*route)
         assert not grid.is_obstacle(r, c)
+
+
+def test_robot_repulsion_gates_second_robot_beyond_activation_distance():
+    """Blocker(robot_positions의 두 번째 원소)가 활성화 거리보다 멀면 기여가 0이어야 한다."""
+    model, _ = make_model(robot_repulsion_activation_distance_m=1.0)
+    target_pos = np.array([5.0, 5.0])
+    driver_pos = np.array([4.5, 5.0])   # 0.5m -- 인덱스 0(Driver)은 게이팅 안 받음
+    blocker_far = np.array([5.0, 8.0])  # 3.0m > 1.0m 활성화 거리
+
+    with_far_blocker = model._robot_repulsion(target_pos, [driver_pos, blocker_far])
+    driver_only = model._robot_repulsion(target_pos, [driver_pos])
+    assert np.allclose(with_far_blocker, driver_only)
+
+
+def test_robot_repulsion_includes_second_robot_within_activation_distance():
+    """Blocker가 활성화 거리 안이면 게이팅 없을 때와 동일하게 기여해야 한다."""
+    gated_model, _ = make_model(robot_repulsion_activation_distance_m=1.0)
+    ungated_model, _ = make_model(robot_repulsion_activation_distance_m=float("inf"))
+    target_pos = np.array([5.0, 5.0])
+    driver_pos = np.array([4.5, 5.0])
+    blocker_near = np.array([5.0, 5.5])  # 0.5m < 1.0m 활성화 거리
+
+    gated = gated_model._robot_repulsion(target_pos, [driver_pos, blocker_near])
+    ungated = ungated_model._robot_repulsion(target_pos, [driver_pos, blocker_near])
+    assert np.allclose(gated, ungated)
+
+
+def test_robot_repulsion_default_activation_distance_does_not_gate():
+    """기본값(inf)에서는 아주 먼 두 번째 로봇도 여전히(약하게) 기여해야 한다 -- 하위호환 확인."""
+    model, _ = make_model()  # 기본값 = inf
+    target_pos = np.array([5.0, 5.0])
+    driver_pos = np.array([4.5, 5.0])
+    blocker_far = np.array([5.0, 20.0])  # 15m
+
+    with_blocker = model._robot_repulsion(target_pos, [driver_pos, blocker_far])
+    driver_only = model._robot_repulsion(target_pos, [driver_pos])
+    assert not np.allclose(with_blocker, driver_only)
