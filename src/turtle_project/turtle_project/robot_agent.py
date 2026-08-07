@@ -58,6 +58,10 @@ class RobotAgent(Node):
         self.dock_y = self.declare_parameter('dock_y', 0.0).value
         self.dock_yaw = self.declare_parameter('dock_yaw_deg', 0.0).value
 
+        # detector 사망 대비 — hold heartbeat(1초 주기 True)가 이 시간 넘게
+        # 끊기면 hold를 자동 해제하고 순찰을 재개한다.
+        self.hold_lease = self.declare_parameter('hold_lease_sec', 3.0).value
+
         self.state = 'IDLE'
         self.battery = 100
 
@@ -67,9 +71,14 @@ class RobotAgent(Node):
         self.poses = None       # 로드된 순찰 waypoint (첫 PATROL 때 lazy 로드)
         self.patrolling = False  # followWaypoints 진행 중
         self.hold = False       # opening 처리 중 순찰 정지 (detector가 신호)
+        self.hold_at = 0.0      # 마지막 hold=True 수신 시각 (lease 판정용)
         # 도킹/언도킹 논블로킹 진행 단계. None=진행 중 아님.
         # 'NAV'=도크앞 이동 중, 'DOCK'=dock 액션 중, 'UNDOCK'=undock 액션 중.
         self.dock_phase = None
+        # 언도킹 완료 후 할 일: 'PATROL'(순찰) | 'DOCK'(바로 복귀) | None(추적/
+        # 몰이 — target_pose 대기). 도킹된 로봇에 HERD/TRACK이 와도 먼저
+        # 빠져나온 뒤 goal을 받게 한다 (도크에 붙은 채 HERDING 방지).
+        self.after_undock = None
 
         self.status_pub = self.create_publisher(String, '/fleet/status', 10)
         self.create_subscription(String, '/fleet/command', self.command_cb, 10)
@@ -92,20 +101,35 @@ class RobotAgent(Node):
         if robot != self.ns:
             return                          # 내 명령 아님
         self.get_logger().info(f'명령 수신: {cmd}')
-        # DOCK은 여기서 상태를 안 바꾼다 — 도킹 완료(_dock_tick)에서만 DOCKED로.
-        # 도킹 진행 중 DOCKED를 방송하면 central이 조기에 교대 트리거를 건다.
-        self.state = {'UNDOCK': 'PATROLLING', 'PATROL': 'PATROLLING',
+        was_docked = self.state == 'DOCKED'  # 상태 갱신 전에 도킹 여부 기억
+        # DOCK/PATROL은 여기서 상태를 안 바꾼다 — DOCKED는 도킹 완료(_dock_tick),
+        # PATROLLING은 순찰 goal 발행(_send_lap)에서만. 성공 전에 방송하면
+        # central이 조기에 교대/커버리지 판단을 잘못 내린다.
+        self.state = {'UNDOCK': 'UNDOCKING',
                       'TRACK': 'TRACKING', 'HERD': 'HERDING',
                       'STOP': 'IDLE'}.get(cmd, self.state)
         if cmd == 'UNDOCK':
+            self.after_undock = 'PATROL'
             self.start_undocking()          # 도크에서 빠져나온 뒤 순찰 시작
         elif cmd == 'PATROL':
             self.start_patrol()             # 이미 필드 위 — 바로 순찰
         elif cmd == 'DOCK':
             self.state = 'RETURNING'        # 도킹 완료 시 _dock_tick이 DOCKED로
-            self.start_docking()
-        elif cmd in ('STOP', 'TRACK', 'HERD'):
-            # 순찰 중단 — 추적/몰이는 target_pose로 별도 주행(아래 target_cb).
+            if self.dock_phase == 'UNDOCK':
+                self.after_undock = 'DOCK'  # 언도킹 중 복귀 명령 — 끝나면 도킹
+            else:
+                self.start_docking()
+        elif cmd in ('TRACK', 'HERD'):
+            # 순찰 중단 — 추적/몰이 주행은 target_pose가 준다(아래 target_cb).
+            self.stop_patrol()
+            if self.dock_phase == 'UNDOCK':
+                self.after_undock = None    # 언도킹 중 — 완료 후 순찰 대신 goal 대기
+            elif was_docked:
+                # 도크에 붙어있으면 먼저 빠져나온다 (안 그러면 몸은 도크에
+                # 붙은 채 상태만 HERDING이 된다).
+                self.after_undock = None
+                self.start_undocking()
+        elif cmd == 'STOP':
             self.stop_patrol()
 
     def start_patrol(self):
@@ -117,9 +141,11 @@ class RobotAgent(Node):
                 frame_id, wps = load_waypoints(self.wp_file)
             except FileNotFoundError:
                 self.get_logger().error(f'waypoint 파일 없음: {self.wp_file}')
+                self.state = 'IDLE'     # 순찰 못 시작 — PATROLLING 보고 금지
                 return
             if not wps:
                 self.get_logger().error('waypoint가 비어있음')
+                self.state = 'IDLE'
                 return
             self.poses = [to_pose(self.nav, frame_id, w) for w in wps]
         self._send_lap()
@@ -131,6 +157,7 @@ class RobotAgent(Node):
             p.header.stamp = now
         self.nav.followWaypoints(self.poses)
         self.patrolling = True
+        self.state = 'PATROLLING'       # goal 발행 성공 — 여기서만 PATROLLING
 
     def stop_patrol(self):
         if self.patrolling:
@@ -151,9 +178,10 @@ class RobotAgent(Node):
             f'도킹 시작 — 도크앞 ({self.dock_x:.2f}, {self.dock_y:.2f})로 이동')
 
     def start_undocking(self):
-        """undock 액션으로 도크에서 빠져나온 뒤 순찰 시작 (논블로킹).
+        """undock 액션으로 도크에서 빠져나온다 (논블로킹).
 
-        도크에 붙은 채 followWaypoints를 보내면 안 먹으므로 먼저 빠져나온다.
+        도크에 붙은 채 followWaypoints/goToPose를 보내면 안 먹으므로 먼저
+        빠져나온다. 완료 후 할 일은 after_undock이 정한다 (_dock_tick).
         이미 도크 밖이면 undock 액션이 즉시 완료로 처리된다.
         """
         self.stop_patrol()
@@ -167,6 +195,12 @@ class RobotAgent(Node):
         dock/undock 액션이 블로킹이라 콜백에서 직접 못 부른다. 대신 여기서
         완료 여부만 폴링해 단계를 넘긴다 (순찰 isTaskComplete 폴링과 같은 방식).
         """
+        # hold lease — detector가 죽어 heartbeat가 끊기면 자동 해제 후 순찰 재개.
+        if self.hold and self._now_s() - self.hold_at > self.hold_lease:
+            self.hold = False
+            self.get_logger().warn('patrol_hold lease 만료 — detector 무응답, 순찰 재개')
+            if self.state == 'PATROLLING':
+                self.start_patrol()
         if self.dock_phase is not None:
             self._dock_tick()
             return
@@ -194,27 +228,44 @@ class RobotAgent(Node):
             if not self.nav.isDockComplete():
                 return                      # 도킹 액션 진행 중
             self.dock_phase = None
-            self.state = 'DOCKED'           # ★ 여기서만 DOCKED — central 교대 트리거
-            self.get_logger().info('도킹 완료 — DOCKED')
+            # isDockComplete는 실패한 goal도 '완료'로 주므로 실제 도킹 여부는
+            # dock 센서(is_docked, DockStatus 구독)로 확인한다.
+            if self.nav.is_docked:
+                self.state = 'DOCKED'       # ★ 여기서만 DOCKED — central 교대 트리거
+                self.get_logger().info('도킹 완료 — DOCKED')
+            else:
+                self.state = 'IDLE'         # 실패를 DOCKED로 축약 금지
+                self.get_logger().warn('도킹 실패 — IDLE (재시도는 DOCK 명령)')
         elif self.dock_phase == 'UNDOCK':
             if not self.nav.isUndockComplete():
                 return                      # 언도킹 액션 진행 중
             self.dock_phase = None
-            self.get_logger().info('언도킹 완료 — 순찰 시작')
-            self.start_patrol()             # 도크 밖으로 나왔으니 순찰 개시
+            if self.after_undock == 'PATROL':
+                self.get_logger().info('언도킹 완료 — 순찰 시작')
+                self.start_patrol()
+            elif self.after_undock == 'DOCK':
+                self.get_logger().info('언도킹 완료 — 복귀 도킹')
+                self.start_docking()
+            else:                           # TRACK/HERD — goal은 target_pose로 온다
+                self.get_logger().info('언도킹 완료 — target_pose 대기 (추적/몰이)')
 
     def hold_cb(self, msg):
         """detector가 opening 처리 시작(True)/끝(False)을 알린다.
 
-        True면 진행 중 순찰을 멈추고, False면 다시 순찰을 시작한다.
+        True는 처리 중 1초마다 heartbeat로 재발행된다 — 수신 시각(hold_at)을
+        갱신해 lease를 유지한다. 전이(False→True/True→False)에만 정지/재개.
         """
-        self.hold = msg.data
-        if self.hold:
+        self.hold_at = self._now_s()
+        was, self.hold = self.hold, msg.data
+        if self.hold and not was:
             self.stop_patrol()              # 처리 시작 — 순찰 멈춤
             self.get_logger().info('순찰 정지 (opening 처리)')
-        elif self.state == 'PATROLLING':
+        elif was and not self.hold and self.state == 'PATROLLING':
             self.get_logger().info('순찰 재개')
             self.start_patrol()             # 처리 끝 — 다시 순찰
+
+    def _now_s(self):
+        return self.get_clock().now().nanoseconds / 1e9
 
     def battery_cb(self, msg):
         if math.isnan(msg.percentage):
@@ -266,9 +317,11 @@ def main():
 
 class _FakeNav:
     """_dock_tick 폴링 전이 검증용 가짜 nav — 스크립트대로 완료 여부를 답한다."""
-    def __init__(self, task_done, task_result, dock_done, undock_done):
+    def __init__(self, task_done, task_result, dock_done, undock_done,
+                 docked=True):
         self._task_done, self._result = task_done, task_result
         self._dock_done, self._undock_done = dock_done, undock_done
+        self.is_docked = docked         # dock 센서값 (DockStatus 구독 대역)
         self.dock_sent = self.undock_sent = False
         self.goto_pose = None           # goToPose로 받은 마지막 목표 (target_cb 검증)
     def isTaskComplete(self): return self._task_done
@@ -281,17 +334,29 @@ class _FakeNav:
 
 
 class _FakeAgent:
-    """_dock_tick/target_cb만 떼어 돌리기 위한 최소 스텁 (Node 없이)."""
+    """_dock_tick/target_cb/command_cb/patrol_tick만 떼어 돌리는 최소 스텁."""
     _dock_tick = RobotAgent._dock_tick
     target_cb = RobotAgent.target_cb
-    def __init__(self, nav, phase):
-        self.nav, self.dock_phase, self.state = nav, phase, 'RETURNING'
-        self.patrol_started = False
+    command_cb = RobotAgent.command_cb
+    patrol_tick = RobotAgent.patrol_tick
+    def __init__(self, nav, phase, state='RETURNING'):
+        self.nav, self.dock_phase, self.state = nav, phase, state
+        self.ns = 'robot4'
+        self.after_undock = None
+        self.hold, self.hold_at, self.hold_lease = False, 0.0, 3.0
+        self.patrolling = False
+        self.patrol_started = self.docking_started = self.undocking_started = False
+    def _now_s(self): return 10.0       # 고정 현재시각 (lease 판정 검증용)
     def get_logger(self):
         import types
         return types.SimpleNamespace(info=lambda *a, **k: None,
                                      warn=lambda *a, **k: None)
     def start_patrol(self): self.patrol_started = True
+    def stop_patrol(self): pass
+    def start_docking(self): self.docking_started = True
+    def start_undocking(self):
+        self.undocking_started = True
+        self.dock_phase = 'UNDOCK'
 
 
 def _self_check():
@@ -303,25 +368,74 @@ def _self_check():
     a = _FakeAgent(_FakeNav(True, TaskResult.SUCCEEDED, False, False), 'NAV')
     a._dock_tick()
     assert a.dock_phase == 'DOCK' and a.nav.dock_sent
-    # dock 액션 완료 → DOCKED 방송, 폴링 종료
+    # dock 액션 완료 + 실제 도킹됨 → DOCKED 방송, 폴링 종료
     a = _FakeAgent(_FakeNav(True, TaskResult.SUCCEEDED, True, False), 'DOCK')
     a._dock_tick()
     assert a.dock_phase is None and a.state == 'DOCKED'
+    # dock 액션 '완료'지만 실제로는 도킹 안 됨(실패) → DOCKED 금지, IDLE (문제 3)
+    a = _FakeAgent(_FakeNav(True, TaskResult.SUCCEEDED, True, False,
+                            docked=False), 'DOCK')
+    a._dock_tick()
+    assert a.dock_phase is None and a.state == 'IDLE'
     # dock 액션 진행 중이면 DOCKED 아직 아님 (조기 방송 방지)
     a = _FakeAgent(_FakeNav(True, TaskResult.SUCCEEDED, False, False), 'DOCK')
     a._dock_tick()
     assert a.dock_phase == 'DOCK' and a.state == 'RETURNING'
-    # 언도킹 완료 → 순찰 시작
+    # 언도킹 완료(after=PATROL, UNDOCK 명령) → 순찰 시작
     a = _FakeAgent(_FakeNav(True, None, False, True), 'UNDOCK')
+    a.after_undock = 'PATROL'
     a._dock_tick()
     assert a.dock_phase is None and a.patrol_started
     # 언도킹 진행 중이면 순찰 아직 안 시작
     a = _FakeAgent(_FakeNav(True, None, False, False), 'UNDOCK')
+    a.after_undock = 'PATROL'
     a._dock_tick()
     assert a.dock_phase == 'UNDOCK' and not a.patrol_started
+    # 언도킹 완료(after=None, TRACK/HERD) → 순찰 없이 target_pose 대기
+    a = _FakeAgent(_FakeNav(True, None, False, True), 'UNDOCK')
+    a._dock_tick()
+    assert a.dock_phase is None and not a.patrol_started
+    # 언도킹 완료(after=DOCK) → 바로 복귀 도킹
+    a = _FakeAgent(_FakeNav(True, None, False, True), 'UNDOCK')
+    a.after_undock = 'DOCK'
+    a._dock_tick()
+    assert a.dock_phase is None and a.docking_started
+
+    import types
+    # UNDOCK 수신 → 즉시 PATROLLING이 아니라 UNDOCKING 보고 (문제 3)
+    a = _FakeAgent(_FakeNav(True, None, False, False), None, state='DOCKED')
+    a.command_cb(types.SimpleNamespace(data='robot4:UNDOCK'))
+    assert a.state == 'UNDOCKING' and a.after_undock == 'PATROL' \
+        and a.undocking_started
+    # 도킹된 로봇에 HERD → 먼저 언도킹, 완료 후 goal 대기 모드 (문제 1 핵심)
+    a = _FakeAgent(_FakeNav(True, None, False, False), None, state='DOCKED')
+    a.command_cb(types.SimpleNamespace(data='robot4:HERD'))
+    assert a.undocking_started and a.after_undock is None and a.state == 'HERDING'
+    # 필드 위(PATROLLING) 로봇에 TRACK → 언도킹 없이 역할 전환만
+    a = _FakeAgent(_FakeNav(True, None, False, False), None, state='PATROLLING')
+    a.command_cb(types.SimpleNamespace(data='robot4:TRACK'))
+    assert not a.undocking_started and a.state == 'TRACKING'
+    # 언도킹 중 DOCK 명령 → 도킹은 언도킹 완료 후로 예약
+    a = _FakeAgent(_FakeNav(False, None, False, False), 'UNDOCK')
+    a.command_cb(types.SimpleNamespace(data='robot4:DOCK'))
+    assert a.after_undock == 'DOCK' and not a.docking_started
+    # 남의 명령은 무시
+    a = _FakeAgent(_FakeNav(True, None, False, False), None, state='DOCKED')
+    a.command_cb(types.SimpleNamespace(data='robot6:HERD'))
+    assert not a.undocking_started and a.state == 'DOCKED'
+
+    # hold lease 만료 → detector 무응답 시 자동 해제 + 순찰 재개 (문제 4)
+    a = _FakeAgent(_FakeNav(False, None, False, False), None, state='PATROLLING')
+    a.hold, a.hold_at = True, 0.0       # 지금(10.0)보다 10초 전 — lease(3s) 초과
+    a.patrol_tick()
+    assert not a.hold and a.patrol_started
+    # lease 이내면 hold 유지 (정상 heartbeat 수신 중)
+    a = _FakeAgent(_FakeNav(False, None, False, False), None, state='PATROLLING')
+    a.hold, a.hold_at = True, 8.5       # 1.5초 전 — lease 이내
+    a.patrol_tick()
+    assert a.hold and not a.patrol_started
 
     # target_cb: 도킹 중 아니면 goToPose로 목표 주행
-    import types
     msg = types.SimpleNamespace(pose=types.SimpleNamespace(
         position=types.SimpleNamespace(x=1.0, y=2.0)))
     a = _FakeAgent(_FakeNav(True, None, False, False), None)

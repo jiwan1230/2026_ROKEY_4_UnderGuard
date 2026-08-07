@@ -35,7 +35,7 @@ def coverage_action(robots, waking):
     """
     if waking is not None:
         return None
-    busy = {'PATROLLING', 'TRACKING', 'HERDING', 'RETURNING'}
+    busy = {'PATROLLING', 'TRACKING', 'HERDING', 'RETURNING', 'UNDOCKING'}
     if any(s in busy for s, _ in robots.values()):
         return None
     idle = [r for r, (s, _) in robots.items() if s in ('DOCKED', 'IDLE')]
@@ -200,6 +200,8 @@ def _self_check():
     # 누군가 순찰/복귀 중이면 개입 안 함 (커버리지 있음/교대 진행 중)
     assert coverage_action({'robot4': ('PATROLLING', 80), 'robot6': ('DOCKED', 100)}, None) is None
     assert coverage_action({'robot4': ('RETURNING', 20), 'robot6': ('DOCKED', 100)}, None) is None
+    # 언도킹 중(수동 UNDOCK 등)도 busy — 다른 로봇을 또 깨우지 않는다
+    assert coverage_action({'robot4': ('UNDOCKING', 90), 'robot6': ('DOCKED', 100)}, None) is None
     assert coverage_action({'robot4': ('IDLE', 50)}, None) == 'robot4'  # 대기뿐 → 후보
     assert coverage_action({}, None) is None                            # 로봇 없음 → None
     print('central_node self-check ok')
