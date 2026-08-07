@@ -127,6 +127,24 @@ class RosBridgeTest(unittest.TestCase):
         # "주변 위험요소 확인 중"(VERIFYING) 우선순위 버킷에 속한다.
         self.assertEqual(self.state.snapshot()["mission"]["status"], "VERIFYING")
 
+    def test_robot_recovers_when_fleet_status_resumes_after_gap(self):
+        """일정 시간 /fleet/status가 끊겼다가 다시 오면 자동 복구되는지 확인한다."""
+        self.bridge._on_fleet_status(SimpleNamespace(data="robot4:PATROLLING:80"))
+        self.assertEqual(self.state.get_robot("robot4")["connection"], "ONLINE")
+
+        # setUp의 offline_timeout_sec=100을 확실히 넘기도록 충분히 되돌린다.
+        self.state._robots["robot4"].last_update = time.time() - 200.0
+        self.assertEqual(
+            self.state.snapshot()["robots"][0]["connection"], "OFFLINE"
+        )
+
+        self.bridge._on_fleet_status(SimpleNamespace(data="robot4:PATROLLING:79"))
+
+        recovered = self.state.get_robot("robot4")
+        self.assertEqual(recovered["connection"], "ONLINE")
+        self.assertEqual(recovered["state"], "SEARCHING")
+        self.assertEqual(recovered["battery"], 79.0)
+
     def test_malformed_or_unregistered_fleet_status_is_ignored(self):
         self.bridge._on_fleet_status(SimpleNamespace(data="invalid"))
         self.bridge._on_fleet_status(SimpleNamespace(data="robot6:IDLE:100"))
