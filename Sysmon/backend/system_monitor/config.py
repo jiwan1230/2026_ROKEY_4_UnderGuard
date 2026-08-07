@@ -49,6 +49,8 @@ class RosInterfaceConfig:
     oakd_detections_topic: str = "oakd/detections"
     odometry_topic: str = "odom"
     battery_topic: str = "battery_state"
+    # camera_node.py가 실제로 발행하는 상대 토픽(로봇 namespace 하위)이다.
+    camera_frame_topic: str = "synced/rgb"
     map_frame: str = "map"
 
 
@@ -114,6 +116,7 @@ def load_settings() -> Settings:
             ),
             odometry_topic=os.getenv("ROS_ODOMETRY_TOPIC", "odom"),
             battery_topic=os.getenv("ROS_BATTERY_TOPIC", "battery_state"),
+            camera_frame_topic=os.getenv("ROS_CAMERA_FRAME_TOPIC", "synced/rgb"),
             map_frame=os.getenv("ROS_MAP_FRAME", "map").strip("/") or "map",
         ),
     )

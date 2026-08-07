@@ -25,6 +25,13 @@ class MockManagerTest(unittest.TestCase):
         detection = self.mock.trigger("RAT_HOLE_DETECTED", "robot4")
         self.assertEqual((detection["map_x"], detection["map_y"]), (4.0, 4.0))
 
+    def test_mock_detections_explicitly_report_no_camera_frame(self):
+        """Mock은 실제 카메라 프레임이 없다 — ROS와 같은 응답 모양을
+        유지하기 위해 image_url을 명시적으로 None으로 채운다."""
+        detection = self.mock.trigger("RAT_HOLE_DETECTED", "robot4")
+        self.assertIn("image_url", detection)
+        self.assertIsNone(detection["image_url"])
+
     def test_different_object_gets_independent_coordinates(self):
         detection = self.mock.trigger("DROPPINGS_DETECTED", "robot4")
         self.assertEqual((detection["map_x"], detection["map_y"]), (1.3, 0.65))

@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Any
 
+from .camera_service import CameraFrameStore
 from .config import RobotConfig, RosInterfaceConfig
 from .detection_service import (
     process_detection,
@@ -30,9 +31,15 @@ except ImportError:
     Odometry = None
 
 try:
-    from sensor_msgs.msg import BatteryState
+    from sensor_msgs.msg import BatteryState, CompressedImage
 except ImportError:
     BatteryState = None
+    CompressedImage = None
+
+try:
+    from rclpy.qos import qos_profile_sensor_data
+except ImportError:
+    qos_profile_sensor_data = None
 
 try:
     from vision_msgs.msg import Detection3DArray
@@ -74,6 +81,7 @@ class RosBridge:
       - /<namespace>/webcam/detections : vision_msgs/Detection3DArray
       - /<namespace>/oakd/detections   : vision_msgs/Detection3DArray
       - /<namespace>/odom, battery_state
+      - /<namespace>/synced/rgb        : sensor_msgs/CompressedImage (카메라 프레임)
     """
 
     def __init__(
@@ -84,12 +92,14 @@ class RosBridge:
         target_loss_timeout_sec: float = 1.5,
         low_battery_threshold: float = 15.0,
         interface: RosInterfaceConfig | None = None,
+        camera_frame_store: CameraFrameStore | None = None,
     ) -> None:
         self.state = state
         self.robots = robots
         self.target_loss_timeout_sec = target_loss_timeout_sec
         self.low_battery_threshold = low_battery_threshold
         self.interface = interface or RosInterfaceConfig()
+        self.camera_frame_store = camera_frame_store or CameraFrameStore()
         self._thread: threading.Thread | None = None
         self._node = None
         # 여러 ROS 콜백이 역할 배정·경고 상태를 동시에 바꾸지 않도록 보호한다.
@@ -205,6 +215,15 @@ class RosBridge:
                             lambda msg, robot_id=rid: bridge._on_battery(robot_id, msg),
                             10,
                         )
+                    if CompressedImage is not None:
+                        self.create_subscription(
+                            CompressedImage,
+                            robot.topic(bridge.interface.camera_frame_topic),
+                            lambda msg, robot_id=rid: bridge._on_camera_frame(
+                                robot_id, msg
+                            ),
+                            qos_profile_sensor_data,
+                        )
                 self.create_timer(0.5, bridge._check_target_timeouts)
 
         self._node = MonitorNode()
@@ -286,6 +305,7 @@ class RosBridge:
                         "map_y": map_y,
                         "source": "FLEET",
                         "review_status": "UNREVIEWED",
+                        "image_url": self.camera_frame_store.image_url_for(robot_id),
                     },
                     event_message=f"Fleet에서 {object_type} 사건을 수신했습니다.",
                     fallback_state="SEARCHING",
@@ -374,6 +394,10 @@ class RosBridge:
             "map_y": float(center.y) if in_map_frame else None,
             "source": source,
             "review_status": "UNREVIEWED",
+            # 탐지 시점과 정확히 동기화된 프레임은 아니고, 그 로봇의 가장
+            # 최근 캐시 프레임을 가리키는 최소 구현이다(카메라 미연결/Mock
+            # 이면 None).
+            "image_url": self.camera_frame_store.image_url_for(robot_id),
         }
 
     def _on_odom(self, robot_id: str, msg: Any) -> None:
@@ -427,6 +451,18 @@ class RosBridge:
             self.state.update_robot(robot_id, battery=value)
             if value >= self.low_battery_threshold + 2:
                 self._low_battery_reported.discard(robot_id)
+
+    def _on_camera_frame(self, robot_id: str, msg: Any) -> None:
+        """압축 카메라 프레임을 재인코딩 없이 그대로 캐시에 저장한다.
+
+        입력: 구독 토픽의 로봇 ID와 ``sensor_msgs/CompressedImage`` 메시지다.
+        출력: 없음. 최신 프레임만 유지하며 StateManager와는 분리 보관한다.
+        사용: 로봇별 ``/<namespace>/synced/rgb`` 구독 콜백으로 등록한다.
+        """
+
+        self.camera_frame_store.update(
+            robot_id, bytes(msg.data), msg.format or "jpeg"
+        )
 
     def _check_target_timeouts(self) -> None:
         """OAK-D 쥐 탐지가 끊긴 추적 로봇을 한 번만 대상 유실로 전환한다."""

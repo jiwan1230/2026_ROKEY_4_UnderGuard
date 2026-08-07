@@ -313,6 +313,12 @@ function showMapMarkerDetail(marker) {
       data.map_x == null || data.map_y == null
           ? '—'
           : `${n(data.map_x, 2)}, ${n(data.map_y, 2)}`;
+  // 탐지 시점과 정확히 동기화된 프레임은 아니고, 그 로봇의 최근 캐시
+  // 프레임을 가리키는 링크다(카메라 미연결/Mock이면 비어 있음).
+  const imageCell = $('#map-marker-image');
+  imageCell.innerHTML = data.image_url
+      ? `<a href="${escapeHtml(data.image_url)}" target="_blank" rel="noopener">보기</a>`
+      : '—';
   detail.classList.remove('hidden');
 }
 
@@ -613,13 +619,24 @@ function renderCameras(robots, serverTime) {
                                                      : '확인 필요')}${
                 updateAge == null ? '' : ` · ${updateAge.toFixed(1)}초`}</span>
         </header>
-        <div class="camera-placeholder camera-frame">
-          <div class="scan-line"></div>
+        <div class="camera-placeholder camera-frame">${
+                cfg.mode === 'mock'
+                    ? ''
+                    // ROS 모드: 실제 프레임을 시도한다. 아직 아무도 안
+                    // 보냈으면(Mock이거나 카메라 미연결) 404라 onerror로
+                    // 조용히 숨고, 아래 크로스헤어/라벨만 남는다.
+                    : `<img class="camera-live-feed" alt="${
+                          escapeHtml(robot.robot_id)} 카메라" loading="lazy"
+                          src="/api/camera/${
+                          encodeURIComponent(robot.robot_id)}/frame?t=${
+                          Date.now()}"
+                          onerror="this.style.display='none'">`}
+          ${cfg.mode === 'mock' ? '<div class="scan-line"></div>' : ''}
           <div class="camera-crosshair"></div>
           <span class="camera-label">${
                 cfg.mode === 'mock'
                     ? 'MOCK VIDEO · 실제 영상 아님'
-                    : 'ROS CAMERA DATA · 영상 스트림 미연동'}</span>
+                    : 'ROS CAMERA DATA · 영상 스트림 연결 시도 중'}</span>
           <div class="detection-box ${targetClass}"><span><b>${
                 hasTarget ? `${escapeHtml(targetName)} 감지`
                           : '대상 대기 중'}</b>${

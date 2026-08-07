@@ -74,6 +74,27 @@ class RosBridgeTest(unittest.TestCase):
 
         self.assertIsNone(row["map_x"])
         self.assertIsNone(row["map_y"])
+
+    def test_camera_frame_is_cached_without_reencoding(self):
+        self.bridge._on_camera_frame(
+            "robot4", SimpleNamespace(data=b"raw-jpeg-bytes", format="jpeg")
+        )
+
+        frame = self.bridge.camera_frame_store.get("robot4")
+        self.assertEqual(frame.content, b"raw-jpeg-bytes")
+        self.assertEqual(frame.format, "jpeg")
+
+    def test_detection_carries_image_url_once_a_frame_is_cached(self):
+        self.bridge._on_detection("robot4", "OAK-D", detection_array("map"))
+        row = self.state.snapshot()["detections"][0]
+        self.assertIsNone(row["image_url"])
+
+        self.bridge._on_camera_frame(
+            "robot4", SimpleNamespace(data=b"raw-jpeg-bytes", format="jpeg")
+        )
+        self.bridge._on_detection("robot4", "OAK-D", detection_array("map"))
+        row = self.state.snapshot()["detections"][0]
+        self.assertEqual(row["image_url"], "/api/camera/robot4/frame")
         self.assertEqual(row["distance"], 2.5)
 
     def test_robot_topic_supports_suffix_absolute_and_template_names(self):

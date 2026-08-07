@@ -119,6 +119,20 @@ class AppTest(unittest.TestCase):
         self.assertNotIn("elapsed_sec", snapshot["mission"])
         self.assertNotIn("started_at", snapshot["mission"])
 
+    def test_camera_frame_route_serves_cached_frame_and_404s_when_missing(self):
+        client = self.app.test_client()
+
+        missing = client.get("/api/camera/robot4/frame")
+        self.assertEqual(missing.status_code, 404)
+
+        self.app.extensions["camera_frame_store"].update(
+            "robot4", b"raw-jpeg-bytes", "jpeg"
+        )
+        found = client.get("/api/camera/robot4/frame")
+        self.assertEqual(found.status_code, 200)
+        self.assertEqual(found.mimetype, "image/jpeg")
+        self.assertEqual(found.data, b"raw-jpeg-bytes")
+
     def test_removed_feature_css_is_not_shipped(self):
         response = self.app.test_client().get("/static/css/dashboard.css")
         style = response.data

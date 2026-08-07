@@ -8,6 +8,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, send_file
 
+from .camera_service import CameraFrameStore
 from .config import Settings, load_settings
 from .map_service import MapService
 from .mock_manager import MockManager
@@ -59,6 +60,9 @@ def create_app(settings: Settings | None = None) -> Flask:
         low_battery_threshold=settings.low_battery_threshold,
         map_frame=settings.ros_interface.map_frame,
     )
+    # 로봇별 최신 카메라 프레임 캐시. StateManager와 분리해서 원본 바이트가
+    # /api/snapshot의 JSON 직렬화 경로에 안 섞이게 한다(camera_service.py).
+    camera_frame_store = CameraFrameStore()
     # 핵심 포인트 5 — ROS 데이터를 공통 상태로 변환
     # 실제 ROS 2 메시지를 받을 RosBridge 객체를 생성
     ros = RosBridge(
@@ -67,6 +71,7 @@ def create_app(settings: Settings | None = None) -> Flask:
         target_loss_timeout_sec=settings.target_loss_timeout_sec,
         low_battery_threshold=settings.low_battery_threshold,
         interface=settings.ros_interface,
+        camera_frame_store=camera_frame_store,
     )
     # 핵심 포인트 6 — Mock과 ROS를 같은 방식으로 사용
     # 실행 모드에 따라 실제 사용할 서비스를 선택
@@ -85,6 +90,7 @@ def create_app(settings: Settings | None = None) -> Flask:
     app.extensions["ros_bridge"] = ros
     app.extensions["runtime_service"] = runtime     # 현재 실행 모드에 따라 선택된 서비스를 저장
     app.extensions["map_service"] = map_service
+    app.extensions["camera_frame_store"] = camera_frame_store
 
     # 핵심 포인트 8 — 하나의 함수가 두 URL을 처리
     # 두 주소로 들어오는 GET 요청을 같은 함수가 처리하도록 연결하는 장식자(데코레이터)
@@ -155,6 +161,23 @@ def create_app(settings: Settings | None = None) -> Flask:
             mimetype="image/png",
             download_name="map.png",
             max_age=60,
+        )
+
+    @app.get("/api/camera/<robot_id>/frame")
+    def camera_frame(robot_id: str):
+        """로봇의 최신 카메라 프레임을 재인코딩 없이 그대로 반환한다.
+
+        아직 프레임을 한 번도 못 받은 로봇(Mock 모드 포함)은 404를 반환한다
+        — 실제 카메라 연동 전까지는 이 라우트 자체가 "준비만 된" 상태다.
+        """
+
+        frame = camera_frame_store.get(robot_id)
+        if frame is None:
+            return jsonify({"error": "no_frame_available"}), 404
+        return send_file(
+            BytesIO(frame.content),
+            mimetype=f"image/{frame.format}",
+            max_age=0,
         )
 
     @app.post("/api/mock/events")

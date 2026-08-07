@@ -293,6 +293,9 @@ class MockManager:
             "map_y": map_y,
             "source": source,
             "review_status": "UNREVIEWED",
+            # Mock은 실제 카메라 프레임이 없다 — ROS 모드와 응답 모양을
+            # 동일하게 유지하기 위해 명시적으로 None을 채운다.
+            "image_url": None,
         }
         return process_detection(
             self.state,
