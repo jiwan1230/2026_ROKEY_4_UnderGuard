@@ -71,6 +71,8 @@ class RobotAgent(Node):
         self.poses = None       # 로드된 순찰 waypoint (첫 PATROL 때 lazy 로드)
         self.patrolling = False  # followWaypoints 진행 중
         self.driving = False    # target_pose로 받은 goal(접근/추적) 주행 중
+        self.lap_from = 0       # 다음 순찰이 시작할 waypoint 인덱스 (중단 지점)
+        self.lap_start = 0      # 지금 도는 바퀴가 시작한 인덱스 (피드백 오프셋)
         self.hold = False       # opening 처리 중 순찰 정지 (detector가 신호)
         self.hold_at = 0.0      # 마지막 hold=True 수신 시각 (lease 판정용)
         # 도킹/언도킹 논블로킹 진행 단계. None=진행 중 아님.
@@ -156,17 +158,32 @@ class RobotAgent(Node):
         self._send_lap()
 
     def _send_lap(self):
-        """순찰 한 바퀴 goal 발행. stamp를 현재로 갱신해서 보낸다."""
+        """순찰 goal 발행. 중단됐던 지점(lap_from)부터 이어 돈다.
+
+        opening 처리로 순찰이 끊길 때마다 0번부터 다시 돌면, 구멍이 앞쪽에
+        몰려 있을 경우 맵 뒷부분에 영영 못 간다. 중단 지점부터 보내 남은
+        구간을 마저 돌고, 그 바퀴가 끝나면 다음 바퀴는 전체를 다시 돈다.
+        """
         now = self.nav.get_clock().now().to_msg()
         for p in self.poses:
             p.header.stamp = now
-        self.nav.followWaypoints(self.poses)
+        self.lap_start = self.lap_from   # 피드백 인덱스는 이 오프셋 기준이다
+        self.nav.followWaypoints(self.poses[self.lap_from:])
+        self.lap_from = 0           # 이번 바퀴 소진 — 완주하면 다음은 처음부터
         self.driving = False        # 순찰이 goal 주인 — 접근 goal 감시 종료
         self.patrolling = True
         self.state = 'PATROLLING'       # goal 발행 성공 — 여기서만 PATROLLING
 
     def stop_patrol(self):
+        """순찰 취소 — 어디까지 갔는지 기록해 재개 때 이어붙인다.
+
+        피드백의 current_waypoint는 이번에 보낸 목록 기준이라 lap_start를
+        더해 절대 인덱스로 되돌린다. feedback은 마지막 액션의 것이라
+        followWaypoints가 아니면 current_waypoint가 없다 — 그땐 0으로 둔다.
+        """
         if self.patrolling:
+            self.lap_from = self.lap_start + getattr(
+                self.nav.feedback, 'current_waypoint', 0)
             self.nav.cancelTask()
             self.patrolling = False
 
@@ -351,6 +368,13 @@ class _FakeNav:
         self.dock_sent = self.undock_sent = False
         self.goto_pose = None           # goToPose로 받은 마지막 목표 (target_cb 검증)
         self.calls = []                 # 액션 호출 순서 — cancel이 goto를 죽였는지 검증
+        self.feedback = None            # followWaypoints 피드백 (current_waypoint)
+        self.sent = None                # followWaypoints로 보낸 waypoint 목록
+    def followWaypoints(self, poses): self.sent = list(poses)
+    def get_clock(self):
+        import types
+        return types.SimpleNamespace(
+            now=lambda: types.SimpleNamespace(to_msg=lambda: 0))
     def isTaskComplete(self): return self._task_done
     def getResult(self): return self._result
     def dock_send_goal(self): self.dock_sent = True
@@ -371,12 +395,15 @@ class _FakeAgent:
     patrol_tick = RobotAgent.patrol_tick
     hold_cb = RobotAgent.hold_cb
     stop_patrol = RobotAgent.stop_patrol      # 진짜 취소 로직으로 순서 검증
+    _send_lap = RobotAgent._send_lap
     def __init__(self, nav, phase, state='RETURNING'):
         self.nav, self.dock_phase, self.state = nav, phase, state
         self.ns = 'robot4'
         self.after_undock = None
         self.hold, self.hold_at, self.hold_lease = False, 0.0, 3.0
         self.patrolling = self.driving = False
+        self.lap_from = self.lap_start = 0
+        self.poses = None
         self.patrol_started = self.docking_started = self.undocking_started = False
     def _now_s(self): return 10.0       # 고정 현재시각 (lease 판정 검증용)
     def get_logger(self):
@@ -511,6 +538,32 @@ def _self_check():
     a.driving, a.hold, a.hold_at = True, True, 9.5
     a.patrol_tick()
     assert a.driving
+
+    # 순찰 재개는 '중단 지점부터' — 0번부터 다시 돌면 맵 뒷부분에 영영 못 간다
+    def _wp(n):     # stamp만 갱신되는 최소 pose 스텁
+        return [types.SimpleNamespace(header=types.SimpleNamespace(stamp=None))
+                for _ in range(n)]
+    a = _FakeAgent(_FakeNav(False, None, False, False), None, state='PATROLLING')
+    a.poses = _wp(10)
+    a._send_lap()                                   # 1바퀴: 전체 10개
+    assert len(a.nav.sent) == 10 and a.lap_start == 0
+    a.nav.feedback = types.SimpleNamespace(current_waypoint=4)
+    a.stop_patrol()                                 # 4번에서 opening 처리로 중단
+    assert a.lap_from == 4
+    a._send_lap()                                   # 재개: 4~9번 6개만
+    assert len(a.nav.sent) == 6 and a.lap_start == 4
+    # 이어 돌던 중 또 중단 — 피드백(2)은 슬라이스 기준이라 오프셋을 더해야 6
+    a.nav.feedback = types.SimpleNamespace(current_waypoint=2)
+    a.stop_patrol()
+    assert a.lap_from == 6
+    # 완주하면 다음 바퀴는 처음부터
+    a.lap_from = 0
+    a._send_lap()
+    assert len(a.nav.sent) == 10
+    # followWaypoints가 아닌 액션의 피드백엔 current_waypoint가 없다 → 0
+    a.nav.feedback = types.SimpleNamespace(distance_remaining=1.0)
+    a.stop_patrol()
+    assert a.lap_from == 0
     print('robot_agent self-check ok')
 
 
