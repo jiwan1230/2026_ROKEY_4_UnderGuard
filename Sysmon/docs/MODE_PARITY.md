@@ -2,16 +2,12 @@
 
 두 모드는 같은 읽기 전용 상태 모델, 화면, API 응답을 사용한다. 입력원만 다르다.
 
-```text
-Mock event 또는 ROS message
-        ↓
-표준 위험신호 변환
-        ↓
-StateManager 메모리 상태 갱신
-        ↓
-/api/snapshot
-        ↓
-공통 dashboard.html / dashboard.js
+```mermaid
+flowchart TD
+    A["Mock event 또는 ROS message"] --> B[표준 위험신호 변환]
+    B --> C["StateManager 메모리 상태 갱신"]
+    C --> D["/api/snapshot"]
+    D --> E["공통 dashboard.html / dashboard.js"]
 ```
 
 표준 위험신호는 `LIVE_RODENT`, `ENTRY_POINT`, `DROPPINGS` 세 값이다.

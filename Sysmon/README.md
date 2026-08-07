@@ -21,16 +21,12 @@
 
 ## 데이터 경계
 
-```text
-Mock 또는 ROS 메시지
-        ↓
-RosBridge / MockManager
-        ↓
-StateManager (현재 프로세스 메모리)
-        ↓
-/api/snapshot
-        ↓
-실시간 관제 화면
+```mermaid
+flowchart TD
+    A[Mock 또는 ROS 메시지] --> B["RosBridge / MockManager"]
+    B --> C["StateManager<br/>(현재 프로세스 메모리)"]
+    C --> D["/api/snapshot"]
+    D --> E[실시간 관제 화면]
 ```
 
 - System Monitor가 영구 저장하거나 조회하는 DB는 없습니다.

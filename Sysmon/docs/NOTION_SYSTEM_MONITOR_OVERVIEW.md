@@ -6,20 +6,24 @@
 
 ## 데이터 흐름
 
-```text
-/fleet/status ──────────────┐
-/fleet/event ───────────────┤
-로봇별 odom/battery/detection ─┤
-MockManager ────────────────┘
-              ↓
-          RosBridge
-              ↓
-       StateManager 메모리
-              ↓
-        Flask JSON API
-              ↓
-          관제 화면
+```mermaid
+flowchart TD
+    subgraph ROS 모드
+        A1["/fleet/status"] --> B[RosBridge]
+        A2["/fleet/event"] --> B
+        A3["로봇별 odom/battery/detection"] --> B
+    end
+    subgraph Mock 모드
+        C[MockManager]
+    end
+    B --> D["StateManager 메모리"]
+    C --> D
+    D --> E["Flask JSON API"]
+    E --> F[관제 화면]
 ```
+
+(Mock/ROS는 `MONITOR_MODE`에 따라 둘 중 하나만 동시에 실행되며, 어느 쪽이든
+결과는 같은 StateManager 메모리로 모인다.)
 
 수신된 탐지·사건·덫 정보는 현재 서버 실행 중에만 유지되고 재시작 시 사라진다.
 
