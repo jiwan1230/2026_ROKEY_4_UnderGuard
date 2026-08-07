@@ -101,6 +101,57 @@ def test_config_wires_every_subconfig_without_type_error():
     assert core.estimator.config.process_noise == 0.1
     assert core.estimator.config.occlusion_timeout_sec == 3.0
     assert core.escape_model.config.wall_follow_p == 0.70
+
+
+# --------------------------------------------------------------------------- #
+# Blocking Point 이력현상 -- blocking_point_commit_sec (트러블슈팅 노트 10-7)   #
+# --------------------------------------------------------------------------- #
+
+
+def test_blocking_point_commit_sec_defaults_to_one_second():
+    """설정을 안 주면 기존 하드코딩 상수와 동일하게 1.0초를 유지해야 한다."""
+    core = HerdingCore(make_config())
+    assert core.config.blocking_point_commit_sec == 1.0
+
+
+def test_stabilize_blocking_point_holds_previous_value_within_commit_window():
+    core = HerdingCore(make_config(blocking_point_commit_sec=1.0))
+    first = core._stabilize_blocking_point(np.array([1.0, 1.0]), now_sec=0.0)
+    held = core._stabilize_blocking_point(np.array([9.0, 9.0]), now_sec=0.5)
+    assert np.array_equal(held, first), "커밋 윈도우(1.0s) 안에서는 새 후보를 무시해야 한다"
+
+
+def test_stabilize_blocking_point_adopts_new_candidate_after_commit_window():
+    core = HerdingCore(make_config(blocking_point_commit_sec=1.0))
+    core._stabilize_blocking_point(np.array([1.0, 1.0]), now_sec=0.0)
+    updated = core._stabilize_blocking_point(np.array([9.0, 9.0]), now_sec=1.0)
+    assert np.array_equal(updated, np.array([9.0, 9.0])), "커밋 윈도우가 지나면 새 후보로 갈아타야 한다"
+
+
+def test_shorter_commit_window_adopts_new_candidates_sooner():
+    """10-7의 핵심 동작: commit_sec을 줄이면 같은 흐름에서 더 빨리 새 후보를 채택한다."""
+    responsive = HerdingCore(make_config(blocking_point_commit_sec=0.2))
+    sluggish = HerdingCore(make_config(blocking_point_commit_sec=1.0))
+    for core in (responsive, sluggish):
+        core._stabilize_blocking_point(np.array([1.0, 1.0]), now_sec=0.0)
+
+    at_half_second_responsive = responsive._stabilize_blocking_point(
+        np.array([9.0, 9.0]), now_sec=0.5
+    )
+    at_half_second_sluggish = sluggish._stabilize_blocking_point(
+        np.array([9.0, 9.0]), now_sec=0.5
+    )
+    assert np.array_equal(at_half_second_responsive, np.array([9.0, 9.0])), \
+        "0.2초짜리는 0.5초 시점에 이미 새 후보로 갈아탔어야 한다"
+    assert np.array_equal(at_half_second_sluggish, np.array([1.0, 1.0])), \
+        "1.0초짜리는 0.5초 시점엔 아직 이전 값을 유지해야 한다"
+
+
+def test_zero_commit_sec_adopts_every_candidate_immediately():
+    core = HerdingCore(make_config(blocking_point_commit_sec=0.0))
+    core._stabilize_blocking_point(np.array([1.0, 1.0]), now_sec=0.0)
+    updated = core._stabilize_blocking_point(np.array([2.0, 2.0]), now_sec=0.01)
+    assert np.array_equal(updated, np.array([2.0, 2.0]))
     assert core.escape_model.config.escape_route_top_k == 3
     assert core.planner_config.drive_distance_m == 0.8
     assert core.planner_config.block_lookahead_m == 1.2

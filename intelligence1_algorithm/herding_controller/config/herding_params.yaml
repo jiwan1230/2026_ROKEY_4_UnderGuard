@@ -95,6 +95,15 @@ herding_controller:
     # the documented rule (~1/3 of the arena's shorter side) gives 1.8m.
     block_lookahead_m: 1.8
 
+    # Blocking Point 이력현상(hysteresis) 유지 시간 -- herding_core.py의
+    # _stabilize_blocking_point() 참고. 표적 위치가 문턱 근처를 오갈 때
+    # 목표 후보가 매 제어 주기(0.2초)마다 요동치는 걸 막으려고 도입했다
+    # (트러블슈팅 노트 10-6). 다만 이 값이 너무 크면 반대로 로봇이 목표에
+    # 도착하기도 전에 다음 커밋에서 또 먼 곳으로 바뀌는 지연(lag)이 생겨,
+    # Blocker가 계속 뒤쫓기만 하고 자리를 못 잡는 것처럼 보인다(10-7).
+    # run_real_map_algo_suite 스윕으로 재검증한 값을 쓴다.
+    blocking_point_commit_sec: 1.0
+
     # 2026-08-06 실제 맵 재튜닝 (트러블슈팅 노트 10번 항목): drive_distance_m/
     # panic_distance_m/flee_reaction_distance_m는 원래 10x10m 열린 아레나
     # 기준으로 튜닝된 값이었다. 실제 방은 폭 1m 안팎의 좁은 복도가 많아서,

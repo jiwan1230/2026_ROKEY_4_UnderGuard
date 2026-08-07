@@ -60,6 +60,12 @@ class HerdingConfig:
     decay_factor: float
     grid_origin_x_m: float = 0.0
     grid_origin_y_m: float = 0.0
+    # Blocking Point 이력현상(hysteresis) 유지 시간 -- _stabilize_blocking_point()
+    # 참고. 트러블슈팅 노트 10-6에서 flicker(매 프레임 요동)를 막으려고
+    # 도입했다가, 10-7에서 "1.0초 고정이 이 방 크기 기준 오히려 너무 길어
+    # Blocker가 계속 도착 전에 목표가 바뀌는 지연(lag)을 만든다"는 게 밝혀져
+    # 하드코딩에서 이 필드로 뺐다. 최적값은 run_real_map_algo_suite 스윕으로 정한다.
+    blocking_point_commit_sec: float = 1.0
 
     def __post_init__(self) -> None:
         """herd를 교착 상태에 빠뜨리는 것으로 알려진 파라미터 조합을 거부한다.
@@ -241,32 +247,36 @@ class HerdingCore:
                 return virtual_goal
         return self.goal_pos
 
-    # Blocking Point를 새로 계산한 값으로 매번 갈아치우기 전에 최소한 이만큼
-    # 유지한다. compute_blocking_point()는 "block_lookahead_m(1.8m) 앞의
-    # 지점이 장애물인가"로 후보 방향을 고르는데, 표적이 문턱 근처에 있으면
-    # 표적이 몇 cm만 움직여도 그 1.8m 앞 지점이 벽 반대편으로 넘어가버려서
-    # 후보가 완전히 다른 방향으로 바뀔 수 있다 -- 도주확률 예측 자체는
-    # 안정적인데도(트러블슈팅 노트 10-6 항목 실측: argmax 방향은 그대로,
-    # 목표 좌표만 1.3m 넘게 순간이동) 목표점만 매 제어 주기(0.2초)마다
-    # 요동쳐서, 로봇이 어느 쪽으로도 진행하지 못하고 제자리에서 맴돌게
-    # 만든다. role_assigner.py가 예전에 역할 교체 진동을 막던 것과 같은
-    # 종류의 문제라, 같은 해법(이력현상)을 쓴다.
-    _BLOCKING_POINT_COMMIT_SEC = 1.0
-
     def _stabilize_blocking_point(self, candidate: np.ndarray, now_sec: float) -> np.ndarray:
         """새 Blocking Point 후보를 즉시 채택하지 않고, 이전 값을 일정 시간 유지한다.
 
-        커밋한 지 `_BLOCKING_POINT_COMMIT_SEC` 미만이면 이전에 커밋한 점을
-        그대로 반환하고, 그 이상 지났으면(또는 아직 커밋된 값이 없으면)
-        새 후보를 채택하고 그 시각을 기록한다. 매 주기 값 자체는 계속
-        다시 계산되지만(그래야 표적이 실제로 멀리 움직였을 때 반영되므로),
-        화면에 나가는/로봇에 명령되는 값은 이 함수를 거친 안정화된 값이다.
+        compute_blocking_point()는 "block_lookahead_m(1.8m) 앞의 지점이
+        장애물인가"로 후보 방향을 고르는데, 표적이 문턱 근처에 있으면 몇 cm만
+        움직여도 그 앞 지점이 벽 반대편으로 넘어가버려서 후보가 완전히 다른
+        방향으로 바뀔 수 있다 -- 도주확률 예측 자체는 안정적인데도(트러블슈팅
+        노트 10-6 항목 실측: argmax 방향은 그대로, 목표 좌표만 1.3m 넘게
+        순간이동) 목표점만 매 제어 주기(0.2초)마다 요동쳐서, 로봇이 어느
+        쪽으로도 진행하지 못하고 제자리에서 맴돌게 만든다. role_assigner.py가
+        예전에 역할 교체 진동을 막던 것과 같은 종류의 문제라, 같은
+        해법(이력현상)을 쓴다.
+
+        `config.blocking_point_commit_sec` 미만이면 이전에 커밋한 점을 그대로
+        반환하고, 그 이상 지났으면(또는 아직 커밋된 값이 없으면) 새 후보를
+        채택하고 그 시각을 기록한다. 매 주기 값 자체는 계속 다시 계산되지만
+        (그래야 표적이 실제로 멀리 움직였을 때 반영되므로), 화면에 나가는/
+        로봇에 명령되는 값은 이 함수를 거친 안정화된 값이다.
+
+        주의(트러블슈팅 노트 10-7): 이 값을 너무 크게 두면 반대로 "목표가
+        멀리 튄 뒤 다음 커밋까지 로봇이 도착도 못 하고 또 바뀌는" 지연
+        문제가 생긴다 -- flicker(너무 잦은 갱신)와 lag(너무 드문 갱신) 사이의
+        트레이드오프이므로, 이 상수를 바꿀 때는 반드시
+        test/run_validation.py::run_real_map_algo_suite()로 재검증한다.
         """
         if self._committed_blocking_point is None:
             self._committed_blocking_point = candidate
             self._committed_blocking_time = now_sec
             return candidate
-        if now_sec - self._committed_blocking_time >= self._BLOCKING_POINT_COMMIT_SEC:
+        if now_sec - self._committed_blocking_time >= self.config.blocking_point_commit_sec:
             self._committed_blocking_point = candidate
             self._committed_blocking_time = now_sec
             return candidate
