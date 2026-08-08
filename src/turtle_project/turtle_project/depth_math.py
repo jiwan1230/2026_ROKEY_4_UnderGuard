@@ -55,6 +55,22 @@ def side_px(margin_m, z, fx):
     return int(round(fx * margin_m / z))
 
 
+def wall_depth(depth_mm, x1, y1, x2, y2, side, min_valid=10):
+    """bbox 좌우 바로 바깥 세로 밴드(옆 벽면)의 유효 depth 중앙값(m).
+
+    opening 중심 depth는 구멍을 관통해 벽 '뒤'를 재므로 좌표가 벽 너머로
+    잡힌다. 구멍 옆 벽의 거리로 좌표를 잡기 위한 것. 유효 픽셀 부족하면 None.
+    """
+    h, w = depth_mm.shape
+    y1, y2 = max(0, int(y1)), min(h, int(y2))
+    left = depth_mm[y1:y2, max(0, int(x1) - side):max(0, int(x1))]
+    right = depth_mm[y1:y2, min(w, int(x2)):min(w, int(x2) + side)]
+    band = np.concatenate([left[left > 0].ravel(), right[right > 0].ravel()])
+    if band.size < min_valid:
+        return None
+    return float(np.median(band)) / 1000.0
+
+
 def depth_spread(depth_mm, x1, y1, x2, y2, min_valid=30, side=0):
     """bbox 영역 유효 depth의 p90 - p10 (미터). 유효 픽셀 부족하면 None.
 
@@ -117,6 +133,19 @@ def _self_check():
     assert depth_spread(np.zeros((100, 100), np.uint16), 0, 0, 100, 100) is None
     # bbox가 이미지 밖으로 나가도 클램프되어 안 터짐
     assert depth_spread(wall, -10, -10, 200, 200) == 0.0
+
+    # wall_depth: 구멍 중심은 관통해 2m를 보지만 옆 벽 밴드는 1m를 잡는다
+    thru = np.zeros((100, 100), np.uint16)
+    thru[:, 20:40] = thru[:, 60:80] = 1000      # 구멍 좌우 벽 1m
+    thru[:, 40:60] = 2000                        # 구멍 안쪽(관통) 2m
+    assert wall_depth(thru, 40, 0, 60, 100, side=10) == 1.0
+    assert depth_at(thru, 50, 50) == 2.0         # 중심만 보면 벽 뒤가 잡힘 (버그 원인)
+    # 밴드가 전부 무효면 None -> 호출부가 기존 중심/전체 폴백 사용
+    assert wall_depth(np.zeros((100, 100), np.uint16), 40, 0, 60, 100,
+                      side=10) is None
+    # bbox가 이미지 경계에 붙어 밴드가 밖으로 나가도 안 터짐 (남은 쪽만 사용)
+    assert wall_depth(thru, 0, 0, 30, 100, side=10) == 1.0   # 왼밴드 없음, 오른밴드 벽
+    assert wall_depth(thru, -10, -10, 200, 200, side=10) is None  # 양쪽 다 밖
 
     # side_px: fx*margin/z. fx=500, 0.05m, z=1m -> 25px. z 없으면 0
     assert side_px(0.05, 1.0, 500) == 25

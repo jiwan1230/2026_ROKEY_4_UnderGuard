@@ -10,6 +10,7 @@ PATROL/UNDOCK을 받으면 waypoint YAML을 FollowWaypoints로 무한 순찰한�
 """
 import math
 import os
+import time
 
 import rclpy
 import yaml
@@ -50,7 +51,7 @@ class RobotAgent(Node):
     def __init__(self):
         super().__init__('robot_agent')
         self.ns = self.declare_parameter('namespace', 'robot4').value
-        self.threshold = self.declare_parameter('battery_threshold', 40).value
+        self.threshold = self.declare_parameter('battery_threshold', 20).value
         period = self.declare_parameter('battery_check_period', 10.0).value
         self.wp_file = self.declare_parameter(
             'waypoints', os.path.join(
@@ -146,6 +147,11 @@ class RobotAgent(Node):
                 self.start_undocking()
         elif cmd == 'STOP':
             self.stop_patrol()
+            self.pending_target = None  # 언도킹 뒤 보류 goal도 없던 일로
+            if self.driving:
+                # 접근/추적 goal도 끊는다 — 순찰만 끊으면 Nav2가 계속 주행한다.
+                self.nav.cancelTask()
+                self.driving = False
 
     def start_patrol(self):
         """waypoint 순찰 시작. 이미 도는 중이면 무시. waypoint는 첫 호출 때 로드."""
@@ -193,6 +199,15 @@ class RobotAgent(Node):
             self.lap_from = self.lap_start + getattr(
                 self.nav.feedback, 'current_waypoint', 0)
             self.nav.cancelTask()
+            # 취소 '요청'만 보내고 리턴하면 안 된다 — waypoint_follower는 취소
+            # 처리 때 NavigateToPose를 전부 취소(cancel_all)하므로, 그 전에
+            # 보낸 내 goal(접근/도크앞)까지 같이 죽는다. FollowWaypoints의
+            # CANCELED 결과가 돌아온 뒤에야 새 goal을 보내도 안전하다.
+            deadline = time.monotonic() + 3.0   # 실측 ~0.9s + WiFi 여유
+            while not self.nav.isTaskComplete():
+                if time.monotonic() > deadline:
+                    self.get_logger().warn('순찰 취소 결과 대기 timeout — 진행')
+                    break
             self.patrolling = False
 
     def start_docking(self):
@@ -369,6 +384,11 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        # 진행 중 goal 회수 — 안 끊으면 agent가 죽어도 Nav2가 마지막 goal로
+        # 계속 주행한다 (goal 주인은 bt_navigator라 클라이언트 사망과 무관).
+        if getattr(node.nav, 'goal_handle', None) is not None:
+            fut = node.nav.goal_handle.cancel_goal_async()
+            rclpy.spin_until_future_complete(node.nav, fut, timeout_sec=2.0)
         node.nav.destroy_node()
         node.destroy_node()
         rclpy.shutdown()
@@ -397,7 +417,9 @@ class _FakeNav:
     def isDockComplete(self): return self._dock_done
     def undock_send_goal(self): self.undock_sent = True
     def isUndockComplete(self): return self._undock_done
-    def cancelTask(self): self.calls.append('cancel')
+    def cancelTask(self):
+        self.calls.append('cancel')
+        self._task_done = True      # 취소하면 곧 CANCELED 결과가 온다 — 대기 종료
     def goToPose(self, pose):
         self.goto_pose = pose
         self.calls.append('goto')
@@ -513,6 +535,17 @@ def _self_check():
     a = _FakeAgent(_FakeNav(True, None, False, False), None, state='DOCKED')
     a.command_cb(types.SimpleNamespace(data='robot6:HERD'))
     assert not a.undocking_started and a.state == 'DOCKED'
+    # STOP은 순찰뿐 아니라 접근/추적 goal(driving)도 끊는다
+    a = _FakeAgent(_FakeNav(False, None, False, False, docked=False), None,
+                   state='TRACKING')
+    a.driving = True
+    a.command_cb(types.SimpleNamespace(data='robot4:STOP'))
+    assert a.nav.calls == ['cancel'] and not a.driving and a.state == 'IDLE'
+    # STOP은 언도킹 중 보류해둔 goal도 폐기 (완료 후 돌진 방지)
+    a = _FakeAgent(_FakeNav(False, None, False, False), 'UNDOCK')
+    a.pending_target = object()
+    a.command_cb(types.SimpleNamespace(data='robot4:STOP'))
+    assert a.pending_target is None
 
     # hold lease 만료 → detector 무응답 시 자동 해제 + 순찰 재개 (문제 4)
     a = _FakeAgent(_FakeNav(False, None, False, False), None, state='PATROLLING')

@@ -28,7 +28,8 @@ from turtle_interfaces.msg import TrapJob
 from turtle_interfaces.srv import ListHoles, QueryHole
 from turtle_project import fleet_msg
 from turtle_project.depth_math import (decode_depth, depth_at, depth_spread,
-                                       deproject, side_px, to_depth_px)
+                                       deproject, side_px, to_depth_px,
+                                       wall_depth)
 from turtle_project.nav_controller import approach_point, make_pose
 
 FRAME = 'map'
@@ -113,7 +114,7 @@ class DetectorNode(Node):
         res = os.path.join(get_package_share_directory('turtle_project'), 'resource')
         self.model_path = self.declare_parameter(
             'model_path', os.path.join(res, 'best.pt')).value
-        self.conf = self.declare_parameter('conf', 0.7).value
+        self.conf = self.declare_parameter('conf', 0.6).value
         self.approach_dist = self.declare_parameter('approach_dist', 0.5).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.3).value
         self.depth_gap = self.declare_parameter('depth_gap', 0.05).value
@@ -299,7 +300,7 @@ class DetectorNode(Node):
         hold를 먼저 걸면 TF 실패 시 순찰만 멈추고 접근은 안 하는 채로 남는다
         — hold는 _start_approach 안에서 goal이 확정된 뒤 건다.
         """
-        xy = self._box_to_map(box, img_shape, depth, depth_frame)
+        xy = self._box_to_map(box, img_shape, depth, depth_frame, wall=True)
         if xy is None:
             return
         self._start_approach(xy, depth_frame)
@@ -330,15 +331,25 @@ class DetectorNode(Node):
         self.state = 'VERIFYING'
         self.verify_count = 0
 
-    def _box_to_map(self, box, img_shape, depth, depth_frame):
-        """bbox 중심 → depth → deproject → TF map좌표 (x, y). 무효면 None."""
+    def _box_to_map(self, box, img_shape, depth, depth_frame, wall=False):
+        """bbox 중심 → depth → deproject → TF map좌표 (x, y). 무효면 None.
+
+        wall=True(opening용): 중심 depth는 구멍을 관통해 벽 '뒤'를 재므로,
+        그대로 쓰면 접근점이 벽 안/뒤에 찍혀 Nav2가 경로를 못 만든다(FAILED).
+        구멍 옆 벽면 밴드의 depth로 좌표를 벽면 위에 잡는다. rat/trap은 실물이라
+        중심 depth가 맞다 — 기본값 False.
+        """
         du1, dv1 = to_depth_px(box[0], box[1], img_shape, depth.shape)
         du2, dv2 = to_depth_px(box[2], box[3], img_shape, depth.shape)
         du, dv = (du1 + du2) // 2, (dv1 + dv2) // 2
-        # 구멍 안쪽은 어둡고 텍스처가 없어 stereo가 매칭을 못 한다 — 중심 depth가
-        # 0(무효)으로 나오는 게 정상이다. 중심이 비면 bbox 전체로 넓혀 테두리 벽
-        # depth라도 잡는다 (접근점 계산용이라 벽 거리로 충분).
-        z = depth_at(depth, du, dv) or depth_at(
+        z = None
+        if wall:
+            # 밴드폭은 bbox 폭에 비례 — 멀어져 bbox가 작아지면 밴드도 준다.
+            z = wall_depth(depth, du1, dv1, du2, dv2,
+                           side=max(4, (du2 - du1) // 4))
+        # 구멍 안쪽은 어둡고 텍스처가 없어 stereo가 매칭을 못 하는 경우도 있다 —
+        # 그땐 중심이 0(무효). 벽 밴드도 무효면 중심 → bbox 전체 순서로 폴백.
+        z = z or depth_at(depth, du, dv) or depth_at(
             depth, du, dv, patch=max(du2 - du1, dv2 - dv1) // 2)
         if not z:
             self.get_logger().warn('감지했지만 depth 전부 무효 — 좌표 못 냄',
