@@ -463,6 +463,20 @@ def run_trial_real_map(
             core.grid_map, robot2_pos, new_r2_raw, low, high, avoid_point=prev_robot2_pos,
             body_radius_m=real_map_arena.ROBOT_BODY_CLEARANCE_M, clearance_m=clearance_m,
         )
+        # 로봇끼리도 겹칠 수 없다 (2026-08-08). 그 전까지 몸체 크기를 벽에만
+        # 적용해서, 두 로봇이 같은 자리를 차지하는 배치가 시뮬레이션에서
+        # 허용됐다 -- 압박 선분 모드의 반각 15/30도가 "잘 됐던" 이유가 바로
+        # 이것이었다(중심 간격 0.155~0.30m < 최소 0.342m, 즉 사실상 로봇
+        # 한 대를 돌린 셈). 실제 터틀봇 두 대는 그럴 수 없으므로, 겹치면
+        # 이번 스텝 이동을 취소한다.
+        min_center_gap = 2.0 * real_map_arena.ROBOT_RADIUS_M
+        if float(np.linalg.norm(new_r1 - new_r2)) < min_center_gap:
+            if float(np.linalg.norm(new_r1 - robot2_pos)) >= min_center_gap:
+                new_r2 = robot2_pos.copy()          # 로봇 1만 이동
+            elif float(np.linalg.norm(robot1_pos - new_r2)) >= min_center_gap:
+                new_r1 = robot1_pos.copy()          # 로봇 2만 이동
+            else:
+                new_r1, new_r2 = robot1_pos.copy(), robot2_pos.copy()  # 둘 다 정지
         prev_robot1_pos, prev_robot2_pos = robot1_pos, robot2_pos
         robot1_heading = _update_heading(robot1_pos, new_r1, robot1_heading)
         robot2_heading = _update_heading(robot2_pos, new_r2, robot2_heading)

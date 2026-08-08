@@ -18,6 +18,7 @@ from herding_controller_dual.herding_planner import (
     compute_blocking_point,
     compute_driving_point,
     compute_pressure_pair,
+    compute_shaping_pair,
 )
 from herding_controller_dual.occlusion_grid import OcclusionGrid, OcclusionGridConfig
 from herding_controller_dual.role_assigner import RoleAssigner, RoleAssignerConfig, resolve_separation
@@ -111,6 +112,10 @@ class HerdingConfig:
     # 압박 선분에서 두 로봇을 목표 반대편 기준 좌우로 얼마나 벌릴지(도).
     # 크면 진로를 넓게 덮지만 미는 힘(cos 성분)이 줄어드는 트레이드오프.
     pressure_half_angle_deg: float = 45.0
+    # 도주 분포 직접 최적화 모드 (2026-08-08, 트러블슈팅 노트 16번 항목).
+    # True면 두 로봇을 '표적이 포획존 쪽으로 갈 확률이 최대가 되는' 자리에
+    # 같이 놓는다 -- Driver/Blocker 구분 없음. 기본값 False로 기존 동작 유지.
+    shaping_mode_enabled: bool = False
 
     def __post_init__(self) -> None:
         """herd를 교착 상태에 빠뜨리는 것으로 알려진 파라미터 조합을 거부한다.
@@ -169,6 +174,10 @@ class HerdingOutput:
     deadlock_release: bool = False
     # 압박 선분 모드에서만 채워진다: 표적 진로 단면 중 두 로봇이 덮은 비율.
     pressure_coverage: float | None = None
+    # 도주 분포 최적화 모드에서만: 두 대 배치 시 목표방향 확률과, 같은 조건에서
+    # 한 대만 썼을 때의 확률 (두 번째 로봇의 순기여를 그대로 보여준다).
+    shaping_goal_prob: float | None = None
+    shaping_goal_prob_single: float | None = None
 
 
 class HerdingCore:
@@ -571,6 +580,39 @@ class HerdingCore:
                 blocker_pos = observation.robot2_pos if driver_id == 1 else observation.robot1_pos
 
                 clearance = self._ensure_clearance_field()
+                if self.config.shaping_mode_enabled and clearance is not None:
+                    shaping = compute_shaping_pair(
+                        target_state.position, target_state.velocity,
+                        direction_goal - target_state.position, self.escape_model,
+                        self.grid_map, clearance,
+                        self.config.robot_radius_m, self.config.robot_wall_clearance_m,
+                        stand_radius_m=self.config.drive_distance_m,
+                    )
+                    straight = (float(np.linalg.norm(observation.robot1_pos - shaping.point_a))
+                                + float(np.linalg.norm(observation.robot2_pos - shaping.point_b)))
+                    crossed = (float(np.linalg.norm(observation.robot1_pos - shaping.point_b))
+                               + float(np.linalg.norm(observation.robot2_pos - shaping.point_a)))
+                    if straight <= crossed:
+                        robot1_goal, robot2_goal = shaping.point_a, shaping.point_b
+                    else:
+                        robot1_goal, robot2_goal = shaping.point_b, shaping.point_a
+                    self._committed_blocking_point = None
+                    self._reset_deadlock_state()
+                    latency_ms = (time.perf_counter() - start) * 1000.0
+                    return HerdingOutput(
+                        robot1_goal=robot1_goal, robot2_goal=robot2_goal, fsm_state=fsm_state,
+                        driver_id=driver_id, blocker_id=blocker_id,
+                        target_position=target_state.position,
+                        target_velocity=target_state.velocity,
+                        escape_top3=list(escape_estimate.top_k_routes) if escape_estimate else [],
+                        escape_directions=escape_estimate.directions if escape_estimate else None,
+                        escape_probabilities=escape_estimate.probabilities if escape_estimate else None,
+                        latency_ms=latency_ms, panic=False, role_swapped=role_swapped,
+                        deadlock_release=False,
+                        shaping_goal_prob=shaping.goal_prob,
+                        shaping_goal_prob_single=shaping.goal_prob_single,
+                    )
+
                 if self.config.pressure_mode_enabled and clearance is not None:
                     # 압박 선분 모드: 두 로봇 목표를 하나의 기하학에서 같이 뽑는다.
                     # goal_direction은 표적 -> 목표 방향이어야 하므로

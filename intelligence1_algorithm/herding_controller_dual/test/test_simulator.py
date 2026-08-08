@@ -402,3 +402,27 @@ def test_robot_bodies_never_overlap_walls_during_a_real_map_trial():
                 f"{name} step {step} at {pos}: 벽까지 {clearance[row, col]:.3f}m "
                 f"< 필요한 {real_map_arena.ROBOT_BODY_CLEARANCE_M:.3f}m"
             )
+
+
+def test_two_robots_never_overlap_during_a_real_map_trial():
+    """두 로봇 중심 간 거리가 항상 로봇 지름 이상이어야 한다.
+
+    2026-08-08까지 몸체 크기를 벽에만 적용해서 두 로봇이 같은 자리를 차지할
+    수 있었다 -- 압박 선분 모드의 반각 15/30도가 "성능이 좋았던" 이유가 바로
+    이것으로, 중심 간격이 0.155~0.30m(최소 0.342m 미만)여서 사실상 로봇
+    한 대를 돌린 셈이었다. 실제 터틀봇 두 대는 겹칠 수 없으므로 고정해둔다.
+    """
+    from test import real_map_arena
+    from test.evasion_models.reactive_flee import ReactiveFlee
+    from test.run_validation import CONFIG_PATH, load_herding_config, make_real_map_config
+    from test.simulator import run_trial_real_map
+
+    config = make_real_map_config(load_herding_config(CONFIG_PATH), real_map_arena.TRAPS["top"])
+    sim_config = SimulatorConfig()
+    model = ReactiveFlee(sim_config.target_max_speed_mps, config.flee_reaction_distance_m)
+    result = run_trial_real_map(config, model, seed=11, sim_config=sim_config)
+
+    gaps = np.linalg.norm(result.robot1_trajectory - result.robot2_trajectory, axis=1)
+    min_gap = 2.0 * real_map_arena.ROBOT_RADIUS_M
+    assert gaps.min() >= min_gap - 1e-9, (
+        f"두 로봇이 겹쳤다: 최소 간격 {gaps.min():.3f}m < 필요한 {min_gap:.3f}m")

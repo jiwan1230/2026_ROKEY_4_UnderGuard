@@ -460,3 +460,106 @@ def compute_pressure_pair(
         coverage_fraction=float(min(1.0, covered / width)),
         span_m=span, corridor_width_m=corridor_width, wall_anchored=wall_anchored,
     )
+
+
+# --------------------------------------------------------------------------- #
+# 도주 분포 직접 최적화 (Escape Shaping) -- 2026-08-08                          #
+# --------------------------------------------------------------------------- #
+#
+# 지금까지의 모든 시도(driving/blocking point, 봉인 선분, 압박 선분)는
+# **기하학적 휴리스틱**이었다 -- "목표 반대편에 서라", "도주로 앞을 막아라",
+# "±30도로 벌려라". 그리고 전부 로봇 B의 기여를 만들지 못했다(rescue 0~6/450).
+#
+# 정작 표적이 어디로 갈지 결정하는 건 escape_model의 마르코프 분포인데,
+# 그걸 "예측"에만 쓰고 **입력(로봇 위치)을 그 분포에 유리하게 고르는 데는
+# 쓴 적이 없었다.** 이 함수가 그걸 한다:
+#
+#   두 로봇을 어디 세우면 표적이 포획존 쪽으로 갈 확률이 최대가 되는가?
+#
+# escape_model의 로봇 반발 항은 두 로봇의 기여를 **합산**하므로, 두 대는
+# 한 대보다 분포를 더 크게 밀 수 있다 -- 협력이 구조적으로 보장된다.
+# Driver/Blocker 구분도 사라진다: 둘 다 "확률을 유리하게 만드는 자리"에 선다.
+
+
+@dataclass
+class ShapingPair:
+    """도주 분포를 최적화한 두 로봇 목표점과 그때의 목표방향 확률."""
+    point_a: np.ndarray
+    point_b: np.ndarray
+    goal_prob: float          # 표적이 포획존 쪽(반각 GOAL_CONE 이내)으로 갈 확률
+    goal_prob_single: float   # 한 대만 썼을 때의 같은 확률 (기여 측정용)
+
+
+# 목표 방향으로 간다고 볼 각도 폭(반각). 8방위 모델이라 45도면 목표 방향
+# 인접 방향까지 포함된다 -- 너무 좁게 잡으면 정확히 한 방향만 인정해
+# 최적화가 과도하게 뾰족해진다.
+_GOAL_CONE_COS = np.cos(np.radians(67.5))
+
+
+def _goal_directed_probability(estimate: EscapeEstimate, goal_direction: np.ndarray) -> float:
+    """도주 확률 분포 중 '포획존 쪽' 방향들에 실린 확률의 합."""
+    dots = estimate.directions @ goal_direction
+    return float(estimate.probabilities[dots >= _GOAL_CONE_COS].sum())
+
+
+def compute_shaping_pair(
+    target_pos: np.ndarray,
+    target_vel: np.ndarray,
+    goal_direction: np.ndarray,
+    escape_model,
+    grid_map: GridMap,
+    clearance_m,
+    robot_radius_m: float,
+    wall_clearance_m: float,
+    stand_radius_m: float,
+    n_angles: int = 16,
+    rounds: int = 2,
+) -> ShapingPair:
+    """표적이 포획존 쪽으로 갈 확률을 최대화하는 두 로봇 위치를 고른다.
+
+    표적 중심 반지름 `stand_radius_m` 원 위의 `n_angles`개 후보 중에서,
+    두 로봇 위치 쌍을 좌표상승법(한쪽 고정하고 다른 쪽 최적화, `rounds`회
+    반복)으로 고른다 -- 전체 쌍을 다 보면 O(n^2)라 제어 주기 안에 못 끝낸다.
+
+    반환값의 `goal_prob_single`은 같은 조건에서 한 대만 썼을 때의 확률로,
+    "두 번째 로봇이 분포를 얼마나 더 밀었는가"를 그대로 보여준다.
+    """
+    direction = np.asarray(goal_direction, dtype=float)
+    norm = float(np.linalg.norm(direction))
+    direction = np.array([1.0, 0.0]) if norm < 1e-9 else direction / norm
+    target = np.asarray(target_pos, dtype=float)
+    body_clearance = robot_radius_m + wall_clearance_m
+
+    # 로봇이 실제로 설 수 있는 후보만 남긴다.
+    candidates = []
+    for a in np.linspace(0.0, 2.0 * np.pi, n_angles, endpoint=False):
+        point = target + stand_radius_m * np.array([np.cos(a), np.sin(a)])
+        if _cell_clearance(point, grid_map, clearance_m) >= body_clearance:
+            candidates.append(point)
+    if not candidates:
+        behind = target - direction * stand_radius_m
+        return ShapingPair(behind.copy(), behind.copy(), 0.0, 0.0)
+
+    def score(points):
+        est = escape_model.compute(target, target_vel, points)
+        return _goal_directed_probability(est, direction)
+
+    # 초기값: 목표 반대편(가장 그럴듯한 미는 자리)에 가장 가까운 후보 둘
+    order = sorted(range(len(candidates)),
+                   key=lambda i: -float(np.dot(target - candidates[i], direction)))
+    idx_a = order[0]
+    idx_b = order[1] if len(order) > 1 else order[0]
+
+    for _ in range(rounds):
+        idx_a = max(range(len(candidates)),
+                    key=lambda i: score([candidates[i], candidates[idx_b]]))
+        idx_b = max(range(len(candidates)),
+                    key=lambda i: score([candidates[idx_a], candidates[i]]))
+
+    point_a, point_b = candidates[idx_a], candidates[idx_b]
+    both = score([point_a, point_b])
+    # 한 대만 쓸 때의 최선: 남은 한 대는 표적에서 아주 멀리 있다고 본다
+    far = target + direction * 1e3
+    single = max(score([candidates[i], far]) for i in range(len(candidates)))
+    return ShapingPair(point_a=point_a, point_b=point_b,
+                       goal_prob=both, goal_prob_single=single)
