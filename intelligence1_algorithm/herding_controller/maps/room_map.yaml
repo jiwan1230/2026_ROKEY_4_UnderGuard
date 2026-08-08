@@ -4,4 +4,6 @@ resolution: 0.05
 origin: [-3.19, -9.03, 0]
 negate: 0
 occupied_thresh: 0.65
-free_thresh: 0.25
+# 회색값 205는 occupancy≈0.196 — free_thresh 0.25면 free로 뚫려 벽 통과 위험.
+# 0.196으로 낮춰 회색을 unknown으로 보존한다 (실기서 OccupancyGrid 덤프로 확인).
+free_thresh: 0.196

@@ -360,6 +360,9 @@ def run_trial_real_map(
     core = HerdingCore(herding_config)
     core.grid_map.obstacle_mask = obstacle_mask
     distance_field = real_map_arena.build_distance_field(obstacle_mask)
+    # 미터 단위 거리장 -- 로봇/표적이 자기 몸체 반지름만큼 벽에서 떨어져 있는지
+    # 판정하는 데 쓴다 (2026-08-08 추가, 그 전엔 둘 다 점으로 취급했다).
+    clearance_m = real_map_arena.clearance_field_m(obstacle_mask)
     _bind_model_to_arena(evasion_model, core.grid_map)
 
     grid = core.grid_map.config
@@ -367,7 +370,7 @@ def run_trial_real_map(
     high = low + np.array([grid.width_cells, grid.height_cells]) * grid.resolution_m
 
     target_spawn = real_map_arena.sample_free_spawn(
-        core.grid_map, rng, min_clear_m=0.3,
+        core.grid_map, rng, min_clear_m=max(0.3, real_map_arena.TARGET_RADIUS_M),
         exclude_points=[real_map_arena.ROBOT_A_SPAWN, real_map_arena.ROBOT_B_SPAWN]
         + list(real_map_arena.TRAPS.values()),
         exclude_radius_m=0.6,
@@ -387,7 +390,8 @@ def run_trial_real_map(
         # 완전히 얼어붙는다 (실측: 100초 넘게 좌표 완전 고정, 트러블슈팅
         # 노트 10-4 항목).
         return real_map_arena.step_body_sliding(
-            core_arg.grid_map, position, proposed, low_arg, high_arg, avoid_point=prev_target_pos
+            core_arg.grid_map, position, proposed, low_arg, high_arg, avoid_point=prev_target_pos,
+            body_radius_m=real_map_arena.TARGET_RADIUS_M, clearance_m=clearance_m,
         )
 
     target_traj, robot1_traj, robot2_traj = [], [], []
@@ -452,10 +456,12 @@ def run_trial_real_map(
             robot2_pos, output.robot2_goal, distance_field, core.grid_map, speed, sim_config.dt
         )
         new_r1 = real_map_arena.step_body_sliding(
-            core.grid_map, robot1_pos, new_r1_raw, low, high, avoid_point=prev_robot1_pos
+            core.grid_map, robot1_pos, new_r1_raw, low, high, avoid_point=prev_robot1_pos,
+            body_radius_m=real_map_arena.ROBOT_BODY_CLEARANCE_M, clearance_m=clearance_m,
         )
         new_r2 = real_map_arena.step_body_sliding(
-            core.grid_map, robot2_pos, new_r2_raw, low, high, avoid_point=prev_robot2_pos
+            core.grid_map, robot2_pos, new_r2_raw, low, high, avoid_point=prev_robot2_pos,
+            body_radius_m=real_map_arena.ROBOT_BODY_CLEARANCE_M, clearance_m=clearance_m,
         )
         prev_robot1_pos, prev_robot2_pos = robot1_pos, robot2_pos
         robot1_heading = _update_heading(robot1_pos, new_r1, robot1_heading)

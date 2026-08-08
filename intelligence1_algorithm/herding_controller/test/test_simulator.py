@@ -341,3 +341,66 @@ def test_capture_reports_the_elapsed_time_not_the_trial_limit():
     assert result.success is True
     assert result.duration_sec < 5.0
     assert result.duration_sec == pytest.approx(len(result.target_trajectory) * sim_config.dt)
+
+
+# --------------------------------------------------------------------------- #
+# 물체의 물리적 크기 (2026-08-08) -- 로봇/표적을 점이 아니라 원으로 취급       #
+# --------------------------------------------------------------------------- #
+
+def test_step_body_rejects_positions_where_the_body_would_overlap_a_wall():
+    """반지름을 주면, 중심 셀이 자유공간이어도 몸체가 벽을 파고드는 위치는 거부돼야 한다.
+
+    이 검사가 없으면 body_radius_m을 배선해놓고도 아무 효과가 없는 걸(예: 거리장을
+    안 넘겨서 조용히 무시되는 경우) 못 잡는다 -- 두 로봇이 통로를 몸으로 막을 수
+    있는지 판정하는 전체 근거가 이 반지름이므로, 실제로 강제되는지 고정해둔다.
+    """
+    from test import real_map_arena
+
+    mask = real_map_arena.load_room_obstacle_mask()
+    grid_map = real_map_arena.build_grid_map(mask)
+    clearance = real_map_arena.clearance_field_m(mask)
+    grid = grid_map.config
+    low = np.array([grid.origin_x_m, grid.origin_y_m])
+    high = low + np.array([grid.width_cells, grid.height_cells]) * grid.resolution_m
+
+    # 벽에서 0.20m 떨어진 지점(트랩 자리) -- 자유공간이지만 로봇 몸체
+    # (0.171m + 여유 0.03m = 0.201m)에는 1mm 모자란다.
+    tight = real_map_arena.TRAPS["top"]
+    assert not mask[grid_map.world_to_cell(*tight)], "이 지점은 자유공간이어야 테스트가 성립한다"
+    start = real_map_arena.ROBOT_A_SPAWN.copy()
+
+    as_point = real_map_arena._step_body(grid_map, start, tight, low, high)
+    np.testing.assert_allclose(as_point, tight, atol=1e-9)  # 점으로 보면 갈 수 있고
+
+    as_robot = real_map_arena._step_body(
+        grid_map, start, tight, low, high,
+        body_radius_m=real_map_arena.ROBOT_BODY_CLEARANCE_M, clearance_m=clearance,
+    )
+    np.testing.assert_allclose(as_robot, start, atol=1e-9)  # 몸체를 고려하면 못 간다
+
+
+def test_robot_bodies_never_overlap_walls_during_a_real_map_trial():
+    """실제 맵 시행 내내 두 로봇 중심이 벽에서 몸체 반지름 이상 떨어져 있어야 한다."""
+    import dataclasses
+
+    from test import real_map_arena
+    from test.evasion_models.reactive_flee import ReactiveFlee
+    from test.run_validation import CONFIG_PATH, load_herding_config, make_real_map_config
+    from test.simulator import run_trial_real_map
+
+    config = make_real_map_config(load_herding_config(CONFIG_PATH), real_map_arena.TRAPS["top"])
+    sim_config = SimulatorConfig()
+    mask = real_map_arena.load_room_obstacle_mask()
+    grid_map = real_map_arena.build_grid_map(mask)
+    clearance = real_map_arena.clearance_field_m(mask)
+
+    model = ReactiveFlee(sim_config.target_max_speed_mps, config.flee_reaction_distance_m)
+    result = run_trial_real_map(config, model, seed=7, sim_config=sim_config)
+
+    for name, traj in (("robot1", result.robot1_trajectory), ("robot2", result.robot2_trajectory)):
+        for step, pos in enumerate(traj):
+            row, col = grid_map.world_to_cell(*pos)
+            assert clearance[row, col] >= real_map_arena.ROBOT_BODY_CLEARANCE_M - 1e-9, (
+                f"{name} step {step} at {pos}: 벽까지 {clearance[row, col]:.3f}m "
+                f"< 필요한 {real_map_arena.ROBOT_BODY_CLEARANCE_M:.3f}m"
+            )

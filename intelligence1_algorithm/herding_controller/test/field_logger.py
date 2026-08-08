@@ -54,8 +54,9 @@ def detect_rule_violations(
     """로봇이 reaction_distance_m 이내에 있는데도 타겟이 그쪽으로 이동하는 주기를 센다 (규칙 2).
 
     `reaction_distance_m`은 조작자 프로토콜의 규칙 2 반경, 즉 설정값의
-    `flee_reaction_distance_m`(1.0 m, "로봇이 약 1m 안으로 들어오면 도망친다")을 의미하며,
-    `panic_distance_m`(0.35 m, 플래너 자체의 후퇴 임계값)이 아니다. 후자를 넘기면
+    `flee_reaction_distance_m`(2026-08-08 기준 0.42 m, "로봇이 약 40cm 안으로
+    들어오면 도망친다" -- docs/operator_protocol.md와 반드시 같은 값이어야 한다)을
+    의미하며, `panic_distance_m`(플래너 자체의 후퇴 임계값)이 아니다. 후자를 넘기면
     위반을 과소 집계하여 20% 위반 시행 제외 분석을 왜곡하게 된다.
     """
     if not (len(robot_positions) == len(target_positions) == len(target_velocities)):

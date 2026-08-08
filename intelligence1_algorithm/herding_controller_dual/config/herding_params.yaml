@@ -69,6 +69,15 @@ herding_controller_dual:
     # (up to 84%) in the room's ~1m-wide corridors. Current shipped values:
     drive_distance_m: 0.3
     flee_reaction_distance_m: 0.42
+    # 2026-08-08: 시뮬레이터가 로봇(반지름 0.171m)과 RC카(반지름 0.101m)를 점이
+    # 아니라 실제 크기로 다루기 시작하면서, 두 중심 사이 최소 물리 거리가
+    # 0.272m가 됐다 -- 즉 이 값(0.12)은 물리적으로 도달 불가능해 panic 후퇴가
+    # 사실상 꺼져 있는 상태다. 그런데 실측해보니 그게 오히려 낫다:
+    # panic_distance_m을 물리적으로 유효한 값으로 올리면(0.30/0.35) 성공률이
+    # 85.8% -> 82.5%/83.3%로 떨어진다. Driver가 불필요하게 후퇴해 밀어내기가
+    # 약해지기 때문이다. 몸체 크기 자체가 예전에 panic 후퇴가 하던 "너무
+    # 가까이 붙지 않기"를 물리적으로 보장하므로 소프트웨어 후퇴는 이제
+    # 중복이다. 값을 바꾸려면 반드시 run_real_map_algo_suite로 재검증할 것.
     panic_distance_m: 0.12
     alignment_threshold: 0.7
     drive_distance_ease_factor: 1.15

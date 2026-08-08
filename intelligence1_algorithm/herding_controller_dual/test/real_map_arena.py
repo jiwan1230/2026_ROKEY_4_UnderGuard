@@ -33,7 +33,25 @@ ORIGIN_X_M, ORIGIN_Y_M = -3.19, -9.03
 # 2/Blocker), ROBOT_A_SPAWN은 순찰을 시작하는 초기 위치(로봇 1/Driver-가
 # 될 로봇 -- 발견 전까지는 아직 "Driver"가 아니라 그냥 순찰 중인 로봇이다).
 ROBOT_A_SPAWN = np.array([-1.06, -3.60])
-ROBOT_B_SPAWN = np.array([-2.81, -3.35])
+# 2026-08-08: 기존 (-2.81, -3.35)는 벽에서 정확히 0.200m라, 로봇 몸체
+# 반지름(0.171m) + 벽 여유(0.03m) = 0.201m에 1mm 모자라 로봇이 물리적으로
+# 설 수 없는 지점이었다. 5cm만 안쪽으로 옮겼다 (충전소 성격의 대기 지점이라
+# 위치 자체에 의미는 없다).
+ROBOT_B_SPAWN = np.array([-2.76, -3.35])
+
+# --- 물체의 물리적 크기 (2026-08-08 추가) -------------------------------- #
+# 그 전까지 로봇과 표적을 모두 "점"으로 취급했다. 두 로봇이 통로를 몸으로
+# 막을 수 있는지(봉인)를 판정하려면 실제 크기가 반드시 필요하다.
+#
+# TurtleBot 4 실측 스펙: 342 x 339 x 351 mm -> 반지름 0.171m.
+ROBOT_RADIUS_M = 0.171
+# 벽에 이 정도만 여유를 두면 된다고 확인받은 값 (팀 확인, 2026-08-08).
+ROBOT_WALL_CLEARANCE_M = 0.03
+# 로봇 중심이 벽에서 최소한 떨어져 있어야 하는 거리.
+ROBOT_BODY_CLEARANCE_M = ROBOT_RADIUS_M + ROBOT_WALL_CLEARANCE_M
+# RC카(표적) 실측: 세로 18cm x 가로 9cm. 어느 방향으로 놓이든 안전하도록
+# 외접원 반지름(대각선의 절반)을 쓴다: sqrt(0.09^2 + 0.045^2) ~= 0.101m.
+TARGET_RADIUS_M = 0.101
 
 # 포획구역(트랩) 후보 3곳 -- 사진에서 픽셀 좌표를 역산해 얻은 실측 좌표
 # (real_map_sim.py에서 검증됨: top/bottom 라벨이 한 번 뒤바뀌어 있던 걸
@@ -140,16 +158,36 @@ def _wall_repulsion_direction(position, distance_field, grid_map, radius_cells=6
     return grad / norm, clearance_m
 
 
-def _step_body(grid_map, position, proposed, low, high):
-    """물체를 proposed 위치로 이동시킨다. 아레나 안으로 클램프되고 장애물 셀에 막힌다."""
+def clearance_field_m(obstacle_mask: np.ndarray, resolution_m: float = RESOLUTION_M) -> np.ndarray:
+    """각 셀에서 가장 가까운 장애물까지의 거리(미터). 물체 반지름 충돌 판정용.
+
+    `build_distance_field()`는 셀 단위를 반환하는 벽 회피 전용이라 그대로
+    쓸 수 없다 -- 여기서는 미터 단위여야 반지름(m)과 직접 비교할 수 있다.
+    """
+    return ndimage.distance_transform_edt(~obstacle_mask) * resolution_m
+
+
+def _step_body(grid_map, position, proposed, low, high, body_radius_m=0.0, clearance_m=None):
+    """물체를 proposed 위치로 이동시킨다. 아레나 안으로 클램프되고 벽에 막힌다.
+
+    `body_radius_m`이 0이면 예전처럼 물체를 점으로 취급한다(하위호환 -- 추상
+    아레나 검증 등 크기가 의미 없는 곳은 그대로 둔다). 0보다 크면 "중심이
+    벽에서 body_radius_m 이상 떨어져 있어야 한다"로 판정하므로, 몸체가 벽을
+    파고드는 위치는 거부된다. `clearance_m`(미터 단위 거리장)은
+    `clearance_field_m()`으로 시행 시작 시 1회만 계산해서 넘긴다.
+    """
     moved = np.clip(np.asarray(proposed, dtype=float), low, high - 1e-9)
     row, col = grid_map.world_to_cell(*moved)
     if grid_map.obstacle_mask[row, col]:
         return np.asarray(position, dtype=float).copy()
+    if body_radius_m > 0.0 and clearance_m is not None:
+        if clearance_m[row, col] < body_radius_m:
+            return np.asarray(position, dtype=float).copy()
     return moved
 
 
-def step_body_sliding(grid_map, position, proposed, low, high, avoid_point=None):
+def step_body_sliding(grid_map, position, proposed, low, high, avoid_point=None,
+                      body_radius_m=0.0, clearance_m=None):
     """직선 이동이 벽에 막히면, 원래 방향과 각도 차이가 가장 작은 실제로 갈 수 있는 방향을 찾는다.
 
     실제 room_map에는 지그재그로 꺾인 좁은 문턱이 있어서, 직선 경로가
@@ -157,7 +195,7 @@ def step_body_sliding(grid_map, position, proposed, low, high, avoid_point=None)
     개발/검증된 로직). `avoid_point`(두 스텝 전 위치)로 되돌아가는 후보는
     제외해 진동을 막는다.
     """
-    direct = _step_body(grid_map, position, proposed, low, high)
+    direct = _step_body(grid_map, position, proposed, low, high, body_radius_m, clearance_m)
     if not np.array_equal(direct, position):
         return direct
 
@@ -169,7 +207,7 @@ def step_body_sliding(grid_map, position, proposed, low, high, avoid_point=None)
     ranked = sorted(_SLIDE_ANGLES, key=lambda a: abs(((a - original_angle) + np.pi) % (2 * np.pi) - np.pi))
     for angle in ranked:
         candidate = position + step_len * np.array([np.cos(angle), np.sin(angle)])
-        moved = _step_body(grid_map, position, candidate, low, high)
+        moved = _step_body(grid_map, position, candidate, low, high, body_radius_m, clearance_m)
         if np.array_equal(moved, position):
             continue
         if avoid_point is not None and np.linalg.norm(moved - avoid_point) < step_len * 0.5:
