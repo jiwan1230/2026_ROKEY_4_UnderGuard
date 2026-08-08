@@ -178,3 +178,219 @@ def test_blocking_point_ignores_geodesic_filter_when_field_is_none():
     point = compute_blocking_point(target_pos, goal_pos, estimate, grid, config)
     expected = target_pos + directions[6] * config.block_lookahead_m
     np.testing.assert_allclose(point, expected)
+
+
+# --------------------------------------------------------------------------- #
+# 봉인 선분 (compute_sealing_pair) -- 2026-08-08                               #
+# --------------------------------------------------------------------------- #
+#
+# 실측 상수 (test/real_map_arena.py와 같은 값): 로봇 반지름 0.171m,
+# 벽 여유 0.03m, 표적(RC카) 폭 0.09m.
+#   -> 두 로봇 중심 사이가 0.342~0.432m면 두 대로 봉인
+#   -> 통로가 그보다 넓으면 봉인 불가(유도 모드로 넘어가야 함)
+
+_R, _C, _W = 0.171, 0.03, 0.09
+
+
+def _corridor_grid(width_m, resolution_m=0.05, length_m=4.0):
+    """가로로 뻗은 폭 `width_m`짜리 직선 통로 하나짜리 격자."""
+    from scipy import ndimage
+
+    from herding_controller_dual.grid_map import GridConfig, GridMap
+
+    w = int(round(length_m / resolution_m))
+    h = int(round((width_m + 2.0) / resolution_m))
+    mask = np.ones((h, w), dtype=bool)
+    y0 = int(round(1.0 / resolution_m))
+    y1 = y0 + int(round(width_m / resolution_m))
+    mask[y0:y1, :] = False
+
+    grid_map = GridMap(GridConfig(resolution_m=resolution_m, width_cells=w, height_cells=h,
+                                  origin_x_m=0.0, origin_y_m=0.0))
+    grid_map.obstacle_mask = mask
+    clearance = ndimage.distance_transform_edt(~mask) * resolution_m
+    return grid_map, clearance, (y0 + y1) / 2.0 * resolution_m
+
+
+def _seal(width_m, back=0.3):
+    from herding_controller_dual.herding_planner import compute_sealing_pair
+
+    grid_map, clearance, cy = _corridor_grid(width_m)
+    return compute_sealing_pair(
+        np.array([2.0, cy]), goal_direction=np.array([1.0, 0.0]), grid_map=grid_map,
+        clearance_m=clearance, robot_radius_m=_R, wall_clearance_m=_C,
+        target_width_m=_W, back_distance_m=back,
+    ), grid_map, clearance
+
+
+def test_sealing_pair_seals_a_corridor_that_needs_both_robots():
+    """두 로봇이 나란히 서야만 막히는 폭(0.85m)에서 봉인이 성립해야 한다."""
+    pair, _, _ = _seal(0.85)
+    assert pair.is_sealed, f"봉인 실패 (span={pair.span_m:.3f}, 폭={pair.corridor_width_m:.3f})"
+    assert pair.requires_both, "두 대가 필요한 폭인데 한 대로 충분하다고 판정됨"
+    assert 2 * _R - 1e-9 <= pair.span_m <= 2 * _R + _W + 1e-9
+
+
+def test_sealing_pair_refuses_to_claim_a_seal_in_a_wide_room():
+    """물리 봉인 한계보다 훨씬 넓은 공간은 봉인됐다고 주장하면 안 된다.
+
+    이 검사가 없으면 두 로봇을 0.43m 벌려 세워놓고 "봉인 성공"이라 보고하면서
+    양옆이 뻥 뚫린 걸 놓친다 -- 넓은 공간에서는 봉인이 불가능하다는 걸
+    알고리즘이 스스로 알아야 유도 모드로 넘어갈 수 있다.
+    """
+    pair, _, _ = _seal(2.5)
+    assert not pair.is_sealed, "폭 2.5m 공간을 봉인했다고 잘못 보고함"
+    assert pair.corridor_width_m > 2.0
+
+
+def test_sealing_pair_reports_single_robot_seal_without_claiming_cooperation():
+    """로봇 두 대가 나란히 못 서는 아주 좁은 통로는 requires_both=False여야 한다.
+
+    이 구간은 한 대로도 막히므로 "로봇 B가 기여했다"는 근거로 쓸 수 없다 --
+    두 대를 같은 자리에 겹쳐 세워놓고 봉인 성공이라 보고하는 퇴화 케이스를
+    막는 검사이기도 하다.
+    """
+    pair, _, _ = _seal(0.45)   # 로봇(지름 0.342) 하나는 들어가지만 둘은 못 나란히 섬
+    assert not pair.requires_both
+    np.testing.assert_allclose(pair.point_a, pair.point_b, atol=1e-9)
+
+
+def test_sealing_pair_places_the_line_behind_the_target():
+    """선분은 표적 뒤쪽(포획존 반대편)에 놓여야 밀어내는 방향이 맞다."""
+    pair, _, _ = _seal(0.85)
+    midpoint = (pair.point_a + pair.point_b) / 2.0
+    assert midpoint[0] < 2.0, f"선분이 표적 앞에 놓임: {midpoint}"
+    np.testing.assert_allclose(midpoint[0], 2.0 - 0.3, atol=1e-6)
+
+
+def test_sealing_pair_endpoints_are_reachable_by_a_robot_body():
+    """두 끝점 모두 로봇 몸체가 실제로 설 수 있는 자리여야 한다(벽 속이면 안 됨)."""
+    pair, grid_map, clearance = _seal(0.85)
+    for label, point in (("a", pair.point_a), ("b", pair.point_b)):
+        row, col = grid_map.world_to_cell(*point)
+        assert clearance[row, col] >= _R + _C - 1e-9, (
+            f"끝점 {label} {point}: 벽까지 {clearance[row, col]:.3f}m < 필요 {_R + _C:.3f}m")
+
+
+def test_sealing_pair_gap_between_robots_is_narrower_than_the_target():
+    """봉인이라고 판정했다면, 두 로봇 몸통 사이 틈이 표적 폭보다 실제로 좁아야 한다."""
+    for width in (0.75, 0.85, 0.95):
+        pair, _, _ = _seal(width)
+        if not pair.is_sealed:
+            continue
+        gap = pair.span_m - 2 * _R
+        assert gap < _W, f"폭 {width}m: 봉인이라면서 틈이 {gap:.3f}m >= 표적 폭 {_W}m"
+
+
+def test_sealing_pair_returns_unsealed_when_the_line_center_is_inside_a_wall():
+    """선분 중심이 벽 안이면(로봇이 설 수 없으면) 봉인 불가로 나와야 한다."""
+    from herding_controller_dual.herding_planner import compute_sealing_pair
+
+    grid_map, clearance, cy = _corridor_grid(0.85)
+    # 표적을 통로 끝 벽 쪽에 두고, 선분을 벽 바깥으로 물리게 한다.
+    pair = compute_sealing_pair(
+        np.array([0.1, cy]), goal_direction=np.array([1.0, 0.0]), grid_map=grid_map,
+        clearance_m=clearance, robot_radius_m=_R, wall_clearance_m=_C,
+        target_width_m=_W, back_distance_m=1.0,
+    )
+    assert not pair.is_sealed
+
+
+# --------------------------------------------------------------------------- #
+# 압박 선분 (compute_pressure_pair) -- 2026-08-08                              #
+# --------------------------------------------------------------------------- #
+
+_F = 0.42   # flee_reaction_distance_m
+
+
+def _pressure(width_m, flee=_F, back=0.3):
+    from herding_controller_dual.herding_planner import compute_pressure_pair
+
+    grid_map, clearance, cy = _corridor_grid(width_m)
+    return compute_pressure_pair(
+        np.array([2.0, cy]), goal_direction=np.array([1.0, 0.0]), grid_map=grid_map,
+        clearance_m=clearance, robot_radius_m=_R, wall_clearance_m=_C,
+        flee_reaction_distance_m=flee, back_distance_m=back,
+    ), grid_map, clearance
+
+
+def test_pressure_pair_fully_covers_a_narrow_corridor():
+    """두 로봇의 커버 폭 안쪽인 통로는 단면을 100% 덮어야 한다.
+
+    로봇은 표적 중심 반지름 back(0.3m) 원 위 ±half_angle(기본 60도)에 놓이므로,
+    진행방향 수직축 투영 좌표는 ±0.3*sin(60도)=±0.26. 각자 f=0.42를 덮으므로
+    전체 커버 폭은 2*(0.26+0.42)=1.36m다.
+    """
+    pair, _, _ = _pressure(1.2)
+    assert pair.coverage_fraction >= 0.999, f"커버율 {pair.coverage_fraction:.3f}"
+
+
+def test_pressure_pair_cannot_cover_a_room_much_wider_than_four_flee_radii():
+    """4f보다 훨씬 넓으면 100% 커버는 불가능해야 한다 -- 과대보고 방지."""
+    pair, _, _ = _pressure(3.5)
+    assert pair.coverage_fraction < 0.7, f"넓은 공간인데 커버율 {pair.coverage_fraction:.3f}"
+
+
+def test_pressure_pair_spread_follows_the_half_angle_on_the_push_circle():
+    """벽이 멀면 두 로봇 간격은 2*back*sin(half_angle)이어야 한다.
+
+    처음엔 수직선 위에 ±f로 벌렸는데, 그러면 각 로봇이 표적에서
+    sqrt(back^2+f^2)=0.52m 떨어져 반응거리(0.42m) 밖으로 나가 표적이 아예
+    도주하지 않았다(5회 중 0회 포획). 원 위 배치는 두 로봇 모두 정확히
+    back만큼 떨어뜨려 이 문제를 없앤다 -- 이 테스트가 그 회귀를 막는다.
+    """
+    back, half_angle = 0.3, np.pi / 3.0
+    pair, _, _ = _pressure(3.5, back=back)
+    np.testing.assert_allclose(pair.span_m, 2 * back * np.sin(half_angle), atol=0.06)
+    assert not pair.wall_anchored
+    # 두 로봇 모두 표적에서 back만큼 떨어져 있어야 도주 반응이 걸린다
+    target = np.array([2.0, _corridor_grid(3.5)[2]])
+    for point in (pair.point_a, pair.point_b):
+        np.testing.assert_allclose(np.linalg.norm(point - target), back, atol=1e-6)
+
+
+def test_pressure_pair_anchors_to_a_near_wall_and_shifts_coverage_outward():
+    """한쪽 벽이 가까우면 그쪽은 벽에 붙이고 남은 폭을 반대쪽에 몰아줘야 한다 (C 전략).
+
+    벽에 붙였는데도 반대쪽을 안 늘리면, 열린 쪽이 그만큼 뚫린 채로 남는다 --
+    이 검사가 그 회귀를 막는다.
+    """
+    from herding_controller_dual.herding_planner import compute_pressure_pair
+
+    grid_map, clearance, cy = _corridor_grid(1.0)
+    # 표적을 통로 중앙이 아니라 한쪽 벽 가까이에 둔다 -> 한쪽 reach가 짧아진다
+    target = np.array([2.0, cy + 0.30])
+    pair = compute_pressure_pair(
+        target, goal_direction=np.array([1.0, 0.0]), grid_map=grid_map,
+        clearance_m=clearance, robot_radius_m=_R, wall_clearance_m=_C,
+        flee_reaction_distance_m=_F, back_distance_m=0.3,
+    )
+    assert pair.wall_anchored, "벽이 가까운데 벽 활용이 발동하지 않음"
+    # 합이 2f를 넘지 않아야 가운데가 안 뚫린다
+    assert pair.span_m <= 2 * _F + 1e-6
+
+
+def test_pressure_pair_never_places_a_robot_inside_a_wall():
+    for width in (0.8, 1.0, 1.5, 2.5):
+        pair, grid_map, clearance = _pressure(width)
+        for label, point in (("a", pair.point_a), ("b", pair.point_b)):
+            row, col = grid_map.world_to_cell(*point)
+            assert clearance[row, col] >= _R + _C - 1e-9, (
+                f"폭 {width}m 끝점 {label}: 벽까지 {clearance[row, col]:.3f}m")
+
+
+def test_pressure_pair_coverage_grows_with_the_flee_radius():
+    """쥐가 더 멀리서부터 피할수록 같은 공간에서 커버율이 높아져야 한다."""
+    low, _, _ = _pressure(2.8, flee=0.42)
+    high, _, _ = _pressure(2.8, flee=0.70)
+    assert high.coverage_fraction > low.coverage_fraction + 0.1, (
+        f"f=0.42 -> {low.coverage_fraction:.2f}, f=0.70 -> {high.coverage_fraction:.2f}")
+
+
+def test_pressure_pair_two_robots_cover_more_than_one_would():
+    """두 로봇의 커버 폭이 한 대(2f)보다 실제로 넓어야 한다 -- 협력의 기하학적 근거."""
+    pair, _, _ = _pressure(2.8)
+    single_cover = 2 * _F
+    pair_cover = pair.coverage_fraction * pair.corridor_width_m
+    assert pair_cover > single_cover * 1.5, (
+        f"두 대 커버 {pair_cover:.2f}m vs 한 대 {single_cover:.2f}m -- 협력 이득이 없다")

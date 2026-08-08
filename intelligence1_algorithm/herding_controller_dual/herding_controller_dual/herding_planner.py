@@ -187,3 +187,276 @@ def compute_blocking_point(
     if previous_point is not None:
         return np.asarray(previous_point, dtype=float).copy()
     return target_pos.copy()
+
+
+# --------------------------------------------------------------------------- #
+# 봉인 선분 (Sealing Line) -- 2026-08-08                                       #
+# --------------------------------------------------------------------------- #
+#
+# 배경: Driver/Blocker로 역할을 나눠 각자 따로 목표점을 계산하는 기존 방식은,
+# 로봇 B가 성공률에 기여한다는 증거를 끝내 못 만들었다 (트러블슈팅 노트 11~14:
+# N=450 페어드 비교에서 B가 결과를 바꾼 시행이 1건(0.2%)뿐). 근본 원인은
+# "Blocker가 예측된 도주 방향 앞에 혼자 서 있기"라서, 없어도 표적이 대부분
+# 같은 결과로 흘러가기 때문이다.
+#
+# 봉인 선분은 정반대 발상이다: 두 로봇을 **하나의 선분으로 묶어서** 통로를
+# 몸으로 막는다. 통로 단면을 [벽|틈1|로봇A|틈2|로봇B|틈3|벽]으로 보고, 세 틈이
+# 전부 표적 폭보다 좁으면 표적은 물리적으로 못 지나간다 -- 즉 한 대를 빼면
+# 틈2가 벌어져 봉인이 깨지므로, 기여가 정의상 증명된다.
+#
+# 기하학 (r=로봇 반지름, c=벽 여유, w=표적 폭, S=두 로봇 중심 사이 거리):
+#   틈2 = S - 2r  -> 막히려면 S <= 2r + w
+#   틈1/틈3       -> 각 로봇을 벽 쪽으로 최대한 붙이면 c 가 되고, c < w 이면 막힘
+#   로봇끼리 겹치지 않으려면 S >= 2r
+# 실측값(r=0.171, c=0.03, w=0.09): 0.342 <= S <= 0.432 이면 두 대로 봉인.
+
+
+@dataclass
+class SealingPair:
+    """봉인 선분의 두 끝점과 그 선분이 실제로 통로를 막고 있는지에 대한 판정."""
+    point_a: np.ndarray          # 선분의 한쪽 끝 (진행방향 기준 왼쪽)
+    point_b: np.ndarray          # 반대쪽 끝
+    is_sealed: bool              # 표적이 이 선을 통과할 수 없는가
+    requires_both: bool          # 봉인에 로봇 두 대가 실제로 필요한가
+                                 # (False면 한 대로도 막히는 좁은 통로 -- 기여
+                                 #  증명에는 쓸 수 없는 구간이다)
+    span_m: float                # 두 끝점 사이 거리
+    corridor_width_m: float      # 이 선분 위치에서 잰 통로 폭
+
+
+def _free_extent_along(
+    origin: np.ndarray, direction: np.ndarray, grid_map: GridMap,
+    clearance_m, body_clearance_m: float, max_extent_m: float, step_m: float = 0.05,
+) -> float:
+    """origin에서 direction으로, 로봇 몸체가 들어갈 수 있는 마지막 지점까지의 거리."""
+    extent = 0.0
+    steps = int(max_extent_m / step_m)
+    for i in range(1, steps + 1):
+        probe = origin + direction * (i * step_m)
+        try:
+            row, col = grid_map.world_to_cell(*probe)
+        except ValueError:
+            break
+        if not grid_map.in_bounds(row, col) or clearance_m[row, col] < body_clearance_m:
+            break
+        extent = i * step_m
+    return extent
+
+
+def _cell_clearance(position: np.ndarray, grid_map: GridMap, clearance_m) -> float:
+    """position이 속한 셀에서 가장 가까운 벽까지의 거리(m). 격자 밖이면 0."""
+    try:
+        row, col = grid_map.world_to_cell(*position)
+    except ValueError:
+        return 0.0
+    if not grid_map.in_bounds(row, col):
+        return 0.0
+    return float(clearance_m[row, col])
+
+
+def compute_sealing_pair(
+    target_pos: np.ndarray,
+    goal_direction: np.ndarray,
+    grid_map: GridMap,
+    clearance_m,
+    robot_radius_m: float,
+    wall_clearance_m: float,
+    target_width_m: float,
+    back_distance_m: float,
+) -> SealingPair:
+    """표적 뒤쪽을 가로지르는 봉인 선분의 두 끝점을 한 번에 계산한다.
+
+    기존 compute_driving_point/compute_blocking_point가 두 로봇의 목표를 서로
+    독립적으로 정하는 것과 달리, 이 함수는 **두 목표점을 하나의 기하학에서
+    같이** 뽑는다 -- 그래서 한쪽이 빠지면 나머지 하나만으로는 선분이 성립하지
+    않는다.
+
+    `goal_direction`: 표적에서 포획존 쪽을 가리키는 단위벡터(벽을 고려한
+        geodesic 방향을 넘기면 통로를 따라 밀게 된다).
+    `back_distance_m`: 선분을 표적 뒤쪽(포획존 반대편)으로 얼마나 물릴지.
+
+    반환값의 `is_sealed`가 False면 이 자리에서는 두 대로도 통로를 막을 수
+    없다는 뜻이므로, 호출부는 기존 유도(Driver/Blocker) 방식으로 넘어가야
+    한다. `requires_both`가 False면 한 대로도 막히는 좁은 구간이라, 로봇 B의
+    기여를 증명하는 데는 쓸 수 없다.
+    """
+    direction = np.asarray(goal_direction, dtype=float)
+    norm = float(np.linalg.norm(direction))
+    direction = np.array([1.0, 0.0]) if norm < 1e-9 else direction / norm
+    perp = np.array([-direction[1], direction[0]])
+
+    body_clearance = robot_radius_m + wall_clearance_m
+    center = np.asarray(target_pos, dtype=float) - direction * back_distance_m
+
+    min_span = 2.0 * robot_radius_m                    # 두 로봇이 겹치지 않는 최소
+    max_span = 2.0 * robot_radius_m + target_width_m   # 사이 틈이 표적보다 좁은 최대
+
+    # 선분 중심에 로봇이 설 수조차 없으면(벽 안이거나 너무 좁음) 봉인 불가.
+    if _cell_clearance(center, grid_map, clearance_m) < body_clearance:
+        return SealingPair(point_a=center.copy(), point_b=center.copy(), is_sealed=False,
+                           requires_both=False, span_m=0.0, corridor_width_m=0.0)
+
+    probe_limit = max(max_span * 3.0, 1.5)
+    reach_a = _free_extent_along(center, perp, grid_map, clearance_m, body_clearance, probe_limit)
+    reach_b = _free_extent_along(center, -perp, grid_map, clearance_m, body_clearance, probe_limit)
+    # 통로 폭: 로봇 중심이 갈 수 있는 범위 + 양쪽 벽까지의 몸체+여유
+    corridor_width = reach_a + reach_b + 2.0 * body_clearance
+
+    # 두 로봇이 나란히 설 자리가 안 나오는 아주 좁은 통로: 한 대로 막히는지 본다.
+    if reach_a + reach_b < min_span:
+        single_gap = (corridor_width - 2.0 * robot_radius_m) / 2.0
+        sealed_by_one = single_gap < target_width_m
+        return SealingPair(point_a=center.copy(), point_b=center.copy(),
+                           is_sealed=sealed_by_one, requires_both=False,
+                           span_m=0.0, corridor_width_m=corridor_width)
+
+    # 벽까지 최대한 뻗되, 사이 틈이 표적보다 넓어지지 않게 max_span으로 제한.
+    half = max_span / 2.0
+    offset_a = min(reach_a, half)
+    offset_b = min(reach_b, half)
+    # 한쪽 벽이 가까워 덜 뻗었다면, 반대쪽을 그만큼 더 뻗어 max_span을 채운다
+    # (선분을 통로 한쪽으로 치우쳐 붙이는 경우 -- 벽에 딱 붙는 쪽이 생긴다).
+    slack = max_span - (offset_a + offset_b)
+    if slack > 0:
+        grow_a = min(slack, reach_a - offset_a)
+        offset_a += grow_a
+        slack -= grow_a
+        offset_b += min(slack, reach_b - offset_b)
+
+    point_a = center + perp * offset_a
+    point_b = center - perp * offset_b
+    span = offset_a + offset_b
+
+    gap_between = span - 2.0 * robot_radius_m
+    gap_wall_a = max(0.0, reach_a - offset_a) + wall_clearance_m
+    gap_wall_b = max(0.0, reach_b - offset_b) + wall_clearance_m
+    is_sealed = (
+        span >= min_span - 1e-9
+        and gap_between < target_width_m
+        and gap_wall_a < target_width_m
+        and gap_wall_b < target_width_m
+    )
+    return SealingPair(point_a=point_a, point_b=point_b, is_sealed=is_sealed,
+                       requires_both=True, span_m=span, corridor_width_m=corridor_width)
+
+
+# --------------------------------------------------------------------------- #
+# 압박 선분 (Pressure Pair) -- 2026-08-08                                      #
+# --------------------------------------------------------------------------- #
+#
+# 봉인 선분(위)은 "두 로봇 몸통으로 통로를 물리적으로 막는다"였는데, 실측 결과
+# 이 방에서는 쓸 데가 거의 없었다: 표적이 트랩으로 가는 경로 위에서 진행방향에
+# 수직인 통로 폭이 중앙값 2.65m인데(5%ile로도 1.55m), 두 로봇이 몸으로 막을 수
+# 있는 폭은 0.83m뿐이라 경로의 0.2%에서만 성립한다. 이 방은 생각보다 훨씬
+# 열린 공간이다.
+#
+# 압박 선분은 조건을 완화한다: 몸으로 막는 대신 **표적이 로봇을 피하는 거리
+# (flee_reaction_distance_m)**를 활용한다. 표적이 로봇 반경 f 안으로 안 들어온다면,
+# 두 로봇을 2f만큼 벌려 세우면 그 사이 전체가 "가고 싶지 않은 영역"이 되고,
+# 바깥쪽으로도 각각 f씩 더 커버되므로 최대 4f 폭을 덮는다.
+#   f=0.42(현재) -> 1.68m -> 경로의 11%
+#   f=0.70       -> 2.80m -> 경로의 55%
+#
+# 두 가지를 같이 쓴다:
+#   (A) 좌우 협착: 표적 뒤쪽 진행방향 수직선상에 두 로봇을 대칭으로 배치
+#   (C) 한쪽 벽 활용: 한쪽에 벽이 가까우면 그쪽 로봇을 벽에 붙이고, 남은
+#       커버 폭을 반대쪽(열린 쪽) 로봇에게 몰아준다 -- 벽을 세 번째 로봇처럼
+#       쓰는 셈이라, 열린 공간이 많은 이 방에 필요하다.
+
+
+@dataclass
+class PressurePair:
+    """압박 선분의 두 끝점과, 그 배치가 표적의 진로를 얼마나 덮는지."""
+    point_a: np.ndarray
+    point_b: np.ndarray
+    coverage_fraction: float   # 진행방향 수직 단면 중 "표적이 피하는 영역" 비율
+    span_m: float
+    corridor_width_m: float
+    wall_anchored: bool        # 한쪽 끝을 벽에 붙였는가 (C 전략 발동 여부)
+
+
+def compute_pressure_pair(
+    target_pos: np.ndarray,
+    goal_direction: np.ndarray,
+    grid_map: GridMap,
+    clearance_m,
+    robot_radius_m: float,
+    wall_clearance_m: float,
+    flee_reaction_distance_m: float,
+    back_distance_m: float,
+    half_angle_rad: float = np.pi / 3.0,
+) -> PressurePair:
+    """두 로봇의 목표점을 하나의 기하학에서 같이 계산한다 (좌우 협착 + 벽 활용).
+
+    기존 compute_driving_point/compute_blocking_point는 두 로봇 목표를 서로
+    독립적으로 정해서, 한 대를 빼도 나머지 한 대의 행동이 그대로였다 -- 그래서
+    로봇 B의 기여가 지표에 안 잡혔다(트러블슈팅 노트 11~14). 이 함수는 두
+    점을 **같이** 뽑으므로, 한 대가 빠지면 그쪽 절반이 통째로 열린다.
+
+    배치: 표적을 중심으로 반지름 `back_distance_m`인 원 위에, "목표의 반대편"
+    방향을 기준으로 ±`half_angle_rad`만큼 벌린 두 지점.
+
+    처음엔 두 로봇을 표적 뒤쪽 수직선 위에 ±flee만큼 벌려 세웠는데, 그러면
+    각 로봇과 표적 사이 거리가 sqrt(back^2 + flee^2)로 flee를 넘어버려
+    **표적이 아예 도주 반응을 안 했다**(실측: 5회 중 0회 포획, 전부 120초
+    타임아웃). 원 위에 배치하면 두 로봇 모두 정확히 back_distance만큼
+    떨어져 있어 둘 다 표적을 민다 -- 벌릴수록 커버는 넓어지지만 목표 방향
+    성분(cos)이 줄어드는 트레이드오프를 `half_angle_rad`로 조절한다.
+
+    벽이 가까워 한쪽 지점에 로봇이 설 수 없으면 그 각도를 안쪽으로 줄여
+    (C 전략) 실제로 갈 수 있는 자리에 놓는다.
+    """
+    direction = np.asarray(goal_direction, dtype=float)
+    norm = float(np.linalg.norm(direction))
+    direction = np.array([1.0, 0.0]) if norm < 1e-9 else direction / norm
+    perp = np.array([-direction[1], direction[0]])
+
+    body_clearance = robot_radius_m + wall_clearance_m
+    target = np.asarray(target_pos, dtype=float)
+    behind = -direction                      # 목표 반대편 = 미는 방향
+    radius = max(back_distance_m, 1e-6)
+
+    def _place(sign, angle):
+        """behind 방향에서 sign*angle 만큼 돌린 원 위의 점. 벽이면 각도를 줄인다."""
+        for a in (angle, angle * 0.66, angle * 0.33, 0.0):
+            offset = behind * np.cos(a) + perp * (sign * np.sin(a))
+            point = target + offset * radius
+            if _cell_clearance(point, grid_map, clearance_m) >= body_clearance:
+                return point, a, a < angle - 1e-9
+        return target + behind * radius, 0.0, True
+
+    point_a, angle_a, clipped_a = _place(+1.0, half_angle_rad)
+    point_b, angle_b, clipped_b = _place(-1.0, half_angle_rad)
+    wall_anchored = clipped_a or clipped_b
+    span = float(np.linalg.norm(point_a - point_b))
+
+    # 커버율: 진행방향 수직축에 투영했을 때, 두 로봇의 반경 f 구간이 통로
+    # 단면을 얼마나 덮는지. (원 배치라 두 로봇의 수직 좌표는 ±radius*sin(angle))
+    f = flee_reaction_distance_m
+    reach_a = _free_extent_along(target, perp, grid_map, clearance_m, body_clearance, max(2.0 * f, 1.5))
+    reach_b = _free_extent_along(target, -perp, grid_map, clearance_m, body_clearance, max(2.0 * f, 1.5))
+    corridor_width = reach_a + reach_b + 2.0 * body_clearance
+    lo, hi = -(reach_b + body_clearance), reach_a + body_clearance
+    width = max(hi - lo, 1e-9)
+    y_a = radius * np.sin(angle_a)
+    y_b = -radius * np.sin(angle_b)
+    segs = sorted(
+        s for s in ((max(lo, y_a - f), min(hi, y_a + f)), (max(lo, y_b - f), min(hi, y_b + f)))
+        if s[1] > s[0]
+    )
+    covered, cur_lo, cur_hi = 0.0, None, None
+    for s_lo, s_hi in segs:
+        if cur_hi is None or s_lo > cur_hi:
+            if cur_hi is not None:
+                covered += cur_hi - cur_lo
+            cur_lo, cur_hi = s_lo, s_hi
+        else:
+            cur_hi = max(cur_hi, s_hi)
+    if cur_hi is not None:
+        covered += cur_hi - cur_lo
+
+    return PressurePair(
+        point_a=point_a, point_b=point_b,
+        coverage_fraction=float(min(1.0, covered / width)),
+        span_m=span, corridor_width_m=corridor_width, wall_anchored=wall_anchored,
+    )

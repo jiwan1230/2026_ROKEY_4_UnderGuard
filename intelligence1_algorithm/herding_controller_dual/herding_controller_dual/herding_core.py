@@ -17,6 +17,7 @@ from herding_controller_dual.herding_planner import (
     PlannerConfig,
     compute_blocking_point,
     compute_driving_point,
+    compute_pressure_pair,
 )
 from herding_controller_dual.occlusion_grid import OcclusionGrid, OcclusionGridConfig
 from herding_controller_dual.role_assigner import RoleAssigner, RoleAssignerConfig, resolve_separation
@@ -98,6 +99,18 @@ class HerdingConfig:
     role_swap_margin: float = 0.5
     role_swap_cooldown_sec: float = 2.0
     role_cost_turn_weight: float = 0.3
+    # --- 압박 선분 모드 (2026-08-08, 트러블슈팅 노트 16번 항목) ---
+    # True면 HERD/CORNER에서 Driver/Blocker를 따로 계산하지 않고, 두 로봇
+    # 목표점을 compute_pressure_pair()로 **같이** 뽑는다. 목적은 성공률
+    # 상승이 아니라 "로봇 B가 빠지면 진로의 절반이 열린다"는 구조를 만들어
+    # 기여를 지표로 증명하는 것이다. 기본값 False로 기존 동작 유지.
+    pressure_mode_enabled: bool = False
+    # 로봇/표적의 물리 치수 -- 압박 선분 배치에만 쓴다 (TurtleBot 4 실측).
+    robot_radius_m: float = 0.171
+    robot_wall_clearance_m: float = 0.03
+    # 압박 선분에서 두 로봇을 목표 반대편 기준 좌우로 얼마나 벌릴지(도).
+    # 크면 진로를 넓게 덮지만 미는 힘(cos 성분)이 줄어드는 트레이드오프.
+    pressure_half_angle_deg: float = 45.0
 
     def __post_init__(self) -> None:
         """herd를 교착 상태에 빠뜨리는 것으로 알려진 파라미터 조합을 거부한다.
@@ -154,6 +167,8 @@ class HerdingOutput:
     panic: bool = False
     role_swapped: bool = False
     deadlock_release: bool = False
+    # 압박 선분 모드에서만 채워진다: 표적 진로 단면 중 두 로봇이 덮은 비율.
+    pressure_coverage: float | None = None
 
 
 class HerdingCore:
@@ -221,6 +236,8 @@ class HerdingCore:
         # 매 주기 재시도하지 않게 한다.
         self._geodesic_field: GeodesicField | None = None
         self._geodesic_ready = False
+        # 압박 선분 배치용 벽까지 거리장(미터). 맵이 온 뒤 1회만 계산해 캐싱한다.
+        self._clearance_m = None
         # Blocking Point 이력현상(hysteresis) 상태 -- 아래 _stabilize_blocking_point() 참고.
         self._committed_blocking_point: np.ndarray | None = None
         self._committed_blocking_time: float = 0.0
@@ -268,6 +285,20 @@ class HerdingCore:
             return
         self._geodesic_field = GeodesicField(self.grid_map, goal_row, goal_col)
         self._geodesic_ready = True
+
+    def _ensure_clearance_field(self):
+        """벽까지 거리장(미터)을 맵 도착 후 1회만 계산해 캐싱한다.
+
+        압박 선분(compute_pressure_pair)이 "로봇이 여기 설 수 있나"를 판정할 때
+        쓴다. geodesic 필드와 같은 이유로 제어 주기마다 다시 계산할 수 없다.
+        """
+        if self._clearance_m is None and self.grid_map.obstacle_mask.any():
+            from scipy import ndimage
+            self._clearance_m = (
+                ndimage.distance_transform_edt(~self.grid_map.obstacle_mask)
+                * self.grid_map.config.resolution_m
+            )
+        return self._clearance_m
 
     # 국소 기울기 한 지점이 아니라 실제 경로를 따라 앞을 내다보는 거리.
     # block_lookahead_m과 같은 자릿수로 맞춰, "한 코너 정도는 미리 본다"는
@@ -538,6 +569,48 @@ class HerdingCore:
 
                 driver_pos = observation.robot1_pos if driver_id == 1 else observation.robot2_pos
                 blocker_pos = observation.robot2_pos if driver_id == 1 else observation.robot1_pos
+
+                clearance = self._ensure_clearance_field()
+                if self.config.pressure_mode_enabled and clearance is not None:
+                    # 압박 선분 모드: 두 로봇 목표를 하나의 기하학에서 같이 뽑는다.
+                    # goal_direction은 표적 -> 목표 방향이어야 하므로
+                    # direction_goal - target_pos를 쓴다(direction_goal은 벽을
+                    # 고려한 가상 목표점이다).
+                    pressure = compute_pressure_pair(
+                        target_state.position, direction_goal - target_state.position,
+                        self.grid_map, clearance,
+                        self.config.robot_radius_m, self.config.robot_wall_clearance_m,
+                        self.config.flee_reaction_distance_m, self.config.drive_distance_m,
+                        half_angle_rad=np.radians(self.config.pressure_half_angle_deg),
+                    )
+                    pressure_coverage = pressure.coverage_fraction
+                    # 두 끝점을 두 로봇에 배정한다: 서로 경로가 교차하지
+                    # 않도록(=이동거리 합이 작도록) 가까운 쪽끼리 짝짓는다.
+                    straight = (float(np.linalg.norm(observation.robot1_pos - pressure.point_a))
+                                + float(np.linalg.norm(observation.robot2_pos - pressure.point_b)))
+                    crossed = (float(np.linalg.norm(observation.robot1_pos - pressure.point_b))
+                               + float(np.linalg.norm(observation.robot2_pos - pressure.point_a)))
+                    if straight <= crossed:
+                        robot1_goal, robot2_goal = pressure.point_a, pressure.point_b
+                    else:
+                        robot1_goal, robot2_goal = pressure.point_b, pressure.point_a
+                    # 압박 모드는 Driver/Blocker 구분이 없으므로 이력현상/교착
+                    # 상태를 들고 있을 이유가 없다 -- 모드가 꺼졌을 때 낡은
+                    # 값을 이어받지 않도록 지운다.
+                    self._committed_blocking_point = None
+                    self._reset_deadlock_state()
+                    latency_ms = (time.perf_counter() - start) * 1000.0
+                    return HerdingOutput(
+                        robot1_goal=robot1_goal, robot2_goal=robot2_goal, fsm_state=fsm_state,
+                        driver_id=driver_id, blocker_id=blocker_id,
+                        target_position=target_state.position,
+                        target_velocity=target_state.velocity,
+                        escape_top3=list(escape_estimate.top_k_routes) if escape_estimate else [],
+                        escape_directions=escape_estimate.directions if escape_estimate else None,
+                        escape_probabilities=escape_estimate.probabilities if escape_estimate else None,
+                        latency_ms=latency_ms, panic=False, role_swapped=role_swapped,
+                        deadlock_release=False, pressure_coverage=pressure_coverage,
+                    )
 
                 driving = compute_driving_point(
                     target_state.position, target_state.velocity, direction_goal,

@@ -84,7 +84,16 @@ def test_load_config_declares_every_herdingconfig_field_without_crashing():
     # 기본값은 있지만 여전히 ROS 파라미터로 선언되어야 하는 필드가 조용히
     # _PARAM_DEFAULTS에서 빠져도(=런타임에 launch yaml 오버라이드를 받지
     # 못해도) 이 테스트가 잡아내지 못한다(최종 브랜치 리뷰 지적).
-    _INTENTIONALLY_UNDECLARED = {"robot_repulsion_activation_distance_m"}  # 실험 전용 토글, 프로덕션 ROS 파라미터 아님
+    _INTENTIONALLY_UNDECLARED = {
+            "robot_repulsion_activation_distance_m",  # 실험 전용 토글
+            # 압박 선분 모드(2026-08-08)와 그 배치에 쓰는 물리 치수. 아직
+            # 실험 단계라 프로덕션 ROS 파라미터로 노출하지 않는다 -- 채택이
+            # 확정되면 _PARAM_DEFAULTS와 yaml에 같이 추가할 것.
+            "pressure_mode_enabled",
+            "robot_radius_m",
+            "robot_wall_clearance_m",
+            "pressure_half_angle_deg",
+        }
     assert field_names - declared_names <= _INTENTIONALLY_UNDECLARED, (
         f"HerdingConfig fields missing from _PARAM_DEFAULTS without being in "
         f"_INTENTIONALLY_UNDECLARED: {field_names - declared_names - _INTENTIONALLY_UNDECLARED}"
