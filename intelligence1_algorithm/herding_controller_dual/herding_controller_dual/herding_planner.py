@@ -636,3 +636,72 @@ def compute_guard_point(
         if best is None or width < best.corridor_width_m:
             best = GuardPoint(point=center, corridor_width_m=width, distance_from_target_m=ahead)
     return best
+
+
+# --------------------------------------------------------------------------- #
+# 엔드게임 협공 (Endgame Pincer) -- 2026-08-09                                  #
+# --------------------------------------------------------------------------- #
+#
+# 실패 원인 분석에서 나온 것: 구석 회피 표적의 실패 92건 중 **91건이 트랩
+# 0.6m 안까지 접근**했고 최근접 거리 중앙값이 **0.37m**였다(포획 반경 0.3m).
+# 즉 몰이는 이미 성공했고, **마지막 7cm를 못 넘는다**. 트랩이 벽 구석에
+# 있어서 구석 회피 표적이 정확히 그 막다른 곳을 피해 옆으로 빠져나간다.
+#
+# 지금까지의 시도(압박/봉인/수비-쓸기)가 실패한 이유 중 하나는 **전 구간에
+# 같은 배치를 적용**했기 때문이다. 이 모드는 표적이 트랩 근처에 들어온
+# 순간에만 발동한다 -- 그 구간에서는 기하가 단순하고(트랩=벽 구석, 표적은
+# 그 앞), 두 로봇이 트랩 입구 양옆을 막으면 표적이 갈 곳이 트랩뿐이 된다.
+
+
+@dataclass
+class PincerPair:
+    """엔드게임에서 트랩 입구 양옆을 막는 두 지점."""
+    point_a: np.ndarray
+    point_b: np.ndarray
+    active: bool
+
+
+def compute_endgame_pincer(
+    target_pos: np.ndarray,
+    trap_pos: np.ndarray,
+    grid_map: GridMap,
+    clearance_m,
+    body_clearance_m: float,
+    stand_distance_m: float,
+    trigger_radius_m: float,
+    half_angle_rad: float = np.pi / 2.0,
+) -> PincerPair | None:
+    """표적이 트랩 근처면, 트랩 반대편 좌우를 막는 두 지점을 돌려준다.
+
+    표적에서 **트랩 반대 방향**을 기준으로 ±`half_angle_rad`만큼 벌린 두
+    지점(표적 중심 반지름 `stand_distance_m` 원 위). 기본값 90도면 두 로봇이
+    표적의 양 옆을 막아, 표적이 갈 수 있는 방향이 트랩 쪽과 정반대쪽만
+    남는다 -- 정반대쪽은 두 로봇 사이라 위협이 겹쳐 실질적으로 막힌다.
+
+    표적이 `trigger_radius_m`보다 멀면 None (그 경우 평소 몰이 방식 유지).
+    """
+    target = np.asarray(target_pos, dtype=float)
+    trap = np.asarray(trap_pos, dtype=float)
+    to_trap = trap - target
+    dist = float(np.linalg.norm(to_trap))
+    if dist > trigger_radius_m or dist < 1e-6:
+        return None
+    inward = to_trap / dist
+    outward = -inward                       # 트랩 반대편 = 미는 쪽
+    perp = np.array([-outward[1], outward[0]])
+
+    def place(sign):
+        for angle in (half_angle_rad, half_angle_rad * 0.7, half_angle_rad * 0.4):
+            offset = outward * np.cos(angle) + perp * (sign * np.sin(angle))
+            point = target + offset * stand_distance_m
+            if _cell_clearance(point, grid_map, clearance_m) >= body_clearance_m:
+                return point
+        return None
+
+    point_a, point_b = place(+1.0), place(-1.0)
+    if point_a is None or point_b is None:
+        return None
+    # 두 로봇이 겹치면 협공이 성립하지 않는다.
+    if float(np.linalg.norm(point_a - point_b)) < 2.0 * (body_clearance_m - 0.03):
+        return None
+    return PincerPair(point_a=point_a, point_b=point_b, active=True)

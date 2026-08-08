@@ -20,6 +20,7 @@ from herding_controller_dual.herding_planner import (
     compute_pressure_pair,
     compute_shaping_pair,
     compute_guard_point,
+    compute_endgame_pincer,
 )
 from herding_controller_dual.occlusion_grid import OcclusionGrid, OcclusionGridConfig
 from herding_controller_dual.role_assigner import RoleAssigner, RoleAssignerConfig, resolve_separation
@@ -126,6 +127,20 @@ class HerdingConfig:
     # 수비 지점을 이만큼 이동해야 갱신한다(이력현상). 매 주기 길목이 바뀌면
     # 수비수가 도착도 못 하고 계속 옮겨다닌다(10-6의 flicker와 같은 문제).
     guard_commit_distance_m: float = 0.5
+    # 엔드게임 협공 (2026-08-09, 트러블슈팅 노트 16-15). 표적이 트랩
+    # endgame_trigger_radius_m 안에 들어오면, 두 로봇이 트랩 반대편 좌우를
+    # 막아 표적이 트랩 쪽으로밖에 못 가게 한다. 실패 분석에서 구석회피
+    # 표적의 실패 92건 중 91건이 트랩 0.6m 안까지 왔다가 마지막 7cm를
+    # 못 넘고 옆으로 빠진 것이 확인돼 만든 모드다.
+    endgame_pincer_enabled: bool = False
+    endgame_trigger_radius_m: float = 0.8
+    endgame_half_angle_deg: float = 90.0
+    # 표적이 트리거 반경 안에 이 시간(초) 이상 머무는데도 포획이 안 되면
+    # 그때 협공으로 전환한다. 0이면 즉시 발동. 얌전한 표적은 그냥 밀면
+    # 바로 들어가는데 협공하느라 두 로봇이 벌어지면 미는 힘이 약해져
+    # 오히려 나빠진다(실측: reactive_flee 90.7%->72.7%) -- 그래서 '먼저
+    # 밀어보고 안 들어가면 협공'으로 조건을 건다.
+    endgame_stall_sec: float = 2.0
 
     def __post_init__(self) -> None:
         """herd를 교착 상태에 빠뜨리는 것으로 알려진 파라미터 조합을 거부한다.
@@ -261,6 +276,8 @@ class HerdingCore:
         self._clearance_m = None
         # 수비 지점 이력현상 상태 -- guard_commit_distance_m 참고.
         self._committed_guard_point = None
+        # 엔드게임: 표적이 트리거 반경 안에 처음 들어온 시각.
+        self._endgame_entered_sec = None
         # Blocking Point 이력현상(hysteresis) 상태 -- 아래 _stabilize_blocking_point() 참고.
         self._committed_blocking_point: np.ndarray | None = None
         self._committed_blocking_time: float = 0.0
@@ -561,6 +578,7 @@ class HerdingCore:
             # 이어받지 않도록 이력현상 상태를 지운다.
             self._committed_blocking_point = None
             self._committed_guard_point = None
+            self._endgame_entered_sec = None
             self._reset_deadlock_state()
         else:
             self._reset_occlusion_memory()
@@ -595,6 +613,48 @@ class HerdingCore:
                 blocker_pos = observation.robot2_pos if driver_id == 1 else observation.robot1_pos
 
                 clearance = self._ensure_clearance_field()
+                if self.config.endgame_pincer_enabled and clearance is not None:
+                    # 트리거 반경 안에 머문 시간을 누적한다 -- 벗어나면 리셋.
+                    if distance_to_goal <= self.config.endgame_trigger_radius_m:
+                        if self._endgame_entered_sec is None:
+                            self._endgame_entered_sec = observation.sim_time_sec
+                    else:
+                        self._endgame_entered_sec = None
+                    stalled = (self._endgame_entered_sec is not None
+                               and observation.sim_time_sec - self._endgame_entered_sec
+                               >= self.config.endgame_stall_sec)
+                if self.config.endgame_pincer_enabled and clearance is not None and stalled:
+                    pincer = compute_endgame_pincer(
+                        target_state.position, self.goal_pos, self.grid_map, clearance,
+                        self.config.robot_radius_m + self.config.robot_wall_clearance_m,
+                        stand_distance_m=self.config.drive_distance_m,
+                        trigger_radius_m=self.config.endgame_trigger_radius_m,
+                        half_angle_rad=np.radians(self.config.endgame_half_angle_deg),
+                    )
+                    if pincer is not None:
+                        straight = (float(np.linalg.norm(observation.robot1_pos - pincer.point_a))
+                                    + float(np.linalg.norm(observation.robot2_pos - pincer.point_b)))
+                        crossed = (float(np.linalg.norm(observation.robot1_pos - pincer.point_b))
+                                   + float(np.linalg.norm(observation.robot2_pos - pincer.point_a)))
+                        if straight <= crossed:
+                            robot1_goal, robot2_goal = pincer.point_a, pincer.point_b
+                        else:
+                            robot1_goal, robot2_goal = pincer.point_b, pincer.point_a
+                        self._committed_blocking_point = None
+                        self._reset_deadlock_state()
+                        latency_ms = (time.perf_counter() - start) * 1000.0
+                        return HerdingOutput(
+                            robot1_goal=robot1_goal, robot2_goal=robot2_goal, fsm_state=fsm_state,
+                            driver_id=driver_id, blocker_id=blocker_id,
+                            target_position=target_state.position,
+                            target_velocity=target_state.velocity,
+                            escape_top3=list(escape_estimate.top_k_routes) if escape_estimate else [],
+                            escape_directions=escape_estimate.directions if escape_estimate else None,
+                            escape_probabilities=escape_estimate.probabilities if escape_estimate else None,
+                            latency_ms=latency_ms, panic=False, role_swapped=role_swapped,
+                            deadlock_release=False,
+                        )
+
                 if self.config.guard_mode_enabled and clearance is not None:
                     guard = compute_guard_point(
                         target_state.position, direction_goal - target_state.position,

@@ -75,6 +75,11 @@ _PARAM_DEFAULTS = {
     "role_swap_margin": 0.5,
     "role_swap_cooldown_sec": 2.0,
     "role_cost_turn_weight": 0.3,
+    # --- 엔드게임 협공 (2026-08-09 채택, 트러블슈팅 노트 16-15) ---
+    "endgame_pincer_enabled": True,
+    "endgame_trigger_radius_m": 0.8,
+    "endgame_half_angle_deg": 60.0,
+    "endgame_stall_sec": 3.0,
     # --- Occlusion 그리드 ---
     "diffusion_rate": 0.2,
     "decay_factor": 0.9,

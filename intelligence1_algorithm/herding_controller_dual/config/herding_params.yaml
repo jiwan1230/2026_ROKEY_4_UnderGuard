@@ -149,6 +149,32 @@ herding_controller_dual:
     role_swap_cooldown_sec: 2.0
     role_cost_turn_weight: 0.3
 
+
+    # --- 엔드게임 협공 (2026-08-09, 트러블슈팅 노트 16-15) ---
+    # 표적이 트랩 근처(endgame_trigger_radius_m)에 들어왔는데 endgame_stall_sec
+    # 동안 포획이 안 되면, 두 로봇이 트랩 반대편 좌우(±endgame_half_angle_deg)를
+    # 막아 표적이 트랩 쪽으로밖에 못 가게 한다.
+    #
+    # 근거: 실패 분석에서 현실적인 표적(구석에 몰리길 피하는 모델)의 실패
+    # 92건 중 91건이 트랩 0.6m 안까지 왔다가 마지막 7cm(최근접 중앙값 0.37m,
+    # 포획 반경 0.30m)를 못 넘고 옆으로 빠진 것이었다. 몰이는 이미 성공했고
+    # 마지막 봉인만 실패한 것이라, 그 구간에만 협공을 건다.
+    #
+    # 지연(3.0초)이 핵심이다: 전 구간/즉시 발동하면 얌전한 표적에서 두 로봇이
+    # 벌어지느라 미는 힘이 약해져 오히려 나빠진다(reactive_flee 90.7%->72.7%).
+    # "먼저 밀어보고 안 들어가면 그때 협공"이라야 회귀가 없다.
+    #
+    # 실측 (3트랩 x 50회 = 150쌍, 두 대 vs 한 대 동일 시드 페어링):
+    #   기존 모델 회귀 없음: reactive 90.7/90.7, wall_hugger 90.7/91.3,
+    #                        noisy_human 95.3/95.3
+    #   현실적 표적: 구석회피2.0 86.0/77.3(p=.011), 3.0 84.0/39.3(rescue 67,
+    #               regression 0), 4.0 68.0/12.0(rescue 84, regression 0)
+    #   시드 3개에서 모두 재현.
+    endgame_pincer_enabled: true
+    endgame_trigger_radius_m: 0.8
+    endgame_half_angle_deg: 60.0
+    endgame_stall_sec: 3.0
+
     # --- Occlusion Grid ---
     diffusion_rate: 0.2
     decay_factor: 0.9

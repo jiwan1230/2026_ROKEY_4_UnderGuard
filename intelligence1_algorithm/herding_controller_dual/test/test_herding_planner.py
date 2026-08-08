@@ -458,3 +458,51 @@ def test_guard_point_returns_none_when_no_standable_spot_exists():
     guard = compute_guard_point(np.array([0.2, cy]), np.array([1.0, 0.0]),
                                 grid_map, clearance, _R + _C)
     assert guard is None
+
+
+# --------------------------------------------------------------------------- #
+# 엔드게임 협공 (compute_endgame_pincer) -- 2026-08-09                          #
+# --------------------------------------------------------------------------- #
+
+def test_endgame_pincer_is_inactive_when_the_target_is_far_from_the_trap():
+    """트리거 반경 밖이면 None -- 평소 몰이 방식을 유지해야 한다.
+
+    전 구간에 협공을 걸면 얌전한 표적에서 오히려 나빠진다(실측:
+    reactive_flee 90.7% -> 72.7%). 트랩 근처에서만 발동해야 한다.
+    """
+    from herding_controller_dual.herding_planner import compute_endgame_pincer
+
+    grid_map, clearance, cy = _corridor_grid(2.0, length_m=8.0)
+    trap = np.array([2.0, cy])
+    far_target = np.array([5.0, cy])
+    assert compute_endgame_pincer(far_target, trap, grid_map, clearance, _R + _C,
+                                  stand_distance_m=0.3, trigger_radius_m=0.8) is None
+
+
+def test_endgame_pincer_places_both_robots_on_the_far_side_of_the_trap():
+    """두 지점 모두 표적 기준 트랩 반대편에 있어야 표적을 트랩 쪽으로 민다."""
+    from herding_controller_dual.herding_planner import compute_endgame_pincer
+
+    grid_map, clearance, cy = _corridor_grid(2.0, length_m=8.0)
+    trap = np.array([2.0, cy])
+    target = np.array([2.5, cy])          # 트랩에서 0.5m (트리거 안)
+    pincer = compute_endgame_pincer(target, trap, grid_map, clearance, _R + _C,
+                                    stand_distance_m=0.3, trigger_radius_m=0.8,
+                                    half_angle_rad=np.pi / 3)
+    assert pincer is not None and pincer.active
+    for label, point in (("a", pincer.point_a), ("b", pincer.point_b)):
+        assert point[0] > target[0], f"{label} 지점이 트랩 쪽에 있음: {point}"
+
+
+def test_endgame_pincer_keeps_the_two_robots_apart():
+    """두 지점이 겹치면 협공이 아니라 로봇 한 대와 같다 -- 그런 경우 None."""
+    from herding_controller_dual.herding_planner import compute_endgame_pincer
+
+    grid_map, clearance, cy = _corridor_grid(2.0, length_m=8.0)
+    trap = np.array([2.0, cy])
+    target = np.array([2.5, cy])
+    pincer = compute_endgame_pincer(target, trap, grid_map, clearance, _R + _C,
+                                    stand_distance_m=0.3, trigger_radius_m=0.8,
+                                    half_angle_rad=np.pi / 3)
+    assert pincer is not None
+    assert float(np.linalg.norm(pincer.point_a - pincer.point_b)) >= 2 * _R - 1e-9
