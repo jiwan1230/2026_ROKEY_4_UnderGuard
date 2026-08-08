@@ -208,9 +208,22 @@ def run_trial(
     success, elapsed_sec = False, 0.0
     escape_snapshot = None
 
+    # 덫(포획존)에 닿은 표적은 물리적으로 걸려서 더 이상 움직이지 못한다
+    # (2026-08-08). 그 전까지는 표적이 계속 움직일 수 있고 FSM이 "반경 안에
+    # capture_hold_sec 동안 머무르기"만 요구해서, **스스로 멈추는 표적만**
+    # 잡을 수 있었다 -- 주 검증 모델 ReactiveFlee가 로봇이 멀면 속도 0을
+    # 반환해 가만히 서 있는 덕에 잡혔던 것이고, 실제 쥐처럼 계속 움직이는
+    # 모델은 원리적으로 포획이 불가능했다(실측 0%). 덫은 닿으면 걸리는
+    # 물건이므로 이렇게 모델링하는 게 물리적으로 맞다.
+    goal_xy = np.array([herding_config.capture_zone_x_m, herding_config.capture_zone_y_m])
+    trapped = False
+
     steps = max(int(round(sim_config.max_sim_time_sec / sim_config.dt)), 0)
     for index in range(steps):
         sim_time_sec = index * sim_config.dt
+        if not trapped and float(np.linalg.norm(target_state[:2] - goal_xy)) <= herding_config.capture_radius_m:
+            trapped = True
+            target_state = np.array([target_state[0], target_state[1], 0.0, 0.0])
         target_traj.append(target_state[:2].copy())
         robot1_traj.append(robot1_pos.copy())
         robot2_traj.append(robot2_pos.copy())
@@ -264,9 +277,10 @@ def run_trial(
         robot1_pos, robot2_pos = new_r1, new_r2
         tick_min = min(tick_min, _closest_robot_distance(target_state[:2], robot1_pos, robot2_pos))
 
-        target_state = _advance_target(
-            core, evasion_model, target_state, robot1_pos, robot2_pos, sim_config, low, high
-        )
+        if not trapped:
+            target_state = _advance_target(
+                core, evasion_model, target_state, robot1_pos, robot2_pos, sim_config, low, high
+            )
         tick_min = min(tick_min, _closest_robot_distance(target_state[:2], robot1_pos, robot2_pos))
 
         min_dist = min(min_dist, tick_min)
@@ -403,9 +417,22 @@ def run_trial_real_map(
     discovery_time_sec = None
     patrol_idx = 0
 
+    # 덫(포획존)에 닿은 표적은 물리적으로 걸려서 더 이상 움직이지 못한다
+    # (2026-08-08). 그 전까지는 표적이 계속 움직일 수 있고 FSM이 "반경 안에
+    # capture_hold_sec 동안 머무르기"만 요구해서, **스스로 멈추는 표적만**
+    # 잡을 수 있었다 -- 주 검증 모델 ReactiveFlee가 로봇이 멀면 속도 0을
+    # 반환해 가만히 서 있는 덕에 잡혔던 것이고, 실제 쥐처럼 계속 움직이는
+    # 모델은 원리적으로 포획이 불가능했다(실측 0%). 덫은 닿으면 걸리는
+    # 물건이므로 이렇게 모델링하는 게 물리적으로 맞다.
+    goal_xy = np.array([herding_config.capture_zone_x_m, herding_config.capture_zone_y_m])
+    trapped = False
+
     steps = max(int(round(sim_config.max_sim_time_sec / sim_config.dt)), 0)
     for index in range(steps):
         sim_time_sec = index * sim_config.dt
+        if not trapped and float(np.linalg.norm(target_state[:2] - goal_xy)) <= herding_config.capture_radius_m:
+            trapped = True
+            target_state = np.array([target_state[0], target_state[1], 0.0, 0.0])
         target_traj.append(target_state[:2].copy())
         robot1_traj.append(robot1_pos.copy())
         robot2_traj.append(robot2_pos.copy())
@@ -488,10 +515,11 @@ def run_trial_real_map(
         # 주기의) prev_target_pos를 봐야 하므로, 대입은 _advance_target 호출
         # *이후*에 한다 (로봇 슬라이딩과 동일한 순서).
         pre_move_target_xy = target_state[:2].copy()
-        target_state = _advance_target(
-            core, evasion_model, target_state, robot1_pos, robot2_pos, sim_config, low, high,
-            step_fn=_target_step_fn,
-        )
+        if not trapped:
+            target_state = _advance_target(
+                core, evasion_model, target_state, robot1_pos, robot2_pos, sim_config, low, high,
+                step_fn=_target_step_fn,
+            )
         prev_target_pos = pre_move_target_xy
         tick_min = min(tick_min, _closest_robot_distance(target_state[:2], robot1_pos, robot2_pos))
 
