@@ -15,6 +15,8 @@ nav2.yaml을 이 패키지 안에 담아 단독으로 뜬다.
   1. RViz에서 2D Pose Estimate로 초기 위치 지정 (매번 필요 — AMCL이 기억 못 함)
   2. 다른 터미널에서 app 노드 실행 (robot_agent 등, params-file로 namespace 지정)
 """
+import os
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
@@ -25,9 +27,10 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 
 NAMESPACE = '/robot4'
-# 순찰 waypoint와 같은 프레임의 실제 맵 — resource에 두고 소스경로로 참조한다
-# (재-SLAM 하면 이 파일만 갱신, 복사본 없어 어긋날 일 없음). map:= 로 오버라이드.
-ROOM_MAP = '/home/rokey/turtlebot4_ws/src/turtle_project/resource/room_map.yaml'
+# 순찰 waypoint와 같은 프레임의 실제 맵 — 설치본 share에서 참조 (재-SLAM 하면
+# resource의 파일을 갱신하고 colcon build). map:= 로 오버라이드.
+ROOM_MAP = os.path.join(
+    get_package_share_directory('turtle_project'), 'resource', 'room_map.yaml')
 LOCAL_NODES = 'map_server amcl'
 NAV_NODES = ('controller_server smoother_server planner_server '
              'behavior_server bt_navigator waypoint_follower velocity_smoother')

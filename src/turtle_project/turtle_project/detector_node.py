@@ -4,15 +4,17 @@ opening: DB에 좌표 조회 → 없으면 접근·depth_spread 검증(기존 ca
 이동) → 진짜 구멍이면 trap 설치단계(로그)+DB기록. 있으면 trap 점검으로.
 rat: target_pose로 추적 goal + /fleet/event 발행.
 
-synced/rgb·synced/depth(camera_node 발행)를 구독한다. namespace로 실행.
+oakd 원본 rgb·depth·camera_info를 직접 sync한다 (camera_node 통합). namespace로 실행.
 opening 검증만 실제 동작, rat·DB 분기는 TODO(팀원).
 """
 import math
+import os
 
 import cv2
 import numpy as np
 import rclpy
 import tf2_geometry_msgs  # noqa: F401  PointStamped TF 변환 등록
+from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
 from geometry_msgs.msg import PointStamped, PoseStamped
 from message_filters import ApproximateTimeSynchronizer, Subscriber
@@ -23,7 +25,7 @@ from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from turtle_interfaces.msg import TrapJob
-from turtle_interfaces.srv import QueryHole
+from turtle_interfaces.srv import ListHoles, QueryHole
 from turtle_project import fleet_msg
 from turtle_project.depth_math import (decode_depth, depth_at, depth_spread,
                                        deproject, side_px, to_depth_px)
@@ -31,11 +33,24 @@ from turtle_project.nav_controller import approach_point, make_pose
 
 FRAME = 'map'
 
+# oakd 원본 토픽 (상대 — __ns가 접두). camera_node를 통합해 여기서 직접 sync한다.
+RGB_IN = 'oakd/rgb/image_raw/compressed'
+DEPTH_IN = 'oakd/stereo/image_raw/compressedDepth'
+INFO_IN = 'oakd/stereo/camera_info'
+
 # 상태별 wall timeout(초) — 어떤 상태에서도 영구 대기하지 않도록 한다.
 # VERIFYING/INSPECTING은 프레임 카운트 timeout이 따로 있지만, 카메라가 죽어
 # 프레임 자체가 끊기면 그것도 안 돌므로 wall 백스톱을 함께 둔다.
 DEADLINES = {'APPROACHING': 60.0, 'QUERYING': 5.0, 'VERIFYING': 30.0,
-             'INSPECTING': 30.0, 'AWAIT_TRAP': 20.0}
+             'INSPECTING': 30.0, 'AWAIT_TRAP': 20.0, 'SWEEP_NAV': 60.0}
+
+
+def nearest_hole(holes, rx, ry):
+    """(rx, ry)에서 가장 가까운 구멍의 인덱스. 목록 비면 None. greedy 순회용."""
+    if not holes:
+        return None
+    return min(range(len(holes)),
+               key=lambda i: math.hypot(holes[i][0] - rx, holes[i][1] - ry))
 
 
 def watchdog_action(state, elapsed):
@@ -95,10 +110,10 @@ class DetectorNode(Node):
 
     def __init__(self):
         super().__init__('detector_node')
+        res = os.path.join(get_package_share_directory('turtle_project'), 'resource')
         self.model_path = self.declare_parameter(
-            'model_path',
-            '/home/rokey/turtlebot4_ws/src/turtle_project/resource/best.pt').value
-        self.conf = self.declare_parameter('conf', 0.6).value
+            'model_path', os.path.join(res, 'best.pt')).value
+        self.conf = self.declare_parameter('conf', 0.7).value
         self.approach_dist = self.declare_parameter('approach_dist', 0.5).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.3).value
         self.depth_gap = self.declare_parameter('depth_gap', 0.05).value
@@ -134,6 +149,9 @@ class DetectorNode(Node):
         self.rat = RatTracker(cap_r, cap_s, lost_s)
         self.tracking = False
         self._last_rat_goal = 0.0   # 마지막 추적 goal 발행 시각 (rat_goal_period 조절용)
+        # 쥐대응 B 역할 — DB 구멍을 가까운 순서로 순회 점검(SWEEP). sweeping True일 때만.
+        self.sweeping = False
+        self.sweep_remaining = []   # 아직 점검 안 한 구멍 [(x, y)]
 
         self.event_pub = self.create_publisher(String, '/fleet/event', 10)
         # detector는 goal을 직접 안 쏜다. 접근·추적 목표는 target_pose로 발행만
@@ -144,12 +162,13 @@ class DetectorNode(Node):
         # trap 설치/점검 지시 — trap_check가 받아 주행/판정만 한다.
         self.job_pub = self.create_publisher(TrapJob, 'trap_job', 10)
         self.db = self.create_client(QueryHole, '/db/query_hole')
+        self.db_list = self.create_client(ListHoles, '/db/list_holes')
 
-        self.rgb_sub = Subscriber(self, CompressedImage, 'synced/rgb',
+        self.rgb_sub = Subscriber(self, CompressedImage, RGB_IN,
                                   qos_profile=qos_profile_sensor_data)
-        self.depth_sub = Subscriber(self, CompressedImage, 'synced/depth',
+        self.depth_sub = Subscriber(self, CompressedImage, DEPTH_IN,
                                     qos_profile=qos_profile_sensor_data)
-        self.info_sub = Subscriber(self, CameraInfo, 'synced/camera_info',
+        self.info_sub = Subscriber(self, CameraInfo, INFO_IN,
                                    qos_profile=qos_profile_sensor_data)
         self.sync = ApproximateTimeSynchronizer(
             [self.rgb_sub, self.depth_sub, self.info_sub],
@@ -190,6 +209,11 @@ class DetectorNode(Node):
             if self.show:                   # 추론은 건너뛰되 창은 살려둔다
                 self._show(self.bridge.compressed_imgmsg_to_cv2(rgb_msg, 'bgr8'))
             return
+        if self.state == 'SWEEP_NAV':       # 순회 중 구멍으로 이동 — 도착만 감시
+            self._check_sweep_arrival()
+            if self.show:
+                self._show(self.bridge.compressed_imgmsg_to_cv2(rgb_msg, 'bgr8'))
+            return
         if self.state in ('QUERYING', 'AWAIT_TRAP'):
             return                          # db 응답/trap_check 응답 대기 — 지각 불필요
         self.K = np.array(info_msg.k).reshape(3, 3)
@@ -203,7 +227,10 @@ class DetectorNode(Node):
         # rat 감지 → 추적 goal/포획 판정 (SEARCHING·TRACK 무관하게 매 프레임 확인).
         self._detect_rat(result, img.shape, depth, depth_frame)
 
-        if self.state == 'SEARCHING':
+        # 쥐대응 중엔 opening 무시 — A는 추적만, B는 순회만. 여기서 opening 흐름에
+        # 들어가면 APPROACHING 조기 return으로 _detect_rat이 끊겨 rat_lost로
+        # 쥐대응 전체가 조기 종료된다.
+        if self.state == 'SEARCHING' and not (self.tracking or self.sweeping):
             box = self._pick(result, 'opening', img.shape)
             if box is not None:
                 self._on_opening(box, img.shape, depth, depth_frame)
@@ -364,7 +391,10 @@ class DetectorNode(Node):
             self._request_db(*self.target)
 
     def command_cb(self, msg):
-        """내 로봇이 A(TRACK)로 배정되면 추적 판정 시작, 끝나면 끈다."""
+        """내 로봇 명령 처리 — A(TRACK)면 추적, B(SWEEP)면 구멍 순회 점검.
+
+        쥐대응 종료 명령(PATROL/STOP/DOCK)이 오면 추적·순회를 모두 끈다.
+        """
         robot, cmd = fleet_msg.parse_command(msg.data)
         if robot != self.robot_id:
             return                  # 내 로봇 명령 아님 (robot6용 TRACK 등)
@@ -372,8 +402,13 @@ class DetectorNode(Node):
             self.tracking = True
             self.rat.start(self._now())  # 관측 0회여도 lost_secs 뒤 놓침 판정
             self.get_logger().info('TRACK 시작 — 쥐 포획/놓침 판정 on')
-        elif cmd in ('PATROL', 'STOP', 'DOCK') and self.tracking:
-            self._stop_tracking()   # 쥐대응 종료 명령 — 추적 판정 off
+        elif cmd == 'SWEEP' and not self.sweeping:
+            self._start_sweep()     # B 역할 — DB 구멍 순회 점검 시작
+        elif cmd in ('PATROL', 'STOP', 'DOCK'):
+            if self.tracking:
+                self._stop_tracking()   # 쥐대응 종료 — 추적 판정 off
+            if self.sweeping:
+                self._stop_sweep()      # 쥐대응 종료 — 순회 즉시 중단
 
     def lost_tick(self):
         """추적 중 lost_secs 넘게 쥐가 안 보이면 rat_lost 발행 (감지 끊김)."""
@@ -388,6 +423,83 @@ class DetectorNode(Node):
     def _stop_tracking(self):
         self.tracking = False
         self.rat.reset()
+
+    # --- 쥐대응 B 역할: DB 구멍 순회 점검(SWEEP) ---
+
+    def _start_sweep(self):
+        """SWEEP 진입 — DB에서 구멍 목록을 받아 순회 점검을 시작한다."""
+        if not self.db_list.service_is_ready():
+            self.get_logger().warn('db 목록 서비스 없음 — 점검할 구멍 없음, 완료')
+            self._sweep_done_and_finish()
+            return
+        self.sweeping = True
+        self._hold_patrol(True)         # 순회 동안 순찰 정지
+        self.get_logger().info('SWEEP 시작 — DB 구멍 순회 점검')
+        self.db_list.call_async(ListHoles.Request()).add_done_callback(
+            self._holes_done)
+
+    def _holes_done(self, fut):
+        """DB 구멍 목록 수신 → 순회 시작. 중간에 종료됐으면 무시."""
+        if not self.sweeping:
+            return
+        resp = fut.result()
+        self.sweep_remaining = list(zip(resp.xs, resp.ys))
+        self.get_logger().info(f'점검 대상 구멍 {len(self.sweep_remaining)}개')
+        self._next_sweep_hole()
+
+    def _next_sweep_hole(self):
+        """가장 가까운 구멍으로 이동 시작. 남은 구멍 없으면 sweep_done."""
+        if not self.sweeping:
+            return
+        robot = self.robot_xy()
+        if robot is None:
+            return              # TF 실패 — watchdog가 백스톱, 다음 기회 재시도
+        rx, ry = robot
+        idx = nearest_hole(self.sweep_remaining, rx, ry)
+        if idx is None:
+            self.get_logger().info('구멍 순회 완료 — sweep_done 발행')
+            self._sweep_done_and_finish()
+            return
+        self.hole = self.sweep_remaining.pop(idx)
+        self.verify_count = 0
+        g = approach_point(self.hole[0] - rx, self.hole[1] - ry,
+                           self.approach_dist)
+        if g is None:                   # 이미 구멍 앞 — 바로 점검
+            self.state = 'INSPECTING'
+            return
+        gx, gy, yaw = rx + g[0], ry + g[1], g[2]
+        self.pose_pub.publish(make_pose(FRAME, gx, gy, yaw))
+        self.goal = (gx, gy)
+        self.state = 'SWEEP_NAV'
+        self.get_logger().info(
+            f'구멍 ({self.hole[0]:.2f}, {self.hole[1]:.2f}) 점검하러 이동 '
+            f'(남은 {len(self.sweep_remaining)}개)')
+
+    def _check_sweep_arrival(self):
+        """SWEEP_NAV 중 구멍 근처(arrive_tol) 도착하면 INSPECTING으로."""
+        robot = self.robot_xy()
+        if robot is None or self.goal is None:
+            return
+        d = math.hypot(self.goal[0] - robot[0], self.goal[1] - robot[1])
+        if d <= self.arrive_tol:
+            self.state = 'INSPECTING'
+            self.verify_count = 0
+            self.get_logger().info('구멍 도착 — trap 점검')
+
+    def _sweep_done_and_finish(self):
+        self.event_pub.publish(String(data=fleet_msg.event('sweep_done', 0.0, 0.0)))
+        self._finish_sweep()
+
+    def _stop_sweep(self):
+        """쥐대응 종료 — 순회 즉시 중단, 순찰 상태로 복귀 (sweep_done 안 쏨)."""
+        self.get_logger().info('SWEEP 중단 — 복귀')
+        self._finish_sweep()
+
+    def _finish_sweep(self):
+        self.sweeping = False
+        self.sweep_remaining = []
+        self._hold_patrol(False)
+        self._reset()
 
     def watchdog_tick(self):
         """opening 상태기계 wall timeout + hold heartbeat (1초 주기).
@@ -408,8 +520,12 @@ class DetectorNode(Node):
             self.get_logger().warn('db 응답 timeout — 처음 본 셈 치고 검증')
             self._enter_verify()
         elif act == 'finish':
-            self.get_logger().warn(f'{self.state} timeout — opening 포기, 순찰 재개')
-            self._finish_opening()
+            if self.sweeping:               # 순회 중 timeout — 이 구멍 스킵, 다음 구멍
+                self.get_logger().warn(f'{self.state} timeout — 이 구멍 스킵')
+                self._next_sweep_hole()
+            else:
+                self.get_logger().warn(f'{self.state} timeout — opening 포기, 순찰 재개')
+                self._finish_opening()
 
     def _now(self):
         return self.get_clock().now().nanoseconds / 1e9
@@ -466,9 +582,16 @@ class DetectorNode(Node):
         self.get_logger().info(f'trap 감지 ({xy[0]:.2f}, {xy[1]:.2f}) — 점검 요청')
 
     def _inspect_miss(self, why):
-        """점검 중 trap 못 봄 — timeout 넘으면 재설치 (아직 안 놓인 것으로 봄)."""
+        """점검 중 trap 못 봄 — timeout 넘으면 재설치 (아직 안 놓인 것으로 봄).
+
+        순회 점검(SWEEP) 중이면 재설치 없이 다음 구멍으로 넘어간다.
+        """
         self.verify_count += 1
         if self.verify_count >= self.verify_timeout:
+            if self.sweeping:
+                self.get_logger().info(f'{why} — 다음 구멍')
+                self._next_sweep_hole()
+                return
             self.get_logger().info(f'{why} — 재설치')
             self._reinstall()
 
@@ -498,6 +621,11 @@ class DetectorNode(Node):
         if self.state != 'AWAIT_TRAP':
             return
         name, x, y = fleet_msg.parse_event(msg.data)
+        if self.sweeping:               # 순회 점검 — 결과 기록만, 재설치 없이 다음 구멍
+            if name in ('trap_ok', 'trap_bad'):
+                self.get_logger().info(f'구멍 점검 결과 {name} — 다음 구멍')
+                self._next_sweep_hole()
+            return
         if name == 'trap_installed':
             self.state = 'INSPECTING'       # 설치동작 끝 — 15cm 재점검
             self.verify_count = 0
@@ -585,6 +713,13 @@ def _self_check():
     assert watchdog_action('QUERYING', 6.0) == 'verify'       # db 무응답 → 검증 진행
     assert watchdog_action('AWAIT_TRAP', 21.0) == 'finish'    # trap_check 무응답
     assert watchdog_action('VERIFYING', 31.0) == 'finish'     # 카메라 사망 백스톱
+    assert watchdog_action('SWEEP_NAV', 61.0) == 'finish'     # 순회 이동 백스톱
+
+    # greedy 순회 — 로봇에서 가장 가까운 구멍 인덱스 (B 구멍 순회 점검)
+    assert nearest_hole([], 0.0, 0.0) is None                 # 빈 목록
+    assert nearest_hole([(1.0, 0.0), (5.0, 0.0)], 0.0, 0.0) == 0
+    assert nearest_hole([(5.0, 0.0), (1.0, 0.0)], 0.0, 0.0) == 1  # 순서 무관
+    assert nearest_hole([(0.0, 3.0), (0.0, 1.0), (0.0, 2.0)], 2.0, 0.0) == 1
     print('detector RatTracker self-check ok')
 
 

@@ -9,9 +9,11 @@ PATROL/UNDOCK을 받으면 waypoint YAML을 FollowWaypoints로 무한 순찰한�
 으로 진행한다 — 순찰의 isTaskComplete 폴링과 같은 방식.
 """
 import math
+import os
 
 import rclpy
 import yaml
+from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseStamped
 from nav2_simple_commander.robot_navigator import TaskResult
 from rclpy.node import Node
@@ -51,7 +53,9 @@ class RobotAgent(Node):
         self.threshold = self.declare_parameter('battery_threshold', 40).value
         period = self.declare_parameter('battery_check_period', 10.0).value
         self.wp_file = self.declare_parameter(
-            'waypoints', '/home/rokey/patrol_waypoints.yaml').value
+            'waypoints', os.path.join(
+                get_package_share_directory('turtle_project'),
+                'resource', 'patrol_waypoints.yaml')).value
         # 도크 '앞' 접근점 (map 절대좌표) — 여기까지 Nav2로 간 뒤 dock() 정밀도킹.
         # 로봇/현장마다 실측 필요. yaw는 도크를 바라보는 방향(도)이어야 한다.
         self.dock_x = self.declare_parameter('dock_x', 0.0).value
@@ -82,6 +86,9 @@ class RobotAgent(Node):
         # 몰이 — target_pose 대기). 도킹된 로봇에 HERD/TRACK이 와도 먼저
         # 빠져나온 뒤 goal을 받게 한다 (도크에 붙은 채 HERDING 방지).
         self.after_undock = None
+        # 언도킹 중 받은 target_pose — 버리면 detector가 60초 timeout까지 기다
+        # 리므로(SWEEP 첫 구멍 goal 등) 보류했다가 언도킹 완료 후 주행한다.
+        self.pending_target = None
 
         self.status_pub = self.create_publisher(String, '/fleet/status', 10)
         self.create_subscription(String, '/fleet/command', self.command_cb, 10)
@@ -112,7 +119,7 @@ class RobotAgent(Node):
         # PATROLLING은 순찰 goal 발행(_send_lap)에서만. 성공 전에 방송하면
         # central이 조기에 교대/커버리지 판단을 잘못 내린다.
         self.state = {'UNDOCK': 'UNDOCKING',
-                      'TRACK': 'TRACKING', 'HERD': 'HERDING',
+                      'TRACK': 'TRACKING', 'HERD': 'HERDING', 'SWEEP': 'SWEEPING',
                       'STOP': 'IDLE'}.get(cmd, self.state)
         if cmd == 'UNDOCK' or (cmd == 'PATROL' and was_docked):
             self.state = 'UNDOCKING'
@@ -126,8 +133,9 @@ class RobotAgent(Node):
                 self.after_undock = 'DOCK'  # 언도킹 중 복귀 명령 — 끝나면 도킹
             else:
                 self.start_docking()
-        elif cmd in ('TRACK', 'HERD'):
-            # 순찰 중단 — 추적/몰이 주행은 target_pose가 준다(아래 target_cb).
+        elif cmd in ('TRACK', 'HERD', 'SWEEP'):
+            # 순찰 중단 — 추적/점검/몰이 주행은 target_pose가 준다(아래 target_cb).
+            # detector가 SWEEP면 구멍 접근 goal을, TRACK/HERD면 추적/몰이 goal을 쏜다.
             self.stop_patrol()
             if self.dock_phase == 'UNDOCK':
                 self.after_undock = None    # 언도킹 중 — 완료 후 순찰 대신 goal 대기
@@ -208,6 +216,7 @@ class RobotAgent(Node):
         이미 도크 밖이면 undock 액션이 즉시 완료로 처리된다.
         """
         self.stop_patrol()
+        self.pending_target = None      # 이전 언도킹의 잔여 goal 제거
         self.nav.undock_send_goal()
         self.dock_phase = 'UNDOCK'
         self.get_logger().info('언도킹 시작 — 도크에서 빠져나오는 중')
@@ -281,6 +290,10 @@ class RobotAgent(Node):
             elif self.after_undock == 'DOCK':
                 self.get_logger().info('언도킹 완료 — 복귀 도킹')
                 self.start_docking()
+            elif self.pending_target is not None:
+                self.get_logger().info('언도킹 완료 — 보류한 goal 주행')
+                msg, self.pending_target = self.pending_target, None
+                self.target_cb(msg)         # dock_phase가 None이라 바로 주행된다
             else:                           # TRACK/HERD — goal은 target_pose로 온다
                 self.get_logger().info('언도킹 완료 — target_pose 대기 (추적/몰이)')
 
@@ -318,7 +331,8 @@ class RobotAgent(Node):
         target_pose가 갱신되면 새 goal이 이전 goal을 선점(preempt)해 방향을
         바꾼다 — 추적처럼 목표가 움직여도 계속 따라간다. goToPose는 도킹에서
         쓰는 것과 같은 논블로킹 호출이라 콜백에서 그대로 부른다.
-        도킹/언도킹 중엔 도크 이동과 충돌하므로 무시한다.
+        도킹 중엔 도크 이동과 충돌하므로 무시하고, 언도킹 중엔 보류했다가
+        완료 후 주행한다 (버리면 SWEEP 첫 구멍 goal이 사라져 60초 낭비).
 
         순찰 goal을 반드시 '먼저' 끊고 내 goal을 보낸다. cancelTask는 마지막에
         보낸 goal 하나를 끊으므로, 순서가 뒤집혀 hold_cb가 나중에 실행되면
@@ -327,6 +341,8 @@ class RobotAgent(Node):
         여기서 먼저 끊어두면 patrolling=False라 뒤늦은 stop_patrol이 no-op이 된다.
         """
         if self.dock_phase is not None:
+            if self.dock_phase == 'UNDOCK':
+                self.pending_target = msg   # 언도킹 끝나면 _dock_tick이 주행
             return
         self.stop_patrol()
         self.nav.goToPose(msg)
@@ -400,6 +416,7 @@ class _FakeAgent:
         self.nav, self.dock_phase, self.state = nav, phase, state
         self.ns = 'robot4'
         self.after_undock = None
+        self.pending_target = None
         self.hold, self.hold_at, self.hold_lease = False, 0.0, 3.0
         self.patrolling = self.driving = False
         self.lap_from = self.lap_start = 0
@@ -469,6 +486,10 @@ def _self_check():
     a = _FakeAgent(_FakeNav(True, None, False, False), None, state='DOCKED')
     a.command_cb(types.SimpleNamespace(data='robot4:HERD'))
     assert a.undocking_started and a.after_undock is None and a.state == 'HERDING'
+    # 도킹된 로봇에 SWEEP(B 구멍 순회) → 언도킹 먼저, 상태 SWEEPING
+    a = _FakeAgent(_FakeNav(True, None, False, False), None, state='DOCKED')
+    a.command_cb(types.SimpleNamespace(data='robot4:SWEEP'))
+    assert a.undocking_started and a.after_undock is None and a.state == 'SWEEPING'
     # 필드 위(도크 센서 off) 로봇에 TRACK → 언도킹 없이 역할 전환만
     a = _FakeAgent(_FakeNav(True, None, False, False, docked=False), None,
                    state='PATROLLING')
@@ -510,10 +531,20 @@ def _self_check():
     a = _FakeAgent(_FakeNav(True, None, False, False), None)
     a.target_cb(msg)
     assert a.nav.goto_pose is msg
-    # 도킹/언도킹 중이면 목표 주행 무시 (도크 이동과 충돌 방지)
+    # 도킹 중이면 목표 주행 무시 (도크 이동과 충돌 방지) — 보류도 안 함
     a = _FakeAgent(_FakeNav(True, None, False, False), 'NAV')
     a.target_cb(msg)
-    assert a.nav.goto_pose is None
+    assert a.nav.goto_pose is None and a.pending_target is None
+    # 언도킹 중 받은 goal은 버리지 않고 보류 → 언도킹 완료 시 주행 (문제 1)
+    a = _FakeAgent(_FakeNav(True, None, False, True), 'UNDOCK')
+    a.target_cb(msg)
+    assert a.nav.goto_pose is None and a.pending_target is msg
+    a._dock_tick()                          # 언도킹 완료 폴링
+    assert a.nav.goto_pose is msg and a.pending_target is None and a.driving
+    # 보류 goal 없이 언도킹 완료(after=None) → 기존대로 target_pose 대기
+    a = _FakeAgent(_FakeNav(True, None, False, True), 'UNDOCK')
+    a._dock_tick()
+    assert a.nav.goto_pose is None and not a.patrol_started
 
     # 접근 goal이 순찰 취소에 안 죽는지 — cancelTask는 마지막 goal 하나만 끊으므로
     # 'goto' 뒤에 'cancel'이 오면 접근이 취소된 것이다. 두 콜백 순서 모두 검증.

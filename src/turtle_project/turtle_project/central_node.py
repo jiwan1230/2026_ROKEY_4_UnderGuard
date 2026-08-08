@@ -17,6 +17,19 @@ _TRANSITIONS = {
 }
 
 
+def next_patroller(current, robot, state):
+    """status 1건으로 patroller(역할 A 후보) 갱신 -> 새 patroller.
+
+    순찰 시작한 로봇이 A가 된다. 현재 A가 순찰을 멈추면(RETURNING/DOCKED 등)
+    해제한다 — 안 그러면 배터리 복귀 중인 A에게 쥐 추적(TRACK)이 배정된다.
+    """
+    if state == 'PATROLLING':
+        return robot
+    if current == robot:
+        return None
+    return current
+
+
 def next_command(new_state):
     """로봇 A의 새 상태 -> 로봇 B에게 보낼 명령. 없으면 None.
 
@@ -35,7 +48,8 @@ def coverage_action(robots, waking):
     """
     if waking is not None:
         return None
-    busy = {'PATROLLING', 'TRACKING', 'HERDING', 'RETURNING', 'UNDOCKING'}
+    busy = {'PATROLLING', 'TRACKING', 'HERDING', 'SWEEPING', 'RETURNING',
+            'UNDOCKING'}
     if any(s in busy for s, _ in robots.values()):
         return None
     idle = [r for r, (s, _) in robots.items() if s in ('DOCKED', 'IDLE')]
@@ -76,8 +90,8 @@ class CentralNode(Node):
         robot, state, battery = fleet_msg.parse_status(msg.data)
         prev = self.robots.get(robot)
         self.robots[robot] = (state, battery)
+        self.patroller = next_patroller(self.patroller, robot, state)
         if state == 'PATROLLING':
-            self.patroller = robot
             if self.waking == robot:
                 self.waking = None      # 깨우라던 로봇이 순찰 시작 — 대기 해제
         if self.rat_mode:
@@ -116,6 +130,8 @@ class CentralNode(Node):
             self._end_rat(caught=True)
         elif name == 'rat_lost':
             self._end_rat(caught=False)
+        elif name == 'sweep_done':
+            self._on_sweep_done()
         # opening_confirmed/trap_installed/trap_ok/trap_bad 등은 로봇 로컬에서
         # 처리(db_node 저장, detector 순찰재개)하므로 central은 위 로그로만 관찰한다
         # — 설계상 central은 방역 세부를 조율하지 않고 PATROLLING으로만 안다.
@@ -134,8 +150,20 @@ class CentralNode(Node):
         robot_a, robot_b = roles
         self.rat_mode = True
         self.rat_roles = roles          # 종료 시 A→PATROL, B→DOCK에 사용
-        self.get_logger().info(f'쥐대응 진입 — A(추적)={robot_a}, B(몰이)={robot_b}')
+        self.get_logger().info(f'쥐대응 진입 — A(추적)={robot_a}, B(점검)={robot_b}')
         self.send(robot_a, 'TRACK')
+        # B는 먼저 DB 구멍을 순회 점검(SWEEP)하고, 다 끝내면(sweep_done) HERD로 전환.
+        self.send(robot_b, 'SWEEP')
+
+    def _on_sweep_done(self):
+        """B가 DB 구멍 순회 점검을 마침 → herding 시작 (쥐대응 중일 때만).
+
+        쥐대응이 이미 끝났으면(포획/놓침) 늦게 온 sweep_done은 무시한다.
+        """
+        if not self.rat_mode or self.rat_roles is None:
+            return
+        _, robot_b = self.rat_roles
+        self.get_logger().info(f'{robot_b} 구멍 점검 완료 — HERD(몰이) 시작')
         self.send(robot_b, 'HERD')
 
     def _end_rat(self, caught):
@@ -177,6 +205,13 @@ def main():
 
 
 def _self_check():
+    # patroller 갱신/스테일 해제 (문제 2-5)
+    assert next_patroller(None, 'robot4', 'PATROLLING') == 'robot4'   # 순찰 시작 → A
+    assert next_patroller('robot4', 'robot4', 'RETURNING') is None    # A가 복귀 → 해제
+    assert next_patroller('robot4', 'robot4', 'DOCKED') is None       # A가 도킹 → 해제
+    assert next_patroller('robot4', 'robot6', 'DOCKED') == 'robot4'   # 남이 도킹 → 유지
+    assert next_patroller('robot4', 'robot6', 'PATROLLING') == 'robot6'  # 교대
+
     assert next_command('DOCKED') == 'UNDOCK'   # 교대 핵심 전이
     assert next_command('PATROLLING') is None    # 순찰 중엔 교대 명령 없음
     assert next_command('RETURNING') is None
@@ -202,6 +237,8 @@ def _self_check():
     assert coverage_action({'robot4': ('RETURNING', 20), 'robot6': ('DOCKED', 100)}, None) is None
     # 언도킹 중(수동 UNDOCK 등)도 busy — 다른 로봇을 또 깨우지 않는다
     assert coverage_action({'robot4': ('UNDOCKING', 90), 'robot6': ('DOCKED', 100)}, None) is None
+    # 구멍 순회 점검 중(SWEEPING)도 busy — 다른 로봇을 또 깨우지 않는다
+    assert coverage_action({'robot4': ('SWEEPING', 90), 'robot6': ('DOCKED', 100)}, None) is None
     assert coverage_action({'robot4': ('IDLE', 50)}, None) == 'robot4'  # 대기뿐 → 후보
     assert coverage_action({}, None) is None                            # 로봇 없음 → None
     print('central_node self-check ok')

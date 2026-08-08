@@ -15,7 +15,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
 
-from turtle_interfaces.srv import QueryHole
+from turtle_interfaces.srv import ListHoles, QueryHole
 from turtle_project import fleet_msg
 
 
@@ -44,6 +44,9 @@ class DbNode(Node):
         self.conn.commit()
 
         self.srv = self.create_service(QueryHole, '/db/query_hole', self.query)
+        # B가 쥐대응 시 순회 점검할 전체 구멍 목록 (좌표만).
+        self.list_srv = self.create_service(
+            ListHoles, '/db/list_holes', self.list_holes)
         self.create_subscription(String, '/fleet/event', self.event_cb, 10)
         n = len(self._load())
         self.get_logger().info(
@@ -85,6 +88,14 @@ class DbNode(Node):
         self.conn.commit()
         self.get_logger().info(
             f'trap 상태 갱신 ({hx:.2f}, {hy:.2f}) → {installed}')
+
+    def list_holes(self, req, resp):
+        """저장된 모든 구멍 좌표 반환 (trap 유무 무관 — B가 다 점검한다)."""
+        holes = self._load()
+        resp.xs = [float(x) for x, _, _ in holes]
+        resp.ys = [float(y) for _, y, _ in holes]
+        self.get_logger().info(f'구멍 목록 조회 — {len(holes)}개')
+        return resp
 
     def query(self, req, resp):
         """(req.x, req.y) 근처 저장 구멍 조회. 있으면 저장좌표까지 반환."""
