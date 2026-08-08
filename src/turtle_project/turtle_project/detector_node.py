@@ -16,7 +16,7 @@ import rclpy
 import tf2_geometry_msgs  # noqa: F401  PointStamped TF 변환 등록
 from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
-from geometry_msgs.msg import PointStamped, PoseStamped
+from geometry_msgs.msg import PointStamped, PoseStamped, Twist
 from message_filters import ApproximateTimeSynchronizer, Subscriber
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -52,6 +52,19 @@ def nearest_hole(holes, rx, ry):
         return None
     return min(range(len(holes)),
                key=lambda i: math.hypot(holes[i][0] - rx, holes[i][1] - ry))
+
+
+def lost_action(lost, spin_until, now):
+    """놓침 처리 결정 — None|'spin_start'|'spin_stop'|'lost'. 순수함수.
+
+    안 보인다고 바로 rat_lost 하지 않고 제자리 탐색 회전 한 바퀴를 먼저
+    시도한다. 회전 중 재발견하면 추적 재개, 끝까지 없으면 진짜 놓침.
+    """
+    if spin_until is not None:
+        if not lost:
+            return 'spin_stop'
+        return 'lost' if now >= spin_until else None
+    return 'spin_start' if lost else None
 
 
 def watchdog_action(state, elapsed):
@@ -126,6 +139,9 @@ class DetectorNode(Node):
         self.reinstall_max = self.declare_parameter('reinstall_max', 3).value
         # 추적 goal 재발행 주기(초) — 매 프레임 쏘면 Nav2 goal이 폭주한다.
         self.rat_goal_period = self.declare_parameter('rat_goal_period', 1.0).value
+        # 쥐 놓침 직전 제자리 탐색 회전 시간(초) — 이 시간에 정확히 한 바퀴
+        # 돌도록 각속도를 정하므로(2π/spin_secs) 시간이 곧 회전 속도다.
+        self.spin_secs = self.declare_parameter('search_spin_secs', 10.0).value
         # 디버그 창 (show:=true). headless/SSH에선 imshow가 터지므로 기본 off.
         self.show = self.declare_parameter('show', False).value
 
@@ -150,6 +166,7 @@ class DetectorNode(Node):
         self.rat = RatTracker(cap_r, cap_s, lost_s)
         self.tracking = False
         self._last_rat_goal = 0.0   # 마지막 추적 goal 발행 시각 (rat_goal_period 조절용)
+        self.spin_until = None      # 탐색 회전 종료 시각. None=회전 안 함
         # 쥐대응 B 역할 — DB 구멍을 가까운 순서로 순회 점검(SWEEP). sweeping True일 때만.
         self.sweeping = False
         self.sweep_remaining = []   # 아직 점검 안 한 구멍 [(x, y)]
@@ -162,6 +179,8 @@ class DetectorNode(Node):
         self.hold_pub = self.create_publisher(Bool, 'patrol_hold', 10)
         # trap 설치/점검 지시 — trap_check가 받아 주행/판정만 한다.
         self.job_pub = self.create_publisher(TrapJob, 'trap_job', 10)
+        # 탐색 회전용 직접 주행 — Nav2 goal로는 회전 속도를 못 정해서 cmd_vel.
+        self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         self.db = self.create_client(QueryHole, '/db/query_hole')
         self.db_list = self.create_client(ListHoles, '/db/list_holes')
 
@@ -181,6 +200,8 @@ class DetectorNode(Node):
         self.create_subscription(String, '/fleet/event', self.trap_event_cb, 10)
         # 놓침은 감지가 끊긴 걸로 판단 — 프레임 콜백이 안 오므로 타이머로 감시.
         self.create_timer(1.0, self.lost_tick)
+        # 탐색 회전 유지 — Create3는 cmd_vel이 끊기면 곧 멈추므로 10Hz로 쏜다.
+        self.create_timer(0.1, self.spin_tick)
         # opening 상태기계 wall timeout + hold heartbeat (영구 대기 방지).
         self._wd_state = 'SEARCHING'
         self._wd_since = 0.0
@@ -259,6 +280,8 @@ class DetectorNode(Node):
             return
         # 추적 중 — 쥐 위치로 추적 goal 발행 + 포획 판정. robot_agent가 target_pose를
         # 받아 실제로 몬다. 매 프레임 쏘면 goal 폭주라 rat_goal_period마다 한 번만.
+        if self.spin_until is not None:     # 탐색 회전 중 재발견 — 즉시 회전 정지
+            self._stop_spin('탐색 회전 중 쥐 재발견 — 추적 재개')
         now = self._now()
         if now - self._last_rat_goal >= self.rat_goal_period:
             self.pose_pub.publish(make_pose(FRAME, xy[0], xy[1], 0.0))
@@ -422,16 +445,46 @@ class DetectorNode(Node):
                 self._stop_sweep()      # 쥐대응 종료 — 순회 즉시 중단
 
     def lost_tick(self):
-        """추적 중 lost_secs 넘게 쥐가 안 보이면 rat_lost 발행 (감지 끊김)."""
-        if not self.tracking or not self.rat.is_lost(self._now()):
+        """추적 놓침 감시 — 안 보이면 제자리 탐색 회전부터, 그래도 없으면 rat_lost.
+
+        회전은 Nav2가 아니라 cmd_vel 직접(spin_tick) — 마지막 추적 goal은
+        lost_secs 전 것이라 보통 끝나 있어 Nav2 주행과 겹치지 않는다.
+        """
+        if not self.tracking:
             return
-        self.get_logger().info('쥐 놓침 판정 — rat_lost 발행')
-        # 놓친 위치는 마지막 anchor (없으면 0,0 — central은 이름만 보고 판단).
-        x, y = self.rat.anchor or (0.0, 0.0)
-        self.event_pub.publish(String(data=fleet_msg.event('rat_lost', x, y)))
-        self._stop_tracking()
+        now = self._now()
+        act = lost_action(self.rat.is_lost(now), self.spin_until, now)
+        if act == 'spin_start':
+            self.spin_until = now + self.spin_secs
+            self.get_logger().info(
+                f'쥐 안 보임 — 제자리 탐색 회전 {self.spin_secs:.0f}초')
+        elif act == 'spin_stop':
+            self._stop_spin('탐색 회전 중 쥐 재발견 — 추적 재개')
+        elif act == 'lost':
+            self._stop_spin(None)
+            self.get_logger().info('쥐 놓침 판정 — rat_lost 발행')
+            # 놓친 위치는 마지막 anchor (없으면 0,0 — central은 이름만 보고 판단).
+            x, y = self.rat.anchor or (0.0, 0.0)
+            self.event_pub.publish(String(data=fleet_msg.event('rat_lost', x, y)))
+            self._stop_tracking()
+
+    def spin_tick(self):
+        """탐색 회전 중 10Hz로 회전 명령 유지. spin_secs에 정확히 한 바퀴."""
+        if self.spin_until is None:
+            return
+        t = Twist()
+        t.angular.z = 2.0 * math.pi / self.spin_secs
+        self.cmd_pub.publish(t)
+
+    def _stop_spin(self, why):
+        self.spin_until = None
+        self.cmd_pub.publish(Twist())       # 회전 정지
+        if why:
+            self.get_logger().info(why)
 
     def _stop_tracking(self):
+        if self.spin_until is not None:
+            self._stop_spin(None)           # 명령(STOP/PATROL)으로 끝나도 회전 정지
         self.tracking = False
         self.rat.reset()
 
@@ -725,6 +778,13 @@ def _self_check():
     assert watchdog_action('AWAIT_TRAP', 21.0) == 'finish'    # trap_check 무응답
     assert watchdog_action('VERIFYING', 31.0) == 'finish'     # 카메라 사망 백스톱
     assert watchdog_action('SWEEP_NAV', 61.0) == 'finish'     # 순회 이동 백스톱
+
+    # lost_action: 놓침 → 즉시 포기 대신 탐색 회전 → 그래도 없으면 진짜 lost
+    assert lost_action(False, None, 0.0) is None            # 정상 추적 중
+    assert lost_action(True, None, 0.0) == 'spin_start'     # 1차 놓침 — 회전 시작
+    assert lost_action(True, 15.0, 12.0) is None            # 회전 중 — 계속
+    assert lost_action(False, 15.0, 12.0) == 'spin_stop'    # 회전 중 재발견
+    assert lost_action(True, 15.0, 15.0) == 'lost'          # 회전 끝 — 진짜 놓침
 
     # greedy 순회 — 로봇에서 가장 가까운 구멍 인덱스 (B 구멍 순회 점검)
     assert nearest_hole([], 0.0, 0.0) is None                 # 빈 목록
