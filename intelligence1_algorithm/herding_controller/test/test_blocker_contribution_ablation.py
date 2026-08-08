@@ -58,6 +58,26 @@ def test_run_paired_trap_accepts_activation_distance_override():
     assert total == 3
 
 
+def test_run_paired_trap_exposes_raw_pairs_for_downstream_analysis():
+    """집계 카운트만으로는 안 보이는 것(포획 시간 비교 등)을 다시 시뮬레이션
+    돌리지 않고 파고들 수 있도록, seed별 (active, frozen) TrialResult 쌍이
+    그대로 노출되는지 확인한다."""
+    herding_config_base = load_herding_config(CONFIG_PATH)
+    trap_name, trap_pos = next(iter(real_map_arena.TRAPS.items()))
+    seed_base = 999_200
+    row = run_paired_trap(
+        herding_config_base, trap_name, trap_pos, trials=3, seed_base=seed_base, args=_args()
+    )
+    assert len(row["pairs"]) == 3
+    seeds = [seed for seed, _, _ in row["pairs"]]
+    assert seeds == [seed_base, seed_base + 1, seed_base + 2]
+    for _, active, frozen in row["pairs"]:
+        assert isinstance(active.success, bool)
+        assert isinstance(frozen.success, bool)
+        assert active.duration_sec >= 0.0
+        assert frozen.duration_sec >= 0.0
+
+
 def test_frozen_blocker_stays_at_spawn_even_during_deadlock_release():
     """_frozen_blocker()가 _stabilize_blocking_point만 패치했을 때는 이 테스트가
     실패했다 -- deadlock release가 blocking_point를 다시 덮어써서 로봇 B가

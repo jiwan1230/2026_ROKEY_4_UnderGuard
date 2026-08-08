@@ -133,6 +133,11 @@ def run_paired_trap(herding_config_base, trap_name, trap_pos, trials, seed_base,
     return {
         "trap": trap_name, "rescue": rescue, "regression": regression,
         "both_success": both_success, "both_fail": both_fail, "p_value": p_value,
+        # (seed, active TrialResult, frozen TrialResult) 튜플 목록 -- 집계된
+        # rescue/regression 숫자로는 안 보이는 것(포획 시간 비교, 특정 rescue
+        # 시행의 궤적 등)을 후속 분석에서 다시 시뮬레이션 없이 바로 파고들 수
+        # 있게 원본 결과까지 노출한다(트러블슈팅 노트 12-6 후속 조사용).
+        "pairs": list(zip(range(seed_base, seed_base + trials), active_results, frozen_results)),
     }
 
 
