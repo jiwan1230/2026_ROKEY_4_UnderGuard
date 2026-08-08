@@ -394,3 +394,67 @@ def test_pressure_pair_two_robots_cover_more_than_one_would():
     pair_cover = pair.coverage_fraction * pair.corridor_width_m
     assert pair_cover > single_cover * 1.5, (
         f"두 대 커버 {pair_cover:.2f}m vs 한 대 {single_cover:.2f}m -- 협력 이득이 없다")
+
+
+# --------------------------------------------------------------------------- #
+# 수비 지점 (compute_guard_point) -- 2026-08-08                                 #
+# --------------------------------------------------------------------------- #
+
+def test_guard_point_sits_on_the_escape_side_not_the_goal_side():
+    """수비 지점은 표적 기준 **트랩 반대쪽**(도주 방향)에 있어야 한다.
+
+    트랩 쪽에 서면 표적이 가야 할 길을 막는 셈이라 몰이가 안 된다 -- 실제로
+    게이트를 트랩 가는 길에 놓았다가 성공률이 92%->15.8%로 무너진 적이 있다
+    (트러블슈팅 노트 16-4).
+    """
+    from herding_controller_dual.herding_planner import compute_guard_point
+
+    grid_map, clearance, cy = _corridor_grid(1.2, length_m=8.0)
+    target = np.array([4.0, cy])
+    goal_dir = np.array([1.0, 0.0])           # 트랩은 +x 쪽
+    guard = compute_guard_point(target, goal_dir, grid_map, clearance, _R + _C)
+    assert guard is not None
+    assert guard.point[0] < target[0], f"수비 지점이 트랩 쪽에 있음: {guard.point}"
+
+
+def test_guard_point_prefers_the_narrowest_chokepoint():
+    """여러 후보 중 통로가 가장 좁은 길목을 골라야 막는 효과가 크다."""
+    from scipy import ndimage
+
+    from herding_controller_dual.grid_map import GridConfig, GridMap
+    from herding_controller_dual.herding_planner import compute_guard_point
+
+    res = 0.05
+    w, h = int(8.0 / res), int(4.0 / res)
+    mask = np.ones((h, w), dtype=bool)
+    wide_lo, wide_hi = int(1.0 / res), int(3.0 / res)      # 폭 2.0m 통로
+    mask[wide_lo:wide_hi, :] = False
+    # x=2.0m 근처만 폭 0.8m로 좁힌다 (여기가 병목)
+    narrow_lo, narrow_hi = int(1.6 / res), int(2.4 / res)
+    pinch = slice(int(1.9 / res), int(2.1 / res))
+    mask[wide_lo:narrow_lo, pinch] = True
+    mask[narrow_hi:wide_hi, pinch] = True
+
+    grid_map = GridMap(GridConfig(resolution_m=res, width_cells=w, height_cells=h,
+                                  origin_x_m=0.0, origin_y_m=0.0))
+    grid_map.obstacle_mask = mask
+    clearance = ndimage.distance_transform_edt(~mask) * res
+
+    target = np.array([3.5, 2.0])
+    guard = compute_guard_point(target, np.array([1.0, 0.0]), grid_map, clearance, _R + _C,
+                                min_ahead_m=0.6, max_ahead_m=2.5)
+    assert guard is not None
+    # 병목(x~2.0)을 골랐어야 한다 -- 넓은 구간(폭 2.0m)이 아니라
+    assert guard.corridor_width_m < 1.2, f"넓은 곳을 골랐다: 폭 {guard.corridor_width_m:.2f}m"
+    assert abs(guard.point[0] - 2.0) < 0.45, f"병목이 아닌 곳: {guard.point}"
+
+
+def test_guard_point_returns_none_when_no_standable_spot_exists():
+    """도주 방향에 로봇이 설 자리가 없으면 None을 돌려 폴백하게 해야 한다."""
+    from herding_controller_dual.herding_planner import compute_guard_point
+
+    grid_map, clearance, cy = _corridor_grid(1.2, length_m=8.0)
+    # 표적을 통로 왼쪽 끝에 두고 도주 방향(-x)을 벽 밖으로 향하게 한다
+    guard = compute_guard_point(np.array([0.2, cy]), np.array([1.0, 0.0]),
+                                grid_map, clearance, _R + _C)
+    assert guard is None

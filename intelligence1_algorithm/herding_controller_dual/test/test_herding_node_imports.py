@@ -94,6 +94,8 @@ def test_load_config_declares_every_herdingconfig_field_without_crashing():
             "robot_wall_clearance_m",
             "pressure_half_angle_deg",
             "shaping_mode_enabled",
+            "guard_mode_enabled",
+            "guard_commit_distance_m",
         }
     assert field_names - declared_names <= _INTENTIONALLY_UNDECLARED, (
         f"HerdingConfig fields missing from _PARAM_DEFAULTS without being in "

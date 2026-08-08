@@ -19,6 +19,7 @@ from herding_controller_dual.herding_planner import (
     compute_driving_point,
     compute_pressure_pair,
     compute_shaping_pair,
+    compute_guard_point,
 )
 from herding_controller_dual.occlusion_grid import OcclusionGrid, OcclusionGridConfig
 from herding_controller_dual.role_assigner import RoleAssigner, RoleAssignerConfig, resolve_separation
@@ -116,6 +117,15 @@ class HerdingConfig:
     # True면 두 로봇을 '표적이 포획존 쪽으로 갈 확률이 최대가 되는' 자리에
     # 같이 놓는다 -- Driver/Blocker 구분 없음. 기본값 False로 기존 동작 유지.
     shaping_mode_enabled: bool = False
+    # 수비-쓸기 모드 (2026-08-08, 트러블슈팅 노트 16번 항목). True면 한 로봇은
+    # 표적을 쫓지 않고 '도주로의 가장 좁은 길목'에 미리 가서 지키고, 다른
+    # 로봇이 표적을 트랩 쪽으로 민다 -- lion-and-man 2인 추격 전략을 몰이에
+    # 적용한 것. 지금까지 방식은 전부 두 로봇이 표적을 쫓아서, 표적보다 느린
+    # 로봇이 영원히 뒤따라가기만 했다. 기본값 False로 기존 동작 유지.
+    guard_mode_enabled: bool = False
+    # 수비 지점을 이만큼 이동해야 갱신한다(이력현상). 매 주기 길목이 바뀌면
+    # 수비수가 도착도 못 하고 계속 옮겨다닌다(10-6의 flicker와 같은 문제).
+    guard_commit_distance_m: float = 0.5
 
     def __post_init__(self) -> None:
         """herd를 교착 상태에 빠뜨리는 것으로 알려진 파라미터 조합을 거부한다.
@@ -178,6 +188,8 @@ class HerdingOutput:
     # 한 대만 썼을 때의 확률 (두 번째 로봇의 순기여를 그대로 보여준다).
     shaping_goal_prob: float | None = None
     shaping_goal_prob_single: float | None = None
+    # 수비-쓸기 모드에서만: 수비수가 지키는 길목의 통로 폭(좁을수록 잘 막힘).
+    guard_corridor_width_m: float | None = None
 
 
 class HerdingCore:
@@ -247,6 +259,8 @@ class HerdingCore:
         self._geodesic_ready = False
         # 압박 선분 배치용 벽까지 거리장(미터). 맵이 온 뒤 1회만 계산해 캐싱한다.
         self._clearance_m = None
+        # 수비 지점 이력현상 상태 -- guard_commit_distance_m 참고.
+        self._committed_guard_point = None
         # Blocking Point 이력현상(hysteresis) 상태 -- 아래 _stabilize_blocking_point() 참고.
         self._committed_blocking_point: np.ndarray | None = None
         self._committed_blocking_time: float = 0.0
@@ -546,6 +560,7 @@ class HerdingCore:
             # 재관측 후 HERD로 돌아왔을 때 LOST 이전의 낡은 목표점을
             # 이어받지 않도록 이력현상 상태를 지운다.
             self._committed_blocking_point = None
+            self._committed_guard_point = None
             self._reset_deadlock_state()
         else:
             self._reset_occlusion_memory()
@@ -580,6 +595,50 @@ class HerdingCore:
                 blocker_pos = observation.robot2_pos if driver_id == 1 else observation.robot1_pos
 
                 clearance = self._ensure_clearance_field()
+                if self.config.guard_mode_enabled and clearance is not None:
+                    guard = compute_guard_point(
+                        target_state.position, direction_goal - target_state.position,
+                        self.grid_map, clearance,
+                        self.config.robot_radius_m + self.config.robot_wall_clearance_m,
+                    )
+                    if guard is not None:
+                        # 이력현상: 새 길목이 충분히 멀어졌을 때만 갱신한다.
+                        if (self._committed_guard_point is None
+                                or float(np.linalg.norm(guard.point - self._committed_guard_point))
+                                > self.config.guard_commit_distance_m):
+                            self._committed_guard_point = guard.point.copy()
+                        guard_point = self._committed_guard_point
+                        # 쓸기 담당은 기존 검증된 Driving Point 그대로.
+                        sweep = compute_driving_point(
+                            target_state.position, target_state.velocity, direction_goal,
+                            driver_pos, self.planner_config,
+                        )
+                        panic = sweep.is_panic
+                        # 배정: 각자 가까운 쪽을 맡아 서로 경로가 꼬이지 않게 한다.
+                        straight = (float(np.linalg.norm(observation.robot1_pos - sweep.point))
+                                    + float(np.linalg.norm(observation.robot2_pos - guard_point)))
+                        crossed = (float(np.linalg.norm(observation.robot1_pos - guard_point))
+                                   + float(np.linalg.norm(observation.robot2_pos - sweep.point)))
+                        if straight <= crossed:
+                            robot1_goal, robot2_goal = sweep.point, guard_point
+                        else:
+                            robot1_goal, robot2_goal = guard_point, sweep.point
+                        self._committed_blocking_point = None
+                        self._reset_deadlock_state()
+                        latency_ms = (time.perf_counter() - start) * 1000.0
+                        return HerdingOutput(
+                            robot1_goal=robot1_goal, robot2_goal=robot2_goal, fsm_state=fsm_state,
+                            driver_id=driver_id, blocker_id=blocker_id,
+                            target_position=target_state.position,
+                            target_velocity=target_state.velocity,
+                            escape_top3=list(escape_estimate.top_k_routes) if escape_estimate else [],
+                            escape_directions=escape_estimate.directions if escape_estimate else None,
+                            escape_probabilities=escape_estimate.probabilities if escape_estimate else None,
+                            latency_ms=latency_ms, panic=panic, role_swapped=role_swapped,
+                            deadlock_release=False,
+                            guard_corridor_width_m=guard.corridor_width_m,
+                        )
+
                 if self.config.shaping_mode_enabled and clearance is not None:
                     shaping = compute_shaping_pair(
                         target_state.position, target_state.velocity,

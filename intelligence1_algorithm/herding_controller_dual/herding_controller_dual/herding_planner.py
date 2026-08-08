@@ -563,3 +563,76 @@ def compute_shaping_pair(
     single = max(score([candidates[i], far]) for i in range(len(candidates)))
     return ShapingPair(point_a=point_a, point_b=point_b,
                        goal_prob=both, goal_prob_single=single)
+
+
+# --------------------------------------------------------------------------- #
+# 수비-쓸기 (Guard & Sweep) -- 2026-08-08                                       #
+# --------------------------------------------------------------------------- #
+#
+# lion-and-man 문헌의 2인 추격 전략을 몰이에 적용한 것. 지금까지 만든 모든
+# 방식(Driver/Blocker, 봉인, 압박, 분포최적화)은 **두 로봇 다 표적을 쫓았다**.
+# 그래서 표적보다 느린 로봇은 영원히 뒤따라가기만 했고, 기여가 안 나왔다.
+#
+# 이 전략은 구조가 다르다:
+#   - **수비수(guard)**: 표적을 쫓지 않는다. 표적이 트랩 반대쪽으로 빠져나갈
+#     때 반드시 지나야 하는 **가장 좁은 길목에 미리 가서 자리를 지킨다**.
+#     먼저 가서 기다리므로 표적보다 느려도 상관없다.
+#   - **쓸기(sweeper)**: 기존 compute_driving_point 그대로, 표적을 트랩 쪽으로 민다.
+#
+# 즉 수비수가 표적의 자유 영역을 잘라내고, 쓸기가 그 영역을 좁힌다.
+
+
+@dataclass
+class GuardPoint:
+    """수비수가 지킬 길목과 그 길목의 폭(좁을수록 잘 막힌다)."""
+    point: np.ndarray
+    corridor_width_m: float
+    distance_from_target_m: float
+
+
+def compute_guard_point(
+    target_pos: np.ndarray,
+    goal_direction: np.ndarray,
+    grid_map: GridMap,
+    clearance_m,
+    body_clearance_m: float,
+    min_ahead_m: float = 0.6,
+    max_ahead_m: float = 2.5,
+    step_m: float = 0.1,
+) -> GuardPoint | None:
+    """표적이 트랩 반대쪽으로 도망칠 때 지나야 하는 가장 좁은 길목을 찾는다.
+
+    표적에서 `goal_direction`의 **반대 방향**(=도주 방향)으로 나아가며, 각
+    지점에서 진행방향에 수직인 통로 폭을 재고 가장 좁은 곳을 고른다. 그
+    지점의 중앙이 수비 위치다 -- 표적이 그쪽으로 빠져나가려면 반드시 여길
+    지나야 하고, 통로가 좁을수록 로봇 한 대로도 실질적으로 막힌다.
+
+    범위 안에 로봇이 설 수 있는 지점이 하나도 없으면 None (그 경우 호출부는
+    기존 Blocking Point 방식으로 폴백한다).
+    """
+    direction = np.asarray(goal_direction, dtype=float)
+    norm = float(np.linalg.norm(direction))
+    if norm < 1e-9:
+        return None
+    direction = direction / norm
+    escape = -direction                      # 트랩 반대쪽 = 표적이 달아날 방향
+    perp = np.array([-escape[1], escape[0]])
+    target = np.asarray(target_pos, dtype=float)
+
+    best = None
+    steps = int((max_ahead_m - min_ahead_m) / step_m)
+    for i in range(steps + 1):
+        ahead = min_ahead_m + i * step_m
+        probe = target + escape * ahead
+        if _cell_clearance(probe, grid_map, clearance_m) < body_clearance_m:
+            continue
+        reach_a = _free_extent_along(probe, perp, grid_map, clearance_m, body_clearance_m, 3.0)
+        reach_b = _free_extent_along(probe, -perp, grid_map, clearance_m, body_clearance_m, 3.0)
+        width = reach_a + reach_b + 2.0 * body_clearance_m
+        # 통로 중앙에 서야 양쪽을 고르게 막는다.
+        center = probe + perp * ((reach_a - reach_b) / 2.0)
+        if _cell_clearance(center, grid_map, clearance_m) < body_clearance_m:
+            center = probe
+        if best is None or width < best.corridor_width_m:
+            best = GuardPoint(point=center, corridor_width_m=width, distance_from_target_m=ahead)
+    return best

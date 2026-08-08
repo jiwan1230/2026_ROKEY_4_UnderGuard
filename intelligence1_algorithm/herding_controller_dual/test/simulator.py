@@ -28,6 +28,12 @@ class SimulatorConfig:
     # 현실을 반영하지 못한다 (트러블슈팅 노트 참고).
     driver_discovery_min_m: float = 0.3
     driver_discovery_max_m: float = 1.5
+    # 발견 전 두 번째 로봇도 순찰에 참여하는가 (2026-08-08).
+    # 기본값 False는 기존 동작 -- 로봇 2는 대기 지점에 서 있고 로봇 1만
+    # 순찰한다. True면 로봇 2가 순찰 경로를 **역순으로** 돌아 두 로봇이
+    # 방을 나눠 훑고, 둘 중 아무나 표적을 보면 발견으로 친다 -- 몰이가
+    # 아니라 **탐색 단계**에서 두 로봇이 협력하는 것이다.
+    split_search_enabled: bool = False
 
 
 @dataclass
@@ -416,6 +422,10 @@ def run_trial_real_map(
     discovered = False
     discovery_time_sec = None
     patrol_idx = 0
+    # 로봇 2는 순찰 경로를 역순으로 돈다 -- 두 로봇이 같은 곳을 겹쳐 훑지
+    # 않고 방을 양쪽에서 나눠 훑게 하려는 것.
+    patrol2 = list(reversed(real_map_arena.PATROL_WAYPOINTS))
+    patrol2_idx = 0
 
     # 덫(포획존)에 닿은 표적은 물리적으로 걸려서 더 이상 움직이지 못한다
     # (2026-08-08). 그 전까지는 표적이 계속 움직일 수 있고 FSM이 "반경 안에
@@ -440,8 +450,10 @@ def run_trial_real_map(
         tick_min = _closest_robot_distance(target_state[:2], robot1_pos, robot2_pos)
 
         if not discovered:
-            dist_to_robot1 = float(np.linalg.norm(target_state[:2] - robot1_pos))
-            if dist_to_robot1 <= real_map_arena.SENSOR_RANGE_M:
+            seen_by = [float(np.linalg.norm(target_state[:2] - robot1_pos))]
+            if sim_config.split_search_enabled:
+                seen_by.append(float(np.linalg.norm(target_state[:2] - robot2_pos)))
+            if min(seen_by) <= real_map_arena.SENSOR_RANGE_M:
                 discovered = True
                 discovery_time_sec = sim_time_sec
 
@@ -479,8 +491,16 @@ def run_trial_real_map(
         new_r1_raw = real_map_arena.move_with_wall_avoidance(
             robot1_pos, robot1_target, distance_field, core.grid_map, speed, sim_config.dt
         )
+        if discovered or not sim_config.split_search_enabled:
+            robot2_target = output.robot2_goal
+        else:
+            waypoint2 = patrol2[patrol2_idx]
+            if np.linalg.norm(robot2_pos - waypoint2) <= real_map_arena.PATROL_WAYPOINT_TOLERANCE_M:
+                patrol2_idx = (patrol2_idx + 1) % len(patrol2)
+                waypoint2 = patrol2[patrol2_idx]
+            robot2_target = waypoint2
         new_r2_raw = real_map_arena.move_with_wall_avoidance(
-            robot2_pos, output.robot2_goal, distance_field, core.grid_map, speed, sim_config.dt
+            robot2_pos, robot2_target, distance_field, core.grid_map, speed, sim_config.dt
         )
         new_r1 = real_map_arena.step_body_sliding(
             core.grid_map, robot1_pos, new_r1_raw, low, high, avoid_point=prev_robot1_pos,
