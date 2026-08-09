@@ -163,6 +163,12 @@ class DetectorNode(Node):
             'approach_goal_period', 0.5).value
         # 쥐 놓침 직전 제자리 탐색 회전 시간(초) — 이 시간에 정확히 한 바퀴 돌도록 각속도를 정하므로(2π/spin_secs) 시간이 곧 회전 속도다.
         self.spin_secs = self.declare_parameter('search_spin_secs', 10.0).value
+        # 플랜 A: robot B만 알고리즘이 몰이(HERD), robot A(추적)는 detector가
+        # target_pose로 직접 쫓는다. 플랜 B: robot A도 알고리즘(herding_controller_dual)이
+        # 몰기 때문에 detector가 동시에 target_pose를 쏘면 방향이 반대라 로봇이
+        # 진동한다 — plan=='b'면 추적 중 target_pose 발행을 끄고 쥐 위치(rat_detected)만
+        # 계속 흘려 알고리즘 입력으로 쓰게 한다. central_pc.launch.py의 plan:=a/b와 맞춘다.
+        self.herd_dual = self.declare_parameter('plan', 'a').value == 'b'
         # 디버그 창 (show:=true). headless/SSH에선 imshow가 터지므로 기본 off.
         self.show = self.declare_parameter('show', False).value
 
@@ -317,16 +323,22 @@ class DetectorNode(Node):
             self.event_pub.publish(String(data=fleet_msg.event(
                 'rat_detected', *xy)))
             return
-        # 추적 중 — 쥐 위치로 추적 goal 발행 + 포획 판정. robot_agent가 target_pose를
-        # 받아 실제로 몬다. 매 프레임 쏘면 goal 폭주라 rat_goal_period마다 한 번만.
+        # 추적 중 — 포획 판정은 항상, goal/이벤트는 rat_goal_period마다 한 번만
+        # (매 프레임 쏘면 goal 폭주·이벤트 스팸). robot_agent가 target_pose를 받아
+        # 실제로 몬다 — 단, 플랜 B는 알고리즘이 몰기 때문에 여기서 goal을 쏘지 않는다.
         if self.spin_until is not None:     # 탐색 회전 중 재발견 — 즉시 회전 정지
             self._stop_spin('탐색 회전 중 쥐 재발견 — 추적 재개')
         now = self._now()
         if now - self._last_rat_goal >= self.rat_goal_period:
-            self.pose_pub.publish(make_pose(FRAME, xy[0], xy[1], 0.0))
+            # 알고리즘의 쥐 위치 입력 — 추적 시작 후에도 끊기면 안 된다(플랜 A/B 공통).
+            self.event_pub.publish(String(data=fleet_msg.event(
+                'rat_detected', *xy)))
+            if not self.herd_dual:          # 플랜 A만 — 플랜 B는 알고리즘이 A도 몬다
+                self.pose_pub.publish(make_pose(FRAME, xy[0], xy[1], 0.0))
             self._last_rat_goal = now
             self.get_logger().info(
-                f'쥐 ({xy[0]:.2f}, {xy[1]:.2f}) 추적 goal 발행',
+                f'쥐 ({xy[0]:.2f}, {xy[1]:.2f}) 위치 갱신'
+                + ('' if self.herd_dual else ' — 추적 goal 발행'),
                 throttle_duration_sec=1.0)
         if self.rat.seen(xy[0], xy[1], now):
             self.get_logger().info(f'쥐 포획 판정 ({xy[0]:.2f}, {xy[1]:.2f})')
