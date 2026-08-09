@@ -28,8 +28,8 @@ _PARAM_DEFAULTS = {
     "frame_id": "map",
     "control_rate_hz": 5.0,
     # --- 캡처 존 --- (2026-08-06: 실제 방의 "top" 트랩 좌표 기본값, config/herding_params.yaml 참고)
-    "capture_zone_x_m": -1.28,
-    "capture_zone_y_m": -0.63,
+    "capture_zone_x_m": -2.20,
+    "capture_zone_y_m": -2.41,
     "capture_radius_m": 0.3,
     "capture_hold_sec": 1.5,  # 2026-08-06: 3.0 -> 1.5, 실제 맵 재검증 결과 (config/herding_params.yaml 주석 참고)
     # --- 그리드 --- (2026-08-06: maps/room_map.yaml 실측값으로 교체)
