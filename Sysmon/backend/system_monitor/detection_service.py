@@ -12,44 +12,42 @@ from typing import Any
 from .risk_signals import normalize_risk_signal
 from .state_manager import StateManager, is_rat_object
 
-# 탐지 dict에서 로봇의 "현재 타겟"으로 옮겨 담을 필드만 골라낸 목록.
-# 여기 없는 키(review_status, image_url 등)는 detections 목록에는 남지만
-# robot.target에는 안 실린다 — 카메라 오버레이·타겟 표시에는 이 필드들만
-# 필요하기 때문에 최소한으로 제한한다.
+# 탐지 데이터 전체 → 필요한 target 정보만 필터링
 TARGET_FIELDS = ("object_type", "confidence", "distance", "map_x", "map_y", "source")
 
 # 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 #
 def process_detection(
+    # 현재 로봇 상태, 탐지 목록, 이벤트 등을 관리하는 StateManager 객체를 받음
+
     state: StateManager,
+    # ROS나 다른 곳에서 들어온 탐지 결과 데이터
     detection: dict[str, Any],
     *,
+    # 탐지가 발생했을 때 이벤트 타임라인에 기록할 메시지
     event_message: str,
     fallback_state: str | None = None,
     fallback_task: str | None = None,
     camera_status: str | None = None,
 ) -> dict[str, Any]:
-    '''Mock과 ROS 양쪽에서 들어오는 탐지 한 건을 항상 같은 순서로 처리하는 공통 진입점.
+    '''탐지 데이터를 받아서 시스템 상태를 갱신하는 process_detection() 함수의 입력값 정의'''
 
-       탐지 기록 추가 → (쥐면) 역할 자동배정 → 로봇 상태/작업 갱신 → 이벤트 기록
-       순서로 처리한다. Mock과 ros_bridge가 각자 이 순서를 따로 구현하면
-       둘이 조금씩 어긋날 수 있어서, 이 함수 하나로 통일해뒀다.'''
-
-    # 원본 detection dict를 호출부가 그대로 쓰고 있을 수도 있으니,
-    # 여기서 바꿀 값(object_type)은 복사본에만 반영한다.
+    # 중요 #
+    # 원본 detection을 복사
     data = dict(detection)
+    # 탐지 데이터에서 robot_id를 가져옴
     robot_id = str(data["robot_id"])
-    # 센서·소스마다 다른 라벨(rc_car, rat_hole 등)을 표준 위험신호 3종
-    # (LIVE_RODENT/ENTRY_POINT/DROPPINGS) 이름으로 통일한다.
+    # 중요 #
+    # 소스마다 다르게 들어올 수 있는 객체 이름을 시스템에서 쓰는 표준 이름으로 바꿈
+    # (LIVE_RODENT/ENTRY_POINT/DROPPINGS) 정해진 위험 신호 이름으로 통일
     data["object_type"] = normalize_risk_signal(data["object_type"])
     # robot_id가 실제 등록된 로봇인지 확인 — 없는 로봇이면 여기서 예외로 걸린다.
     state.get_robot(robot_id)
     # 중요 #
-    # 이 탐지를 최근 탐지 목록에 그대로 기록한다 — 지도 마커, 이벤트
-    # 상세, 마커 클릭 시 나오는 증거 정보가 전부 여기서 나온다.
+    # 정리된 탐지 데이터를 StateManager의 탐지 목록에 저장
     item = state.add_detection(data)
-
     # 쥐(LIVE_RODENT) 계열 탐지일 때만 역할 자동배정을 시도한다.
     # 이미 다른 로봇이 먼저 발견해서 배정이 끝났으면 None이 돌아온다.
+    # 중요 #
     assignment = (
         state.assign_roles_from_rat_detection(robot_id)
         if is_rat_object(data["object_type"])
@@ -58,28 +56,35 @@ def process_detection(
     # assign_roles_from_rat_detection이 role을 바꿨을 수도 있으니
     # 최신 role을 다시 읽어온 뒤 아래 _update_robot_target에 넘긴다.
     robot = state.get_robot(robot_id)
+
     # 중요 #
-    # 탐지 종류와 이 로봇의(방금 바뀌었을 수도 있는) 역할을 기준으로,
-    # 로봇 카드에 보여줄 다음 상태·작업·타겟 좌표를 계산해서 반영한다.
+    # 이 로봇이 무엇을 탐지했고 현재 역할이 무엇인지 보고, 
+    # 다음 상태·작업·target 정보를 갱신
     _update_robot_target(
         state,
         robot_id,
         robot["role"],
+        # 정리된 탐지 결과
         data,
+        # 로봇에게 적용할 “기본 상태값 문자열”
         fallback_state=fallback_state,
         fallback_task=fallback_task,
         camera_status=camera_status,
     )
-    # 이번 호출에서 실제로 새로 역할이 배정된 경우에만 안내 이벤트를 남긴다.
+    # 새로운 역할 배정이 실제로 발생했는지 확인
     if assignment:
+        # 그 내용을 이벤트로 기록
         _record_role_assignment(state, robot_id, assignment)
 
+    # 중요 #
     # 지도 마커와는 별개로, 최근 이벤트 타임라인에도 이 탐지를 남긴다.
     state.add_event(
+        # 화면에 보여줄 탐지 메시지
         event_message,
         robot_id=robot_id,
         event_type="DETECTION",
     )
+    # state.add_detection(data)로 저장했던 탐지 결과 item을 최종 반환
     return item
 
 
@@ -97,6 +102,7 @@ def record_target_lost(state: StateManager, robot_id: str) -> dict[str, Any]:
         nav_status="CANCELED",
         current_task="대상 재탐색 대기",
     )
+    # 중요 #
     return state.add_event(
         "추적 대상을 놓쳤습니다. 마지막 탐지 위치를 유지합니다.",
         robot_id=robot_id,
@@ -110,12 +116,7 @@ def record_low_battery(
     robot_id: str,
     battery: float,
 ) -> dict[str, Any]:
-    '''배터리 값을 반영하고 현재 세션에 저전압 경고를 추가한다.
-
-       로봇의 실제 이동 상태(state)는 여기서 강제로 안 바꾼다 — 이동
-       상태는 Fleet/ROS가 보고하는 값이 항상 최종 권위를 가지고,
-       "복귀 권장·신규 임무 제한" 같은 운영 의미는 화면(dashboard.js)이
-       매 폴링마다 배터리 수치를 보고 새로 계산해서 보여준다.'''
+    '''배터리 값을 반영하고 현재 세션에 저전압 경고를 추가한다.'''
 
     state.update_robot(robot_id, battery=battery)
     # 중요 #
@@ -136,11 +137,7 @@ def record_battery_recovered(
     robot_id: str,
     battery: float = 80.0,
 ) -> dict[str, Any]:
-    '''배터리가 정상 범위로 돌아왔음을 기록한다(Mock의 "배터리 복구" 트리거).
-
-       배터리 값만 되돌리면, 화면의 저전압 경고와 카드의 "신규 임무 제한"
-       문구는 매번 최신 배터리 값 기준으로 다시 계산되므로 여기서 따로
-       지울 게 없다 — record_low_battery와 정확히 대칭되는 처리다.'''
+    '''배터리가 정상 범위로 돌아왔음을 기록한다(Mock의 "배터리 복구" 트리거)'''
 
     state.update_robot(robot_id, battery=battery)
     return state.add_event(
@@ -241,6 +238,7 @@ def _update_robot_target(
             # target에는 TARGET_FIELDS로 제한된 필드만 담는다 — 그래야
             # 카메라 오버레이·지도의 "현재 대상" 표시가 이번 탐지 내용만
             # 정확히 반영한다(review_status 등 불필요한 값이 안 섞임).
+            # 중요 #
             "target": {key: detection.get(key) for key in TARGET_FIELDS},
         }
         if camera_status is not None:
@@ -291,3 +289,4 @@ add_event()
      ↓
 웹 관제 UI
 '''
+
