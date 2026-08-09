@@ -1,8 +1,12 @@
 """trap 설치/점검 — detector가 준 TrapJob으로만 동작 (지각 안 함).
 
 detector가 YOLO를 유일하게 쓰고, 여기는 좌표만 받아 판정/주행한다.
-  install: 구멍 20cm 앞 전진→후진 주행 후 trap_installed 발행 (beep로 사람 호출)
+  install: 0.5m로 전진 → 10초 대기(사람이 trap 놓음) → 후진 후 trap_installed 발행
   inspect: 구멍좌표 vs trap좌표 거리 ≤ trap_ok_dist 면 trap_ok, 아니면 trap_bad
+
+설치 주행은 전부 cmd_vel open-loop — 로봇이 구멍을 정면으로 본 채(detector가
+0.8m 앞에 세워둠) 0.3m 전진/후진하고, 후진은 Create3가 곧은 후진을 못 해서
+180° 회전→전진→180° 복귀로 대신한다. TF·Nav2 안 쓴다.
 
 판정 결과는 /fleet/event로 발행 → detector가 받아 순찰 재개.
 """
@@ -13,17 +17,13 @@ import time
 
 import rclpy
 from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Twist
 from irobot_create_msgs.msg import AudioNote, AudioNoteVector
 from rclpy.node import Node
 from std_msgs.msg import String
-from tf2_ros import Buffer, TransformException, TransformListener
 
 from turtle_interfaces.msg import TrapJob
 from turtle_project import fleet_msg
-from turtle_project.nav_controller import make_pose
-
-FRAME = 'map'
 
 
 def trap_ok(hole_x, hole_y, trap_x, trap_y, ok_dist):
@@ -36,24 +36,24 @@ class TrapCheckNode(Node):
     def __init__(self):
         super().__init__('trap_check_node')
         self.ok_dist = self.declare_parameter('trap_ok_dist', 0.15).value
-        # install: 구멍 앞 접근 거리 / 후진 거리(둘 다 m).
-        self.approach_dist = self.declare_parameter('approach_dist', 0.20).value
-        self.retreat_dist = self.declare_parameter('retreat_dist', 0.6).value
-        # install: 각 이동 뒤 대기 시간(초) — Nav2 도착 피드백이 여기로 안 와서 고정 시간으로 근사.
-        self.install_wait = self.declare_parameter('install_wait', 4.0).value  # 접근 후 사람이 trap 놓을 시간
-        self.retreat_wait = self.declare_parameter('retreat_wait', 2.0).value  # 후진 후 정착 시간
+        # install 주행 — 전부 cmd_vel open-loop. 시간(sec)이 거리/각도 튜닝 노브.
+        # 로봇은 구멍 0.8m 앞에서 시작 → 0.3m 전진(0.5m) → 대기 → 0.3m 후진(0.8m).
+        self.fwd_speed = self.declare_parameter('fwd_speed', 0.1).value       # 전/후진 m/s
+        self.approach_sec = self.declare_parameter('approach_sec', 3.0).value  # 0.8→0.5m 전진 (≈0.3m)
+        self.retreat_sec = self.declare_parameter('retreat_sec', 3.0).value    # 0.5→0.8m 후진 전진분 (≈0.3m)
+        # 후진의 180° 회전 — Create3가 곧은 후진(linear.x 음수)을 못 해서 돌아서 감.
+        # 두 회전을 반대 방향으로 줘 heading 오차 상쇄. turn_sec은 실측 180°에 맞출 것.
+        self.turn_speed = self.declare_parameter('turn_speed', 1.0).value      # rad/s
+        self.turn_sec = self.declare_parameter('turn_sec', 4.0).value          # 실측 180° 소요(z=1.0)
+        self.install_wait = self.declare_parameter('install_wait', 10.0).value  # 사람이 trap 놓을 시간
         self.beep_hz = self.declare_parameter('beep_hz', 1000).value
         self.beep_sec = self.declare_parameter('beep_sec', 1.0).value
-
-        self.tf = Buffer()
-        TransformListener(self.tf, self)
 
         self.event_pub = self.create_publisher(String, '/fleet/event', 10)
         # 내 로봇 detector 전용 결과 채널 (상대 토픽 → 네임스페이스로 분리).
         # /fleet/event만 쓰면 다른 로봇 detector가 남의 결과로 상태 전이한다.
         self.local_pub = self.create_publisher(String, 'trap_event', 10)
-        # 실제 주행은 robot_agent가 한다 — 여기선 목표 좌표만 발행.
-        self.pose_pub = self.create_publisher(PoseStamped, 'target_pose', 10)
+        self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)   # 설치 주행 open-loop
         self.audio_pub = self.create_publisher(AudioNoteVector, 'cmd_audio', 10)
         self.create_subscription(TrapJob, 'trap_job', self.job_cb, 10)
         self.get_logger().info(f'trap 점검 노드 시작 — 정상 거리 {self.ok_dist}m')
@@ -77,47 +77,48 @@ class TrapCheckNode(Node):
         self.local_pub.publish(msg)     # 내 detector 상태 전이용 (로봇별)
 
     def _install(self, job):
-        """trap 설치 동작 — beep로 사람 호출 + 구멍 20cm 앞 전진→후진 주행.
+        """trap 설치 — beep로 사람 호출 → 0.5m 전진 → 대기 → 후진 → trap_installed.
 
-        새 구멍 최초 설치와 재설치(trap_bad/미검출) 공통. 사람이 이 사이 trap을
-        놓는다. 동작이 끝나면 trap_installed 발행 → detector가 15cm 재점검한다.
+        전부 cmd_vel open-loop (blocking). 로봇은 detector가 구멍 0.8m 앞에 세워둔
+        상태로 시작하며 구멍을 정면으로 본다. 0.3m 전진해 0.5m에서 사람이 trap을
+        놓고, 0.3m 후진해 0.8m에서 detector가 재점검한다. 새 구멍 최초 설치·재설치
+        공통. blocking 동안(~24s) detector는 AWAIT_TRAP으로 기다린다.
         """
         hx, hy = job.hole_x, job.hole_y
-        self.get_logger().info(f'설치 job ({hx:.2f}, {hy:.2f}) — beep + 설치 주행')
+        self.get_logger().info(f'설치 job ({hx:.2f}, {hy:.2f}) — beep + 0.5m 전진')
         self._beep()
-        self._drive_to(hx, hy, self.approach_dist)
-        time.sleep(self.install_wait)
-        self._drive_to(hx, hy, self.retreat_dist)
-        time.sleep(self.retreat_wait)
+        self._drive_fwd(self.approach_sec)                  # 0.8→0.5m 전진
+        self.get_logger().info(f'0.5m 도착 — {self.install_wait:.0f}초 설치 대기')
+        time.sleep(self.install_wait)                       # 사람이 trap 놓음
+        self._retreat()                                     # 0.5→0.8m 후진
         msg = String(data=fleet_msg.event('trap_installed', hx, hy))
         self.event_pub.publish(msg)     # 관찰용 (전역)
         self.local_pub.publish(msg)     # 내 detector 상태 전이용 (로봇별)
 
-    def _drive_to(self, hx, hy, dist):
-        """hole(hx,hy)과 로봇 현재 위치를 잇는 선 위에서, hole로부터 dist
-        떨어진 지점으로 target_pose 발행. dist가 현재 거리보다 크면(=후진
-        상황) 로봇 뒤쪽 지점이 나온다 — 접근·후진 둘 다 이 한 함수로 처리."""
-        robot = self._robot_xy()
-        if robot is None:
-            return
-        rx, ry = robot
-        dx, dy = rx - hx, ry - hy   # hole -> robot 벡터
-        d = math.hypot(dx, dy)
-        if d < 1e-6:
-            return               # 로봇이 hole과 같은 위치 — 방향 정의 불가
-        ux, uy = dx / d, dy / d
-        px, py = hx + ux * dist, hy + uy * dist
-        yaw = math.atan2(hy - py, hx - px)   # hole을 바라보는 방향
-        self.pose_pub.publish(make_pose(FRAME, px, py, yaw))
+    def _retreat(self):
+        """후진 = 180° 회전 → 전진 → 180° 복귀 (Create3가 곧은 후진을 못 함).
+        두 회전을 반대 방향으로 줘서 heading 오차가 상쇄되고, 끝나면 다시 구멍을 본다."""
+        self._spin(self.turn_speed, self.turn_sec)      # 180° 돌기
+        self._drive_fwd(self.retreat_sec)               # 뒤로(=현 정면) 이동
+        self._spin(-self.turn_speed, self.turn_sec)     # 180° 복귀 → 구멍 재조준
+        self.get_logger().info('후진 완료 (회전-전진-회전) — trap_installed')
 
-    def _robot_xy(self):
-        try:
-            t = self.tf.lookup_transform(
-                FRAME, 'base_link', rclpy.time.Time()).transform.translation
-            return t.x, t.y
-        except TransformException as e:
-            self.get_logger().warn(f'TF 실패: {e}', throttle_duration_sec=5.0)
-            return None
+    def _spin(self, w, sec):
+        tw = Twist()
+        tw.angular.z = float(w)
+        self._pub_for(tw, sec)
+
+    def _drive_fwd(self, sec):
+        tw = Twist()
+        tw.linear.x = abs(float(self.fwd_speed))
+        self._pub_for(tw, sec)
+
+    def _pub_for(self, tw, sec):
+        """tw를 10Hz로 sec초간 발행 후 정지 (cmd_vel watchdog 유지용 반복 발행)."""
+        for _ in range(int(sec * 10)):
+            self.cmd_pub.publish(tw)
+            time.sleep(0.1)
+        self.cmd_pub.publish(Twist())
 
     def _beep(self):
         """TB4 부저(cmd_audio) + PC 스피커(speaker-test, 하드웨어 무관 폴백)."""

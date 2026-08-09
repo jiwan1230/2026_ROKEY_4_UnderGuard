@@ -44,7 +44,7 @@ INFO_IN = 'oakd/stereo/camera_info'
 # VERIFYING/INSPECTING은 프레임 카운트 timeout이 따로 있지만, 카메라가 죽어
 # 프레임 자체가 끊기면 그것도 안 돌므로 wall 백스톱을 함께 둔다.
 DEADLINES = {'APPROACHING': 60.0, 'QUERYING': 5.0, 'VERIFYING': 30.0,
-             'INSPECTING': 30.0, 'AWAIT_TRAP': 20.0, 'SWEEP_NAV': 60.0,
+             'INSPECTING': 30.0, 'AWAIT_TRAP': 35.0, 'SWEEP_NAV': 60.0,
              'SWEEP_WAIT': 10.0}
 
 
@@ -147,7 +147,7 @@ class DetectorNode(Node):
         # 이 낮은 문턱을 쓴다. 순찰 중 최초 발견은 오탐 방지로 conf(0.6) 유지.
         self.opening_verify_conf = self.declare_parameter(
             'opening_verify_conf', 0.4).value
-        self.approach_dist = self.declare_parameter('approach_dist', 0.5).value
+        self.approach_dist = self.declare_parameter('approach_dist', 0.8).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.27).value
         self.depth_gap = self.declare_parameter('depth_gap', 0.05).value
         self.side_margin = self.declare_parameter('side_margin', 0.05).value
@@ -158,12 +158,10 @@ class DetectorNode(Node):
         self.reinstall_max = self.declare_parameter('reinstall_max', 3).value
         # 추적 goal 재발행 주기(초) — 매 프레임 쏘면 Nav2 goal이 폭주한다.
         self.rat_goal_period = self.declare_parameter('rat_goal_period', 1.0).value
-        # 접근 중 opening 재감지 goal 갱신 주기(초). 가까울수록 depth가 정확해져
-        # 목표가 자기교정된다. 매 프레임 갱신하면 Nav2가 계속 재계획해 덜컹댄다.
+        # 접근 중 opening 재감지 goal 갱신 주기(초). 가까울수록 depth가 정확해져 목표가 자기교정된다. 매 프레임 갱신하면 Nav2가 계속 재계획해 덜컹댄다.
         self.approach_goal_period = self.declare_parameter(
             'approach_goal_period', 0.5).value
-        # 쥐 놓침 직전 제자리 탐색 회전 시간(초) — 이 시간에 정확히 한 바퀴
-        # 돌도록 각속도를 정하므로(2π/spin_secs) 시간이 곧 회전 속도다.
+        # 쥐 놓침 직전 제자리 탐색 회전 시간(초) — 이 시간에 정확히 한 바퀴 돌도록 각속도를 정하므로(2π/spin_secs) 시간이 곧 회전 속도다.
         self.spin_secs = self.declare_parameter('search_spin_secs', 10.0).value
         # 디버그 창 (show:=true). headless/SSH에선 imshow가 터지므로 기본 off.
         self.show = self.declare_parameter('show', False).value
@@ -901,7 +899,8 @@ def _self_check():
     assert watchdog_action('APPROACHING', 59.0) is None       # 한도 내
     assert watchdog_action('APPROACHING', 61.0) == 'finish'   # 접근 포기
     assert watchdog_action('QUERYING', 6.0) == 'verify'       # db 무응답 → 검증 진행
-    assert watchdog_action('AWAIT_TRAP', 21.0) == 'finish'    # trap_check 무응답
+    assert watchdog_action('AWAIT_TRAP', 34.0) is None        # 설치 주행(~24s) 대기 중
+    assert watchdog_action('AWAIT_TRAP', 36.0) == 'finish'    # trap_check 무응답
     assert watchdog_action('VERIFYING', 31.0) == 'finish'     # 카메라 사망 백스톱
     assert watchdog_action('SWEEP_NAV', 61.0) == 'finish'     # 순회 이동 백스톱
     assert watchdog_action('SWEEP_WAIT', 9.0) is None         # 목록/TF 대기 중
