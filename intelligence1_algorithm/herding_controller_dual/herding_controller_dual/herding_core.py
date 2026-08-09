@@ -205,6 +205,10 @@ class HerdingOutput:
     shaping_goal_prob_single: float | None = None
     # 수비-쓸기 모드에서만: 수비수가 지키는 길목의 통로 폭(좁을수록 잘 막힘).
     guard_corridor_width_m: float | None = None
+    # 이 주기의 두 목표점이 엔드게임 협공으로 계산됐는지. 협공은 마지막
+    # 구간에서만 발동하므로 대부분의 주기는 False다. 시연/모니터링에서
+    # "지금 협공 중"을 표시하고, 검증에서 실제 발동 여부를 세는 데 쓴다.
+    pincer_active: bool = False
 
 
 class HerdingCore:
@@ -652,7 +656,7 @@ class HerdingCore:
                             escape_directions=escape_estimate.directions if escape_estimate else None,
                             escape_probabilities=escape_estimate.probabilities if escape_estimate else None,
                             latency_ms=latency_ms, panic=False, role_swapped=role_swapped,
-                            deadlock_release=False,
+                            deadlock_release=False, pincer_active=True,
                         )
 
                 if self.config.guard_mode_enabled and clearance is not None:

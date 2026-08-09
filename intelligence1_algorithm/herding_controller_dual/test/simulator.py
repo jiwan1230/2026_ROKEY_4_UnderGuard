@@ -53,6 +53,9 @@ class TrialResult:
     # 발견한 시각과 어느 포획구역이 목표였는지.
     discovery_time_sec: float | None = None
     goal_name: str | None = None
+    # 프레임별 엔드게임 협공 발동 여부. 궤적 배열과 같은 길이라 렌더러가
+    # "이 순간 협공 중"을 그대로 표시할 수 있다.
+    pincer_active: np.ndarray | None = None
 
 
 def _move_toward(position: np.ndarray, goal: np.ndarray, max_speed: float, gain: float, dt: float) -> np.ndarray:
@@ -210,6 +213,7 @@ def run_trial(
 
     target_traj, robot1_traj, robot2_traj = [], [], []
     panic_count, role_swap_count, latencies = 0, 0, []
+    pincer_flags: list[bool] = []
     min_dist = float("inf")
     success, elapsed_sec = False, 0.0
     escape_snapshot = None
@@ -250,6 +254,7 @@ def run_trial(
         # 상태는 동일하게 진행된다; 로봇이 목표를 가지고 무엇을 하는지만 다르다.
         output = core.step(observation)
         latencies.append(output.latency_ms)
+        pincer_flags.append(bool(output.pincer_active))
         if output.role_swapped:
             role_swap_count += 1
         if output.escape_top3:
@@ -304,6 +309,7 @@ def run_trial(
         robot1_trajectory=np.array(robot1_traj, dtype=float).reshape(-1, 2),
         robot2_trajectory=np.array(robot2_traj, dtype=float).reshape(-1, 2),
         escape_snapshot=escape_snapshot, min_robot_target_dist=min_dist,
+        pincer_active=np.array(pincer_flags, dtype=bool),
     )
 
 
@@ -416,6 +422,7 @@ def run_trial_real_map(
 
     target_traj, robot1_traj, robot2_traj = [], [], []
     panic_count, role_swap_count, latencies = 0, 0, []
+    pincer_flags: list[bool] = []
     min_dist = float("inf")
     success, elapsed_sec = False, 0.0
     escape_snapshot = None
@@ -465,6 +472,7 @@ def run_trial_real_map(
         )
         output = core.step(observation)
         latencies.append(output.latency_ms)
+        pincer_flags.append(bool(output.pincer_active))
         if output.role_swapped:
             role_swap_count += 1
         if output.escape_top3:
@@ -559,5 +567,6 @@ def run_trial_real_map(
         robot1_trajectory=np.array(robot1_traj, dtype=float).reshape(-1, 2),
         robot2_trajectory=np.array(robot2_traj, dtype=float).reshape(-1, 2),
         escape_snapshot=escape_snapshot, min_robot_target_dist=min_dist,
+        pincer_active=np.array(pincer_flags, dtype=bool),
         discovery_time_sec=discovery_time_sec, goal_name=goal_name,
     )
