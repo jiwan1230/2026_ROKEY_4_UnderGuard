@@ -23,6 +23,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, CompressedImage
 from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformException, TransformListener
+from visualization_msgs.msg import Marker, MarkerArray
 
 from turtle_interfaces.msg import TrapJob
 from turtle_interfaces.srv import ListHoles, QueryHole
@@ -43,7 +44,19 @@ INFO_IN = 'oakd/stereo/camera_info'
 # VERIFYING/INSPECTING은 프레임 카운트 timeout이 따로 있지만, 카메라가 죽어
 # 프레임 자체가 끊기면 그것도 안 돌므로 wall 백스톱을 함께 둔다.
 DEADLINES = {'APPROACHING': 60.0, 'QUERYING': 5.0, 'VERIFYING': 30.0,
-             'INSPECTING': 30.0, 'AWAIT_TRAP': 20.0, 'SWEEP_NAV': 60.0}
+             'INSPECTING': 30.0, 'AWAIT_TRAP': 20.0, 'SWEEP_NAV': 60.0,
+             'SWEEP_WAIT': 10.0}
+
+
+def marker_spec(name):
+    """클래스명 → (opening이면 wall depth 쓸까?, RViz 마커 (r,g,b) 색).
+
+    opening은 관통 depth를 피하려고 벽면 밴드로 좌표를 잡아야 하니 wall=True.
+    rat/trap은 실물이라 중심 depth(False). 미지 클래스는 회색.
+    """
+    color = {'opening': (1.0, 0.2, 0.2), 'rat': (1.0, 1.0, 0.2),
+             'trap': (0.2, 0.5, 1.0)}.get(name, (0.6, 0.6, 0.6))
+    return name == 'opening', color
 
 
 def nearest_hole(holes, rx, ry):
@@ -128,8 +141,14 @@ class DetectorNode(Node):
         self.model_path = self.declare_parameter(
             'model_path', os.path.join(res, 'best.pt')).value
         self.conf = self.declare_parameter('conf', 0.6).value
+        # 구멍 앞(approach_dist)까지 가면 구멍이 화면을 크게 채워 스케일이
+        # 학습 데이터와 달라져 opening 확신도가 conf 밑으로 떨어진다 → 재검출
+        # 실패로 검증을 못 한다. '이미 구멍 앞에 간' 재검출(접근·verify)만
+        # 이 낮은 문턱을 쓴다. 순찰 중 최초 발견은 오탐 방지로 conf(0.6) 유지.
+        self.opening_verify_conf = self.declare_parameter(
+            'opening_verify_conf', 0.4).value
         self.approach_dist = self.declare_parameter('approach_dist', 0.5).value
-        self.arrive_tol = self.declare_parameter('arrive_tol', 0.3).value
+        self.arrive_tol = self.declare_parameter('arrive_tol', 0.27).value
         self.depth_gap = self.declare_parameter('depth_gap', 0.05).value
         self.side_margin = self.declare_parameter('side_margin', 0.05).value
         self.verify_timeout = self.declare_parameter('verify_timeout', 30).value
@@ -139,6 +158,10 @@ class DetectorNode(Node):
         self.reinstall_max = self.declare_parameter('reinstall_max', 3).value
         # 추적 goal 재발행 주기(초) — 매 프레임 쏘면 Nav2 goal이 폭주한다.
         self.rat_goal_period = self.declare_parameter('rat_goal_period', 1.0).value
+        # 접근 중 opening 재감지 goal 갱신 주기(초). 가까울수록 depth가 정확해져
+        # 목표가 자기교정된다. 매 프레임 갱신하면 Nav2가 계속 재계획해 덜컹댄다.
+        self.approach_goal_period = self.declare_parameter(
+            'approach_goal_period', 0.5).value
         # 쥐 놓침 직전 제자리 탐색 회전 시간(초) — 이 시간에 정확히 한 바퀴
         # 돌도록 각속도를 정하므로(2π/spin_secs) 시간이 곧 회전 속도다.
         self.spin_secs = self.declare_parameter('search_spin_secs', 10.0).value
@@ -166,6 +189,7 @@ class DetectorNode(Node):
         self.rat = RatTracker(cap_r, cap_s, lost_s)
         self.tracking = False
         self._last_rat_goal = 0.0   # 마지막 추적 goal 발행 시각 (rat_goal_period 조절용)
+        self._last_appr_goal = 0.0  # 마지막 접근 goal 갱신 시각 (approach_goal_period용)
         self.spin_until = None      # 탐색 회전 종료 시각. None=회전 안 함
         # 쥐대응 B 역할 — DB 구멍을 가까운 순서로 순회 점검(SWEEP). sweeping True일 때만.
         self.sweeping = False
@@ -181,6 +205,12 @@ class DetectorNode(Node):
         self.job_pub = self.create_publisher(TrapJob, 'trap_job', 10)
         # 탐색 회전용 직접 주행 — Nav2 goal로는 회전 속도를 못 정해서 cmd_vel.
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        # 탐색 회전 전 진행 중인 Nav2 goal을 끊어달라는 신호 (robot_agent 구독).
+        # 안 끊으면 Nav2 controller와 spin_tick이 cmd_vel을 놓고 싸운다.
+        self.cancel_pub = self.create_publisher(Bool, 'cancel_drive', 10)
+        # YOLO가 잡은 것들을 map 위 마커로 (진단·시각화). RViz에서 좌표가
+        # 튀는지/고정인지 눈으로 확인 → 노이즈 vs 계통 오차 구분에 쓴다.
+        self.marker_pub = self.create_publisher(MarkerArray, 'detections', 10)
         self.db = self.create_client(QueryHole, '/db/query_hole')
         self.db_list = self.create_client(ListHoles, '/db/list_holes')
 
@@ -197,7 +227,9 @@ class DetectorNode(Node):
         # 쥐 추적은 central의 TRACK 명령으로 켠다 (내 로봇이 A일 때만).
         self.create_subscription(String, '/fleet/command', self.command_cb, 10)
         # trap_check가 발행하는 설치완료/점검결과를 받아 상태를 전이한다.
-        self.create_subscription(String, '/fleet/event', self.trap_event_cb, 10)
+        # 상대 토픽(네임스페이스 분리) — /fleet/event를 쓰면 다른 로봇의
+        # trap_ok/installed를 내 것으로 오인해 상태가 잘못 전이된다.
+        self.create_subscription(String, 'trap_event', self.trap_event_cb, 10)
         # 놓침은 감지가 끊긴 걸로 판단 — 프레임 콜백이 안 오므로 타이머로 감시.
         self.create_timer(1.0, self.lost_tick)
         # 탐색 회전 유지 — Create3는 cmd_vel이 끊기면 곧 멈추므로 10Hz로 쏜다.
@@ -226,11 +258,6 @@ class DetectorNode(Node):
     def synced_cb(self, rgb_msg, depth_msg, info_msg):
         if self.model is None:
             return
-        if self.state == 'APPROACHING':     # 주행은 robot_agent — 도착만 감시
-            self._check_arrival()
-            if self.show:                   # 추론은 건너뛰되 창은 살려둔다
-                self._show(self.bridge.compressed_imgmsg_to_cv2(rgb_msg, 'bgr8'))
-            return
         if self.state == 'SWEEP_NAV':       # 순회 중 구멍으로 이동 — 도착만 감시
             self._check_sweep_arrival()
             if self.show:
@@ -241,10 +268,23 @@ class DetectorNode(Node):
         self.K = np.array(info_msg.k).reshape(3, 3)
         img = self.bridge.compressed_imgmsg_to_cv2(rgb_msg, 'bgr8')
         depth = decode_depth(depth_msg.data, depth_msg.format)
+        if depth is None:       # 손상 프레임 — imdecode 실패가 노드를 죽이면 안 됨
+            self.get_logger().warn('depth 디코드 실패 — 프레임 스킵',
+                                   throttle_duration_sec=5.0)
+            return
         depth_frame = depth_msg.header.frame_id
-        result = self.model(img, conf=self.conf, verbose=False)[0]
+        # 바닥값은 클래스별 문턱 중 가장 낮은 값 — 여기서 걸러버리면 _pick이
+        # 클래스별로 다시 못 살린다. 클래스별 최종 문턱은 _pick의 min_conf.
+        result = self.model(img, conf=min(self.conf, self.opening_verify_conf),
+                            verbose=False)[0]
         if self.show:
             self._show(result.plot())       # ultralytics가 박스·라벨까지 그려준다
+        self._publish_markers(result, img.shape, depth, depth_frame)
+
+        if self.state == 'APPROACHING':     # 주행은 robot_agent — 접근하며 목표 갱신
+            self._refresh_approach(result, img.shape, depth, depth_frame)
+            self._check_arrival()
+            return
 
         # rat 감지 → 추적 goal/포획 판정 (SEARCHING·TRACK 무관하게 매 프레임 확인).
         self._detect_rat(result, img.shape, depth, depth_frame)
@@ -257,7 +297,8 @@ class DetectorNode(Node):
             if box is not None:
                 self._on_opening(box, img.shape, depth, depth_frame)
         elif self.state == 'VERIFYING':
-            self._verify(self._pick(result, 'opening', img.shape), img.shape, depth)
+            self._verify(self._pick(result, 'opening', img.shape,
+                                    self.opening_verify_conf), img.shape, depth)
         elif self.state == 'INSPECTING':
             self._inspect(result, img.shape, depth, depth_frame)
 
@@ -302,15 +343,53 @@ class DetectorNode(Node):
         cv2.imshow('detector', img)
         cv2.waitKey(1)
 
-    def _pick(self, result, cls_name, img_shape):
-        """cls_name 박스 중 화면 중앙에 가장 가까운 것 -> xyxy or None."""
+    def _publish_markers(self, result, img_shape, depth, depth_frame):
+        """감지된 박스 전부를 map 위 SPHERE 마커로 발행 (클래스별 색, 실시간).
+
+        매 프레임 DELETEALL 후 다시 그려 안 보이는 건 바로 사라진다(잔상 없음).
+        opening은 벽면 depth, rat/trap은 중심 depth로 좌표를 잡는다(marker_spec).
+        """
+        arr = MarkerArray()
+        clear = Marker()
+        clear.action = Marker.DELETEALL     # 지난 프레임 마커 싹 지우고 새로
+        arr.markers.append(clear)
+        i = 0
+        for b in result.boxes:
+            name = self.model.names[int(b.cls)]
+            wall, (r, g, bl) = marker_spec(name)
+            xy = self._box_to_map(b.xyxy[0].tolist(), img_shape, depth,
+                                  depth_frame, wall=wall)
+            if xy is None:
+                continue
+            m = Marker()
+            m.header.frame_id = FRAME
+            m.ns, m.id, m.type, m.action = name, i, Marker.SPHERE, Marker.ADD
+            m.pose.position.x, m.pose.position.y, m.pose.position.z = \
+                xy[0], xy[1], 0.15
+            m.pose.orientation.w = 1.0
+            m.scale.x = m.scale.y = m.scale.z = 0.15
+            m.color.r, m.color.g, m.color.b, m.color.a = r, g, bl, 0.9
+            arr.markers.append(m)
+            i += 1
+        self.marker_pub.publish(arr)
+
+    def _pick(self, result, cls_name, img_shape, min_conf=None):
+        """cls_name 박스 중 화면 중앙에 가장 가까운 것 -> xyxy or None.
+
+        min_conf: 이 클래스에 적용할 최소 확신도. None이면 conf(기본 0.6).
+        모델은 낮은 바닥값으로 돌리므로 클래스별 실제 문턱은 여기서 건다.
+        """
         if self.model is None:
             return None
+        if min_conf is None:
+            min_conf = self.conf
         cx = img_shape[1] / 2
         best, best_d = None, None
         for b in result.boxes:
             if self.model.names[int(b.cls)] != cls_name:
                 continue
+            if float(b.conf) < min_conf:
+                continue                # 이 클래스 문턱 미달 — 버림
             u = float(b.xywh[0][0])
             d = abs(u - cx)
             if best_d is None or d < best_d:
@@ -342,7 +421,14 @@ class DetectorNode(Node):
 
     def _db_done(self, fut):
         """db 응답 처리 — 처음이면 검증, 기존이면 점검(저장좌표 보관)."""
-        resp = fut.result()
+        if self.state != 'QUERYING':
+            return          # watchdog timeout으로 이미 넘어감 — 늦은 응답 무시
+        try:
+            resp = fut.result()
+        except Exception as e:
+            self.get_logger().warn(f'db 응답 실패 ({e}) — 처음 본 셈 치고 검증')
+            self._enter_verify()
+            return
         if resp.exists:
             self.hole = (resp.hole_x, resp.hole_y)   # 15cm 비교 기준
             self.state = 'INSPECTING'
@@ -409,6 +495,35 @@ class DetectorNode(Node):
         self.state = 'APPROACHING'
         self.get_logger().info(f'opening ({xy[0]:.2f}, {xy[1]:.2f}) 접근 goal 발행')
 
+    def _refresh_approach(self, result, img_shape, depth, depth_frame):
+        """APPROACHING 중 opening 재감지 → 접근 goal 갱신 (approach_goal_period).
+
+        가까워질수록 depth가 정확해져 목표가 자기교정된다. 재감지 실패(구멍이
+        프레임 밖 등)면 기존 goal 유지 — 그대로 마저 간다. hold heartbeat는
+        watchdog_tick이 따로 쏘므로 여기선 goal만 다룬다.
+        """
+        now = self._now()
+        if now - self._last_appr_goal < self.approach_goal_period:
+            return
+        box = self._pick(result, 'opening', img_shape, self.opening_verify_conf)
+        if box is None:
+            return
+        xy = self._box_to_map(box, img_shape, depth, depth_frame, wall=True)
+        if xy is None:
+            return
+        robot = self.robot_xy()
+        if robot is None:
+            return
+        rx, ry = robot
+        g = approach_point(xy[0] - rx, xy[1] - ry, self.approach_dist)
+        self.target = xy                    # 검증·db 조회는 갱신된 구멍좌표 기준
+        self._last_appr_goal = now
+        if g is None:
+            return                          # 이미 approach_dist 안 — _check_arrival이 처리
+        gx, gy, yaw = rx + g[0], ry + g[1], g[2]
+        self.goal = (gx, gy)
+        self.pose_pub.publish(make_pose(FRAME, gx, gy, yaw))
+
     def _check_arrival(self):
         """APPROACHING 중 로봇이 goal 근처(arrive_tol)에 오면 db 조회로 전환.
 
@@ -433,6 +548,12 @@ class DetectorNode(Node):
         if robot != self.robot_id:
             return                  # 내 로봇 명령 아님 (robot6용 TRACK 등)
         if cmd == 'TRACK' and not self.tracking:
+            if self.state != 'SEARCHING':
+                # opening 처리 중이면 프레임이 조기 return돼 _detect_rat이 안 돌고,
+                # lost 타이머만 돌아 쥐를 한 번도 안 쫓고 rat_lost가 난다.
+                # 쥐대응이 우선 — opening 작업을 접고 추적부터.
+                self.get_logger().info('TRACK 수신 — 진행 중이던 opening 작업 중단')
+                self._finish_opening()
             self.tracking = True
             self.rat.start(self._now())  # 관측 0회여도 lost_secs 뒤 놓침 판정
             self.get_logger().info('TRACK 시작 — 쥐 포획/놓침 판정 on')
@@ -455,6 +576,7 @@ class DetectorNode(Node):
         now = self._now()
         act = lost_action(self.rat.is_lost(now), self.spin_until, now)
         if act == 'spin_start':
+            self.cancel_pub.publish(Bool(data=True))    # 남은 추적 goal 끊기
             self.spin_until = now + self.spin_secs
             self.get_logger().info(
                 f'쥐 안 보임 — 제자리 탐색 회전 {self.spin_secs:.0f}초')
@@ -497,6 +619,9 @@ class DetectorNode(Node):
             self._sweep_done_and_finish()
             return
         self.sweeping = True
+        # SEARCHING이면 watchdog·heartbeat가 안 돌아 목록 응답이 영영 안 오면
+        # 여기서 영구 스톨한다 — 대기 전용 상태로 바꿔 watchdog가 커버하게.
+        self.state = 'SWEEP_WAIT'
         self._hold_patrol(True)         # 순회 동안 순찰 정지
         self.get_logger().info('SWEEP 시작 — DB 구멍 순회 점검')
         self.db_list.call_async(ListHoles.Request()).add_done_callback(
@@ -517,7 +642,8 @@ class DetectorNode(Node):
             return
         robot = self.robot_xy()
         if robot is None:
-            return              # TF 실패 — watchdog가 백스톱, 다음 기회 재시도
+            self.state = 'SWEEP_WAIT'   # TF 실패 — watchdog가 10초 뒤 재시도
+            return
         rx, ry = robot
         idx = nearest_hole(self.sweep_remaining, rx, ry)
         if idx is None:
@@ -778,6 +904,8 @@ def _self_check():
     assert watchdog_action('AWAIT_TRAP', 21.0) == 'finish'    # trap_check 무응답
     assert watchdog_action('VERIFYING', 31.0) == 'finish'     # 카메라 사망 백스톱
     assert watchdog_action('SWEEP_NAV', 61.0) == 'finish'     # 순회 이동 백스톱
+    assert watchdog_action('SWEEP_WAIT', 9.0) is None         # 목록/TF 대기 중
+    assert watchdog_action('SWEEP_WAIT', 11.0) == 'finish'    # 대기 초과 → 재시도
 
     # lost_action: 놓침 → 즉시 포기 대신 탐색 회전 → 그래도 없으면 진짜 lost
     assert lost_action(False, None, 0.0) is None            # 정상 추적 중
@@ -791,6 +919,13 @@ def _self_check():
     assert nearest_hole([(1.0, 0.0), (5.0, 0.0)], 0.0, 0.0) == 0
     assert nearest_hole([(5.0, 0.0), (1.0, 0.0)], 0.0, 0.0) == 1  # 순서 무관
     assert nearest_hole([(0.0, 3.0), (0.0, 1.0), (0.0, 2.0)], 2.0, 0.0) == 1
+
+    # marker_spec: opening만 벽면 depth, 클래스별 색이 서로 달라야 구분됨
+    assert marker_spec('opening')[0] is True          # opening → wall depth
+    assert marker_spec('rat')[0] is False             # 실물 → 중심 depth
+    assert marker_spec('trap')[0] is False
+    assert marker_spec('opening')[1] != marker_spec('rat')[1]   # 색 구분
+    assert marker_spec('???')[1] == (0.6, 0.6, 0.6)   # 미지 클래스 → 회색
     print('detector RatTracker self-check ok')
 
 

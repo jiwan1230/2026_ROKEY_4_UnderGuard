@@ -102,6 +102,10 @@ class RobotAgent(Node):
                                  self.target_cb, 10)
         self.create_subscription(Bool, 'patrol_hold',
                                  self.hold_cb, 10)
+        # detector가 탐색 회전 직전 진행 중 goal을 끊어달라는 신호 —
+        # 안 끊으면 Nav2 controller와 회전 cmd_vel이 동시에 발행돼 싸운다.
+        self.create_subscription(Bool, 'cancel_drive',
+                                 self.cancel_cb, 10)
         self.create_timer(period, self.report)
         # 순찰 진행 감시 — 한 바퀴 끝나면 다음 바퀴 재시작 (무한 순찰).
         self.create_timer(1.0, self.patrol_tick)
@@ -312,6 +316,13 @@ class RobotAgent(Node):
             else:                           # TRACK/HERD — goal은 target_pose로 온다
                 self.get_logger().info('언도킹 완료 — target_pose 대기 (추적/몰이)')
 
+    def cancel_cb(self, msg):
+        """접근/추적 goal만 취소 (순찰·도킹은 안 건드림). detector 회전 준비용."""
+        if msg.data and self.driving:
+            self.nav.cancelTask()
+            self.driving = False
+            self.get_logger().info('주행 goal 취소 (cancel_drive)')
+
     def hold_cb(self, msg):
         """detector가 opening 처리 시작(True)/끝(False)을 알린다.
 
@@ -432,6 +443,7 @@ class _FakeAgent:
     command_cb = RobotAgent.command_cb
     patrol_tick = RobotAgent.patrol_tick
     hold_cb = RobotAgent.hold_cb
+    cancel_cb = RobotAgent.cancel_cb
     stop_patrol = RobotAgent.stop_patrol      # 진짜 취소 로직으로 순서 검증
     _send_lap = RobotAgent._send_lap
     def __init__(self, nav, phase, state='RETURNING'):
@@ -546,6 +558,16 @@ def _self_check():
     a.pending_target = object()
     a.command_cb(types.SimpleNamespace(data='robot4:STOP'))
     assert a.pending_target is None
+
+    # cancel_drive: 추적 goal 주행 중이면 취소, 아니면 no-op (순찰은 안 건드림)
+    a = _FakeAgent(_FakeNav(False, None, False, False), None, state='TRACKING')
+    a.driving = True
+    a.cancel_cb(types.SimpleNamespace(data=True))
+    assert a.nav.calls == ['cancel'] and not a.driving
+    a = _FakeAgent(_FakeNav(False, None, False, False), None, state='PATROLLING')
+    a.patrolling = True
+    a.cancel_cb(types.SimpleNamespace(data=True))
+    assert a.nav.calls == [] and a.patrolling      # 주행 중 아님 — 아무것도 안 함
 
     # hold lease 만료 → detector 무응답 시 자동 해제 + 순찰 재개 (문제 4)
     a = _FakeAgent(_FakeNav(False, None, False, False), None, state='PATROLLING')

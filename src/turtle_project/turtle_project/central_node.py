@@ -16,6 +16,18 @@ _TRANSITIONS = {
     'DOCKED': 'UNDOCK',     # A가 도킹 완료 -> B undock (교대 시작)
 }
 
+# UNDOCK 보낸 로봇이 이 시간 안에 순찰을 시작 못 하면 waking을 풀어 재시도 허용
+# (언도킹 실패·waypoint 파일 없음·명령 유실 시 커버리지 복구가 영구 정지하는 것 방지).
+WAKE_TIMEOUT = 30.0
+# status가 이 시간 넘게 끊긴 로봇은 죽은 것으로 보고 목록에서 제거
+# (보고 주기 10초의 3배 — 마지막 상태가 PATROLLING인 채 남는 것 방지).
+STALE_SECS = 30.0
+
+
+def stale_robots(last_seen, now, limit=STALE_SECS):
+    """limit초 넘게 status 없는 로봇 이름 목록. 순수함수."""
+    return [r for r, t in last_seen.items() if now - t > limit]
+
 
 def next_patroller(current, robot, state):
     """status 1건으로 patroller(역할 A 후보) 갱신 -> 새 patroller.
@@ -75,8 +87,9 @@ class CentralNode(Node):
     def __init__(self):
         super().__init__('central_node')
         self.robots = {}        # robot -> (state, battery)
+        self.last_seen = {}     # robot -> 마지막 status 수신 시각 (스테일 판정)
         self.patroller = None   # 현재 순찰 로봇 (역할 A)
-        self.waking = None      # UNDOCK 보낸 로봇 (순찰 시작할 때까지 중복 방지)
+        self.waking = None      # (UNDOCK 보낸 로봇, 보낸 시각). None=깨우는 중 아님
         self.rat_mode = False   # 쥐대응 모드 (중복 트리거 방지)
         self.rat_roles = None   # 쥐대응 중인 (A, B) — 종료 시 복귀 명령에 사용
         self.rat_caught = False  # 마지막 쥐대응 결과 표출 (포획 성공 여부)
@@ -84,15 +97,18 @@ class CentralNode(Node):
         self.cmd_pub = self.create_publisher(String, '/fleet/command', 10)
         self.create_subscription(String, '/fleet/status', self.status_cb, 10)
         self.create_subscription(String, '/fleet/event', self.event_cb, 10)
+        # 죽은 로봇 청소 — status가 끊긴 로봇을 제거해 커버리지 오판 방지.
+        self.create_timer(10.0, self._prune_stale)
         self.get_logger().info('중앙 노드 시작 — status/event 대기')
 
     def status_cb(self, msg):
         robot, state, battery = fleet_msg.parse_status(msg.data)
         prev = self.robots.get(robot)
         self.robots[robot] = (state, battery)
+        self.last_seen[robot] = self._now()
         self.patroller = next_patroller(self.patroller, robot, state)
         if state == 'PATROLLING':
-            if self.waking == robot:
+            if self.waking and self.waking[0] == robot:
                 self.waking = None      # 깨우라던 로봇이 순찰 시작 — 대기 해제
         if self.rat_mode:
             return                      # 쥐대응 중엔 역할 고정 — 조율 개입 안 함
@@ -106,17 +122,39 @@ class CentralNode(Node):
                 other = self._other(robot)
                 if other:
                     self.send(other, cmd)
-                    self.waking = other
+                    self.waking = (other, self._now())
             return
         self._ensure_coverage()         # 전원 대기면 한 대 깨워 순찰 시작(부트스트랩)
 
     def _ensure_coverage(self):
         """항상 최소 1대 순찰하도록 보장 (부트스트랩/복구). 판단은 coverage_action."""
+        if self.waking and self._now() - self.waking[1] > WAKE_TIMEOUT:
+            self.get_logger().warn(
+                f'{self.waking[0]} 깨웠지만 {WAKE_TIMEOUT:.0f}초째 순찰 시작 '
+                '없음 — 재시도 허용')
+            self.waking = None
         r = coverage_action(self.robots, self.waking)
         if r:
             self.send(r, 'UNDOCK')
-            self.waking = r
+            self.waking = (r, self._now())
             self.get_logger().info(f'커버리지 확보 — {r} 순찰 시작')
+
+    def _prune_stale(self):
+        """status 끊긴 로봇 제거 — 죽은 로봇의 마지막 상태(PATROLLING 등)가
+        남아 커버리지가 있다고 오판하는 것을 막는다. 빈자리는 즉시 복구 시도."""
+        for r in stale_robots(self.last_seen, self._now()):
+            self.get_logger().warn(f'{r} status {STALE_SECS:.0f}초 끊김 — 제거')
+            self.robots.pop(r, None)
+            self.last_seen.pop(r, None)
+            if self.patroller == r:
+                self.patroller = None
+            if self.waking and self.waking[0] == r:
+                self.waking = None
+        if not self.rat_mode:
+            self._ensure_coverage()
+
+    def _now(self):
+        return self.get_clock().now().nanoseconds / 1e9
 
     def _anyone_patrolling(self):
         return any(s == 'PATROLLING' for s, _ in self.robots.values())
@@ -241,6 +279,13 @@ def _self_check():
     assert coverage_action({'robot4': ('SWEEPING', 90), 'robot6': ('DOCKED', 100)}, None) is None
     assert coverage_action({'robot4': ('IDLE', 50)}, None) == 'robot4'  # 대기뿐 → 후보
     assert coverage_action({}, None) is None                            # 로봇 없음 → None
+    # waking이 (robot, 시각) 튜플이어도 '깨우는 중' 판정은 그대로 동작
+    assert coverage_action(both_docked, ('robot4', 100.0)) is None
+
+    # 스테일 판정 — limit초 넘게 status 없는 로봇만 골라낸다
+    assert stale_robots({'robot4': 90.0, 'robot6': 105.0}, 125.0, 30.0) == ['robot4']
+    assert stale_robots({'robot4': 100.0}, 129.0, 30.0) == []   # 29초 — 아직
+    assert stale_robots({}, 999.0, 30.0) == []                  # 빈 목록
     print('central_node self-check ok')
 
 

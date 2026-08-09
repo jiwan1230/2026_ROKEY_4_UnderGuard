@@ -49,6 +49,9 @@ class TrapCheckNode(Node):
         TransformListener(self.tf, self)
 
         self.event_pub = self.create_publisher(String, '/fleet/event', 10)
+        # 내 로봇 detector 전용 결과 채널 (상대 토픽 → 네임스페이스로 분리).
+        # /fleet/event만 쓰면 다른 로봇 detector가 남의 결과로 상태 전이한다.
+        self.local_pub = self.create_publisher(String, 'trap_event', 10)
         # 실제 주행은 robot_agent가 한다 — 여기선 목표 좌표만 발행.
         self.pose_pub = self.create_publisher(PoseStamped, 'target_pose', 10)
         self.audio_pub = self.create_publisher(AudioNoteVector, 'cmd_audio', 10)
@@ -69,8 +72,9 @@ class TrapCheckNode(Node):
         name = 'trap_ok' if ok else 'trap_bad'
         d = math.hypot(job.hole_x - job.trap_x, job.hole_y - job.trap_y)
         self.get_logger().info(f'점검: 거리 {d:.3f}m → {name}')
-        self.event_pub.publish(String(data=fleet_msg.event(
-            name, job.hole_x, job.hole_y)))
+        msg = String(data=fleet_msg.event(name, job.hole_x, job.hole_y))
+        self.event_pub.publish(msg)     # db 저장·central 관찰용 (전역)
+        self.local_pub.publish(msg)     # 내 detector 상태 전이용 (로봇별)
 
     def _install(self, job):
         """trap 설치 동작 — beep로 사람 호출 + 구멍 20cm 앞 전진→후진 주행.
@@ -85,8 +89,9 @@ class TrapCheckNode(Node):
         time.sleep(self.install_wait)
         self._drive_to(hx, hy, self.retreat_dist)
         time.sleep(self.retreat_wait)
-        self.event_pub.publish(String(data=fleet_msg.event(
-            'trap_installed', hx, hy)))
+        msg = String(data=fleet_msg.event('trap_installed', hx, hy))
+        self.event_pub.publish(msg)     # 관찰용 (전역)
+        self.local_pub.publish(msg)     # 내 detector 상태 전이용 (로봇별)
 
     def _drive_to(self, hx, hy, dist):
         """hole(hx,hy)과 로봇 현재 위치를 잇는 선 위에서, hole로부터 dist
