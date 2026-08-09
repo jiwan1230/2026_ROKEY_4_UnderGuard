@@ -42,9 +42,9 @@ def compute_driving_point(
     로봇이 표적을 직접 붙잡거나 미는 게 아니라, 표적 자신의 도주 본능을
     역이용해서 원하는 방향으로 유도하는 것이 이 알고리즘의 핵심 아이디어.
     """
-    to_target = target_pos - robot_pos
+    to_target = target_pos - robot_pos   # 로봇 -> 타겟 방향(정규화 전)
     dist = np.linalg.norm(to_target)
-    if dist < config.panic_distance_m:
+    if dist < config.panic_distance_m:   # 너무 가까움 — 정상 로직 대신 후퇴 분기로
         # Panic-retreat: Driver가 타겟에 panic_distance_m보다 가까이
         # 붙어버린 경우 (예: 급격한 방향전환으로 타겟이 로봇 쪽으로 순간
         # 이동했을 때). 이 상태에서 정상적인 "타겟 뒤쪽" 목표점을 계속
@@ -52,18 +52,18 @@ def compute_driving_point(
         # 표적이 과도하게 겁먹고 예측 불가능하게 튈 수 있다. 대신 로봇
         # 자신의 현재 위치를 기준으로 타겟 반대쪽으로 즉시 물러나는 지점을
         # 준다 — "너무 가까워졌으니 우선 거리부터 벌리자."
-        retreat_dir = -to_target / dist if dist > 1e-6 else np.array([1.0, 0.0])
-        retreat_point = robot_pos + retreat_dir * (config.panic_distance_m - dist)
+        retreat_dir = -to_target / dist if dist > 1e-6 else np.array([1.0, 0.0])  # 타겟 반대쪽 단위벡터
+        retreat_point = robot_pos + retreat_dir * (config.panic_distance_m - dist)  # 딱 panic_distance만큼 벌어지는 지점
         return DrivingResult(point=retreat_point, is_panic=True)
 
-    u = target_pos - goal_pos
+    u = target_pos - goal_pos   # goal(포획존) -> target 방향(정규화 전)
     norm = np.linalg.norm(u)
-    u = u / norm if norm > 1e-6 else np.array([1.0, 0.0])
+    u = u / norm if norm > 1e-6 else np.array([1.0, 0.0])  # 단위벡터화 (겹치면 임의 방향)
 
     drive_distance = config.drive_distance_m
     to_goal = -u  # goal_pos 쪽을 향하는 단위벡터 (u의 반대)
     speed = np.linalg.norm(target_vel)
-    if speed > 1e-6:
+    if speed > 1e-6:  # 타겟이 정지해 있으면 진행 방향이 없어 easing 판단 불가 — 그냥 평소 거리 사용
         # Alignment easing: 타겟이 이미 스스로 포획존 쪽으로 가고 있다면
         # (진행 방향과 to_goal의 내적이 alignment_threshold 이상이면),
         # Driver가 평소처럼 바짝 붙어 압박할 필요가 없다 — 오히려 너무
@@ -71,24 +71,24 @@ def compute_driving_point(
         # 있다. 이런 경우 drive_distance를 ease_factor(>1)만큼 늘려
         # 목표점을 타겟에서 더 멀리 물러나게 하고, 로봇은 "이미 잘
         # 가고 있으니 살짝만 압박"하는 셈이 된다.
-        alignment = float(np.dot(target_vel / speed, to_goal))
+        alignment = float(np.dot(target_vel / speed, to_goal))  # 진행방향과 goal방향의 정렬도(코사인)
         if alignment >= config.alignment_threshold:
-            drive_distance *= config.drive_distance_ease_factor
+            drive_distance *= config.drive_distance_ease_factor  # 이미 잘 가고 있음 — 덜 압박(더 멀리 물러남)
 
-    return DrivingResult(point=target_pos + drive_distance * u, is_panic=False)
+    return DrivingResult(point=target_pos + drive_distance * u, is_panic=False)  # 타겟 기준 goal 반대편 지점
 
 
 def _geodesic_distance_to_goal(position: np.ndarray, grid_map: GridMap, geodesic_field) -> float | None:
     """geodesic_field가 있으면 position 셀의 벽을 피한 실제 거리-to-goal, 없거나
     계산 불가(그리드 밖/도달 불가능한 고립 셀)하면 None."""
     if geodesic_field is None:
-        return None
+        return None  # 필드가 아직 없음(하위호환) — 호출부가 알아서 폴백
     try:
         row, col = grid_map.world_to_cell(*position)
     except ValueError:
-        return None
+        return None  # 그리드 밖
     distance = geodesic_field.distance[row, col]
-    return float(distance) if np.isfinite(distance) else None
+    return float(distance) if np.isfinite(distance) else None  # inf(도달 불가)면 None
 
 
 def _leads_away_from_goal(
@@ -105,14 +105,14 @@ def _leads_away_from_goal(
     (표적이 고립된 셀에 있는 등) 비교 기준이 없으므로 필터링하지 않는다.
     """
     if geodesic_field is None:
-        return True
+        return True  # 필드 없음(하위호환) — 항상 통과시켜 기존 동작 유지
     point_dist = _geodesic_distance_to_goal(point, grid_map, geodesic_field)
     if point_dist is None:
-        return False
+        return False  # point가 도달 불가능한 곳 — 후보에서 제외
     target_dist = _geodesic_distance_to_goal(target_pos, grid_map, geodesic_field)
     if target_dist is None:
-        return True
-    return point_dist > target_dist
+        return True  # 비교 기준(타겟 자신의 거리)이 없음 — 필터링하지 않고 통과
+    return point_dist > target_dist  # point가 target보다 실제로 goal에서 더 멀어야 "도주로 후보"로 유효
 
 
 def compute_blocking_point(
@@ -141,33 +141,33 @@ def compute_blocking_point(
     있으면 그 자리를 지키고 없으면 제자리를 지킨다 — 아래 코드의 세 개
     루프가 각각 이 (3)/(4-완화)/(4-완전차단) 단계다.
     """
-    to_goal = goal_pos - target_pos
+    to_goal = goal_pos - target_pos    # target -> goal 방향(정규화 전)
     norm = np.linalg.norm(to_goal)
-    to_goal = to_goal / norm if norm > 1e-6 else np.array([1.0, 0.0])
+    to_goal = to_goal / norm if norm > 1e-6 else np.array([1.0, 0.0])  # 단위벡터화
 
     # dots[i] > 0 은 방향 i가 to_goal과 같은 반구(포획존 쪽)에 있다는 뜻.
-    dots = escape_estimate.directions @ to_goal
-    candidate_order = np.argsort(escape_estimate.probabilities)[::-1]
+    dots = escape_estimate.directions @ to_goal            # 8방향 각각과 to_goal의 내적
+    candidate_order = np.argsort(escape_estimate.probabilities)[::-1]  # 확률 내림차순 인덱스
 
-    for index in candidate_order:
+    for index in candidate_order:  # 확률 높은 방향부터 순서대로 검사
         if dots[index] > 0:
             continue  # 방향이 목표 반구 내부에 있으므로 건너뜀 (2-4 step 1)
         direction = escape_estimate.directions[index]
-        point = target_pos + direction * config.block_lookahead_m
+        point = target_pos + direction * config.block_lookahead_m  # 그 방향의 lookahead 지점
         try:
             row, col = grid_map.world_to_cell(*point)
         except ValueError:
-            continue
+            continue  # 그리드 밖 — 후보에서 제외
         if grid_map.is_obstacle(row, col):
             continue  # 경로가 이미 자연적으로 막혀 있으므로 차선책 경로 시도 (2-4 step 4)
         if not _leads_away_from_goal(point, target_pos, grid_map, geodesic_field):
-            continue
-        return point
+            continue  # 벽을 피해서 봐도 target보다 goal에 더 가까움 — 실제로는 도주로가 아님
+        return point  # 살아남은 첫 후보 채택
 
     # 목표 반구 밖의 후보가 모두 막혀 있거나 그리드 밖에 있음: 목표 반구
     # 선호도를 완화하여, 무효인 것으로 알려진 지점을 반환하는 대신 여전히
     # 장애물이 없고 범위 내에 있는(전체 8방향 중) 최고 확률 방향을 취한다.
-    for index in candidate_order:
+    for index in candidate_order:  # 위와 동일 로직, 다만 목표 반구 필터(dots>0 skip)는 뺀 완화판
         direction = escape_estimate.directions[index]
         point = target_pos + direction * config.block_lookahead_m
         try:
@@ -185,8 +185,8 @@ def compute_blocking_point(
     # 직전에 커밋된 위치가 있으면 그 자리를 유지하고(표적 위치로 돌진하는 대신),
     # 없으면(첫 호출 등) 기존처럼 표적 위치로 폴백한다.
     if previous_point is not None:
-        return np.asarray(previous_point, dtype=float).copy()
-    return target_pos.copy()
+        return np.asarray(previous_point, dtype=float).copy()  # 직전 커밋 위치 유지
+    return target_pos.copy()  # 정말 처음이라 이전 값도 없음 — 타겟 위치로 폴백
 
 
 # --------------------------------------------------------------------------- #
@@ -232,14 +232,14 @@ def _free_extent_along(
     extent = 0.0
     steps = int(max_extent_m / step_m)
     for i in range(1, steps + 1):
-        probe = origin + direction * (i * step_m)
+        probe = origin + direction * (i * step_m)  # direction으로 step_m씩 전진하며 탐침
         try:
             row, col = grid_map.world_to_cell(*probe)
         except ValueError:
-            break
+            break  # 그리드 밖으로 나감 — 여기까지가 한계
         if not grid_map.in_bounds(row, col) or clearance_m[row, col] < body_clearance_m:
-            break
-        extent = i * step_m
+            break  # 로봇 몸체가 못 들어갈 만큼 벽에 가까워짐
+        extent = i * step_m  # 마지막으로 성공한 지점까지의 거리를 갱신
     return extent
 
 
@@ -248,7 +248,7 @@ def _cell_clearance(position: np.ndarray, grid_map: GridMap, clearance_m) -> flo
     try:
         row, col = grid_map.world_to_cell(*position)
     except ValueError:
-        return 0.0
+        return 0.0  # 그리드 밖 — "여유 없음"으로 취급(로봇이 못 서는 곳)
     if not grid_map.in_bounds(row, col):
         return 0.0
     return float(clearance_m[row, col])
@@ -282,11 +282,11 @@ def compute_sealing_pair(
     """
     direction = np.asarray(goal_direction, dtype=float)
     norm = float(np.linalg.norm(direction))
-    direction = np.array([1.0, 0.0]) if norm < 1e-9 else direction / norm
-    perp = np.array([-direction[1], direction[0]])
+    direction = np.array([1.0, 0.0]) if norm < 1e-9 else direction / norm  # 단위벡터화(0벡터면 임의 방향)
+    perp = np.array([-direction[1], direction[0]])  # direction에 수직인 방향 (90도 회전) — 선분이 뻗는 축
 
-    body_clearance = robot_radius_m + wall_clearance_m
-    center = np.asarray(target_pos, dtype=float) - direction * back_distance_m
+    body_clearance = robot_radius_m + wall_clearance_m  # 로봇이 서려면 필요한 벽까지의 최소 여유
+    center = np.asarray(target_pos, dtype=float) - direction * back_distance_m  # 표적 뒤쪽(포획존 반대편)
 
     min_span = 2.0 * robot_radius_m                    # 두 로봇이 겹치지 않는 최소
     max_span = 2.0 * robot_radius_m + target_width_m   # 사이 틈이 표적보다 좁은 최대
@@ -296,45 +296,45 @@ def compute_sealing_pair(
         return SealingPair(point_a=center.copy(), point_b=center.copy(), is_sealed=False,
                            requires_both=False, span_m=0.0, corridor_width_m=0.0)
 
-    probe_limit = max(max_span * 3.0, 1.5)
-    reach_a = _free_extent_along(center, perp, grid_map, clearance_m, body_clearance, probe_limit)
-    reach_b = _free_extent_along(center, -perp, grid_map, clearance_m, body_clearance, probe_limit)
+    probe_limit = max(max_span * 3.0, 1.5)  # 탐침 최대 거리 — 필요한 span보다 넉넉히
+    reach_a = _free_extent_along(center, perp, grid_map, clearance_m, body_clearance, probe_limit)  # 한쪽으로 얼마나 뻗나
+    reach_b = _free_extent_along(center, -perp, grid_map, clearance_m, body_clearance, probe_limit)  # 반대쪽
     # 통로 폭: 로봇 중심이 갈 수 있는 범위 + 양쪽 벽까지의 몸체+여유
     corridor_width = reach_a + reach_b + 2.0 * body_clearance
 
     # 두 로봇이 나란히 설 자리가 안 나오는 아주 좁은 통로: 한 대로 막히는지 본다.
     if reach_a + reach_b < min_span:
-        single_gap = (corridor_width - 2.0 * robot_radius_m) / 2.0
-        sealed_by_one = single_gap < target_width_m
+        single_gap = (corridor_width - 2.0 * robot_radius_m) / 2.0  # 로봇 한 대가 벽에 붙었을 때 남는 틈
+        sealed_by_one = single_gap < target_width_m  # 그 틈이 표적보다 좁으면 한 대로도 막힘
         return SealingPair(point_a=center.copy(), point_b=center.copy(),
                            is_sealed=sealed_by_one, requires_both=False,
                            span_m=0.0, corridor_width_m=corridor_width)
 
     # 벽까지 최대한 뻗되, 사이 틈이 표적보다 넓어지지 않게 max_span으로 제한.
     half = max_span / 2.0
-    offset_a = min(reach_a, half)
+    offset_a = min(reach_a, half)  # 뻗을 수 있는 만큼과 절반 중 작은 쪽
     offset_b = min(reach_b, half)
     # 한쪽 벽이 가까워 덜 뻗었다면, 반대쪽을 그만큼 더 뻗어 max_span을 채운다
     # (선분을 통로 한쪽으로 치우쳐 붙이는 경우 -- 벽에 딱 붙는 쪽이 생긴다).
-    slack = max_span - (offset_a + offset_b)
+    slack = max_span - (offset_a + offset_b)  # 아직 못 채운 span
     if slack > 0:
-        grow_a = min(slack, reach_a - offset_a)
+        grow_a = min(slack, reach_a - offset_a)  # a쪽으로 더 뻗을 수 있는 만큼만 추가
         offset_a += grow_a
         slack -= grow_a
-        offset_b += min(slack, reach_b - offset_b)
+        offset_b += min(slack, reach_b - offset_b)  # 남은 slack을 b쪽으로
 
-    point_a = center + perp * offset_a
-    point_b = center - perp * offset_b
-    span = offset_a + offset_b
+    point_a = center + perp * offset_a  # 선분의 한쪽 끝
+    point_b = center - perp * offset_b  # 반대쪽 끝
+    span = offset_a + offset_b          # 두 끝점 사이 거리
 
-    gap_between = span - 2.0 * robot_radius_m
-    gap_wall_a = max(0.0, reach_a - offset_a) + wall_clearance_m
-    gap_wall_b = max(0.0, reach_b - offset_b) + wall_clearance_m
+    gap_between = span - 2.0 * robot_radius_m               # 두 로봇 몸체 사이 실제 틈
+    gap_wall_a = max(0.0, reach_a - offset_a) + wall_clearance_m  # a쪽 로봇과 벽 사이 틈
+    gap_wall_b = max(0.0, reach_b - offset_b) + wall_clearance_m  # b쪽 로봇과 벽 사이 틈
     is_sealed = (
-        span >= min_span - 1e-9
-        and gap_between < target_width_m
-        and gap_wall_a < target_width_m
-        and gap_wall_b < target_width_m
+        span >= min_span - 1e-9        # 로봇 두 대가 겹치지 않을 만큼은 벌어져 있고
+        and gap_between < target_width_m   # 로봇 사이 틈이 표적보다 좁고
+        and gap_wall_a < target_width_m    # 양쪽 벽 틈도 전부 표적보다 좁아야
+        and gap_wall_b < target_width_m    # 진짜로 통과 불가능(봉인 성공)
     )
     return SealingPair(point_a=point_a, point_b=point_b, is_sealed=is_sealed,
                        requires_both=True, span_m=span, corridor_width_m=corridor_width)
@@ -418,42 +418,44 @@ def compute_pressure_pair(
 
     def _place(sign, angle):
         """behind 방향에서 sign*angle 만큼 돌린 원 위의 점. 벽이면 각도를 줄인다."""
-        for a in (angle, angle * 0.66, angle * 0.33, 0.0):
-            offset = behind * np.cos(a) + perp * (sign * np.sin(a))
+        for a in (angle, angle * 0.66, angle * 0.33, 0.0):  # 큰 각도부터 시도, 안 되면 점점 안쪽으로
+            offset = behind * np.cos(a) + perp * (sign * np.sin(a))  # 원 위의 방향(behind에서 a만큼 회전)
             point = target + offset * radius
             if _cell_clearance(point, grid_map, clearance_m) >= body_clearance:
-                return point, a, a < angle - 1e-9
-        return target + behind * radius, 0.0, True
+                return point, a, a < angle - 1e-9  # 세 번째 값 = 원래 각도보다 줄였는가(=벽에 걸려 클립됐는가)
+        return target + behind * radius, 0.0, True  # 전부 실패 — 각도 0(정확히 behind 방향)으로 폴백
 
-    point_a, angle_a, clipped_a = _place(+1.0, half_angle_rad)
-    point_b, angle_b, clipped_b = _place(-1.0, half_angle_rad)
-    wall_anchored = clipped_a or clipped_b
+    point_a, angle_a, clipped_a = _place(+1.0, half_angle_rad)   # behind 기준 +쪽으로 벌린 지점
+    point_b, angle_b, clipped_b = _place(-1.0, half_angle_rad)   # -쪽으로 벌린 지점
+    wall_anchored = clipped_a or clipped_b   # 둘 중 하나라도 벽 때문에 각도가 줄었으면 True
     span = float(np.linalg.norm(point_a - point_b))
 
     # 커버율: 진행방향 수직축에 투영했을 때, 두 로봇의 반경 f 구간이 통로
     # 단면을 얼마나 덮는지. (원 배치라 두 로봇의 수직 좌표는 ±radius*sin(angle))
     f = flee_reaction_distance_m
-    reach_a = _free_extent_along(target, perp, grid_map, clearance_m, body_clearance, max(2.0 * f, 1.5))
-    reach_b = _free_extent_along(target, -perp, grid_map, clearance_m, body_clearance, max(2.0 * f, 1.5))
+    reach_a = _free_extent_along(target, perp, grid_map, clearance_m, body_clearance, max(2.0 * f, 1.5))  # perp쪽 통로 폭
+    reach_b = _free_extent_along(target, -perp, grid_map, clearance_m, body_clearance, max(2.0 * f, 1.5))  # 반대쪽
     corridor_width = reach_a + reach_b + 2.0 * body_clearance
-    lo, hi = -(reach_b + body_clearance), reach_a + body_clearance
-    width = max(hi - lo, 1e-9)
-    y_a = radius * np.sin(angle_a)
-    y_b = -radius * np.sin(angle_b)
+    lo, hi = -(reach_b + body_clearance), reach_a + body_clearance  # perp축 위의 통로 범위(표적 기준 상대좌표)
+    width = max(hi - lo, 1e-9)   # 전체 통로 폭 (0 나눗셈 방지로 최소값)
+    y_a = radius * np.sin(angle_a)   # 로봇 a의 perp축 좌표(원 위 배치이므로 sin으로 투영)
+    y_b = -radius * np.sin(angle_b)  # 로봇 b는 반대쪽(-perp)이라 부호 반대
+    # 각 로봇이 덮는 구간 [y-f, y+f]를 통로 범위로 자르고, 유효한(폭>0) 것만 남겨 왼쪽 끝 기준 정렬
     segs = sorted(
         s for s in ((max(lo, y_a - f), min(hi, y_a + f)), (max(lo, y_b - f), min(hi, y_b + f)))
         if s[1] > s[0]
     )
+    # 구간 합집합(interval union) — 정렬된 구간을 훑으며 겹치면 병합, 안 겹치면 이전 구간 길이를 확정
     covered, cur_lo, cur_hi = 0.0, None, None
     for s_lo, s_hi in segs:
-        if cur_hi is None or s_lo > cur_hi:
+        if cur_hi is None or s_lo > cur_hi:  # 새 구간이 이전 구간과 안 겹침(또는 첫 구간)
             if cur_hi is not None:
-                covered += cur_hi - cur_lo
-            cur_lo, cur_hi = s_lo, s_hi
+                covered += cur_hi - cur_lo   # 직전 구간 길이를 합계에 확정
+            cur_lo, cur_hi = s_lo, s_hi      # 새 구간 시작
         else:
-            cur_hi = max(cur_hi, s_hi)
+            cur_hi = max(cur_hi, s_hi)       # 겹침 — 병합(오른쪽 끝만 늘어날 수 있음)
     if cur_hi is not None:
-        covered += cur_hi - cur_lo
+        covered += cur_hi - cur_lo   # 마지막 구간도 합계에 반영
 
     return PressurePair(
         point_a=point_a, point_b=point_b,
@@ -532,35 +534,36 @@ def compute_shaping_pair(
 
     # 로봇이 실제로 설 수 있는 후보만 남긴다.
     candidates = []
-    for a in np.linspace(0.0, 2.0 * np.pi, n_angles, endpoint=False):
-        point = target + stand_radius_m * np.array([np.cos(a), np.sin(a)])
+    for a in np.linspace(0.0, 2.0 * np.pi, n_angles, endpoint=False):  # 원 둘레를 n_angles등분한 각도들
+        point = target + stand_radius_m * np.array([np.cos(a), np.sin(a)])  # 그 각도의 원 위 지점
         if _cell_clearance(point, grid_map, clearance_m) >= body_clearance:
             candidates.append(point)
     if not candidates:
-        behind = target - direction * stand_radius_m
+        behind = target - direction * stand_radius_m   # 후보가 하나도 없음 — 목표 반대편으로 폴백
         return ShapingPair(behind.copy(), behind.copy(), 0.0, 0.0)
 
     def score(points):
+        """이 로봇 배치일 때 표적이 목표 방향으로 갈 확률."""
         est = escape_model.compute(target, target_vel, points)
         return _goal_directed_probability(est, direction)
 
     # 초기값: 목표 반대편(가장 그럴듯한 미는 자리)에 가장 가까운 후보 둘
     order = sorted(range(len(candidates)),
-                   key=lambda i: -float(np.dot(target - candidates[i], direction)))
+                   key=lambda i: -float(np.dot(target - candidates[i], direction)))  # 정렬 기준: behind 방향 정렬도(내림차순)
     idx_a = order[0]
     idx_b = order[1] if len(order) > 1 else order[0]
 
-    for _ in range(rounds):
+    for _ in range(rounds):  # 좌표상승법(coordinate ascent): 한쪽 고정하고 다른 쪽 최적화를 번갈아
         idx_a = max(range(len(candidates)),
-                    key=lambda i: score([candidates[i], candidates[idx_b]]))
+                    key=lambda i: score([candidates[i], candidates[idx_b]]))  # b 고정, a를 최선으로
         idx_b = max(range(len(candidates)),
-                    key=lambda i: score([candidates[idx_a], candidates[i]]))
+                    key=lambda i: score([candidates[idx_a], candidates[i]]))  # a 고정, b를 최선으로
 
     point_a, point_b = candidates[idx_a], candidates[idx_b]
-    both = score([point_a, point_b])
+    both = score([point_a, point_b])  # 두 대 다 썼을 때의 확률
     # 한 대만 쓸 때의 최선: 남은 한 대는 표적에서 아주 멀리 있다고 본다
-    far = target + direction * 1e3
-    single = max(score([candidates[i], far]) for i in range(len(candidates)))
+    far = target + direction * 1e3  # 사실상 무한히 먼 더미 위치(기여를 0으로 만듦)
+    single = max(score([candidates[i], far]) for i in range(len(candidates)))  # 최선의 "한 대만" 배치
     return ShapingPair(point_a=point_a, point_b=point_b,
                        goal_prob=both, goal_prob_single=single)
 
@@ -613,27 +616,27 @@ def compute_guard_point(
     direction = np.asarray(goal_direction, dtype=float)
     norm = float(np.linalg.norm(direction))
     if norm < 1e-9:
-        return None
+        return None  # 방향이 정의 안 됨 — 계산 불가
     direction = direction / norm
     escape = -direction                      # 트랩 반대쪽 = 표적이 달아날 방향
-    perp = np.array([-escape[1], escape[0]])
+    perp = np.array([-escape[1], escape[0]])  # escape에 수직인 방향 — 통로 폭을 재는 축
     target = np.asarray(target_pos, dtype=float)
 
     best = None
     steps = int((max_ahead_m - min_ahead_m) / step_m)
-    for i in range(steps + 1):
+    for i in range(steps + 1):  # min_ahead_m부터 max_ahead_m까지 step_m 간격으로 훑음
         ahead = min_ahead_m + i * step_m
-        probe = target + escape * ahead
+        probe = target + escape * ahead  # 표적에서 도주 방향으로 ahead만큼 나아간 지점(길목 후보)
         if _cell_clearance(probe, grid_map, clearance_m) < body_clearance_m:
-            continue
-        reach_a = _free_extent_along(probe, perp, grid_map, clearance_m, body_clearance_m, 3.0)
-        reach_b = _free_extent_along(probe, -perp, grid_map, clearance_m, body_clearance_m, 3.0)
-        width = reach_a + reach_b + 2.0 * body_clearance_m
+            continue  # 로봇이 설 수 없는 곳(벽) — 이 후보는 건너뜀
+        reach_a = _free_extent_along(probe, perp, grid_map, clearance_m, body_clearance_m, 3.0)   # 한쪽 벽까지
+        reach_b = _free_extent_along(probe, -perp, grid_map, clearance_m, body_clearance_m, 3.0)  # 반대쪽 벽까지
+        width = reach_a + reach_b + 2.0 * body_clearance_m  # 이 지점에서의 통로 폭
         # 통로 중앙에 서야 양쪽을 고르게 막는다.
-        center = probe + perp * ((reach_a - reach_b) / 2.0)
+        center = probe + perp * ((reach_a - reach_b) / 2.0)  # 좌우 여유가 다르면 중앙으로 보정
         if _cell_clearance(center, grid_map, clearance_m) < body_clearance_m:
-            center = probe
-        if best is None or width < best.corridor_width_m:
+            center = probe  # 보정한 중앙이 오히려 벽에 걸리면 원래 probe 지점 사용
+        if best is None or width < best.corridor_width_m:  # 지금까지 중 가장 좁은 길목 갱신
             best = GuardPoint(point=center, corridor_width_m=width, distance_from_target_m=ahead)
     return best
 
@@ -686,25 +689,26 @@ def compute_endgame_pincer(
     """
     target = np.asarray(target_pos, dtype=float)
     trap = np.asarray(trap_pos, dtype=float)
-    to_trap = trap - target
+    to_trap = trap - target                          # 타겟 -> 트랩 방향(정규화 전)
     dist = float(np.linalg.norm(to_trap))
     if dist > trigger_radius_m or dist < 1e-6:
-        return None
-    inward = to_trap / dist
+        return None  # 아직 트랩 근처 아님(또는 이미 트랩 위) — 협공 비활성
+    inward = to_trap / dist                           # 타겟 -> 트랩 단위벡터
     outward = -inward                       # 트랩 반대편 = 미는 쪽
-    perp = np.array([-outward[1], outward[0]])
+    perp = np.array([-outward[1], outward[0]])  # outward에 수직 — 좌우로 벌리는 축
 
     def place(sign):
-        for angle in (half_angle_rad, half_angle_rad * 0.7, half_angle_rad * 0.4):
+        """outward에서 sign*angle만큼 벌린 원 위의 점. 벽에 걸리면 각도를 줄여 재시도."""
+        for angle in (half_angle_rad, half_angle_rad * 0.7, half_angle_rad * 0.4):  # 60도 -> 42도 -> 24도로 축소
             offset = outward * np.cos(angle) + perp * (sign * np.sin(angle))
             point = target + offset * stand_distance_m
             if _cell_clearance(point, grid_map, clearance_m) >= body_clearance_m:
                 return point
-        return None
+        return None  # 세 각도 다 실패 — 이 지점엔 로봇이 설 자리가 없음
 
-    point_a, point_b = place(+1.0), place(-1.0)
+    point_a, point_b = place(+1.0), place(-1.0)   # 좌우 대칭으로 배치
     if point_a is None or point_b is None:
-        return None
+        return None  # 한쪽이라도 설 자리를 못 찾음 — 협공 불가
     # 두 로봇이 겹치면 협공이 성립하지 않는다.
     if float(np.linalg.norm(point_a - point_b)) < 2.0 * (body_clearance_m - 0.03):
         return None

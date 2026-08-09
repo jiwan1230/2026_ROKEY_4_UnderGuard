@@ -20,6 +20,10 @@ class GridMap:
 
     def __init__(self, config: GridConfig) -> None:
         self.config = config
+        # shape=(height, width) — world_to_cell/cell_to_world이 쓰는 (row, col)
+        # 인덱싱과 순서를 맞춘 것. numpy 배열의 첫 축(행)이 row(=y), 둘째 축(열)이
+        # col(=x)이라, 다른 곳에서처럼 여기서도 (x, y)가 아니라 (row, col) 순서로
+        # 인덱싱해야 한다(예: is_obstacle(row, col), 반대로 하면 조용히 잘못된 셀을 가리킨다).
         self.obstacle_mask = np.zeros((config.height_cells, config.width_cells), dtype=bool)
 
     def world_to_cell(self, x: float, y: float) -> tuple[int, int]:
@@ -32,10 +36,10 @@ class GridMap:
         셀 시작+resolution) 구간의 반열림 구간을 담당하기 때문이다 (예:
         resolution=0.25일 때 x=0.24와 x=0.0은 같은 셀 0, x=0.25는 다음 셀 1).
         """
-        col = math.floor((x - self.config.origin_x_m) / self.config.resolution_m)
-        row = math.floor((y - self.config.origin_y_m) / self.config.resolution_m)
+        col = math.floor((x - self.config.origin_x_m) / self.config.resolution_m)  # x축(동쪽) -> col
+        row = math.floor((y - self.config.origin_y_m) / self.config.resolution_m)  # y축(북쪽) -> row
         if not self.in_bounds(row, col):
-            raise ValueError(f"world coordinate ({x}, {y}) is outside the grid bounds")
+            raise ValueError(f"world coordinate ({x}, {y}) is outside the grid bounds")  # 그리드 밖이면 명시적으로 에러
         return row, col
 
     def cell_to_world(self, row: int, col: int) -> tuple[float, float]:
@@ -47,8 +51,8 @@ class GridMap:
         안전한 목표점이기 때문이다 (경계에 딱 붙으면 부동소수점 오차로
         옆 셀로 다시 튕겨 나갈 수 있음).
         """
-        x = self.config.origin_x_m + (col + 0.5) * self.config.resolution_m
-        y = self.config.origin_y_m + (row + 0.5) * self.config.resolution_m
+        x = self.config.origin_x_m + (col + 0.5) * self.config.resolution_m  # col -> x, 셀 중심(+0.5)
+        y = self.config.origin_y_m + (row + 0.5) * self.config.resolution_m  # row -> y, 셀 중심(+0.5)
         return x, y
 
     def set_obstacle_mask_from_occupancy(self, occupancy: np.ndarray, threshold: int = 50) -> None:
@@ -61,7 +65,7 @@ class GridMap:
         취급된다는 점에 유의 — 즉 미탐색 영역은 통행 가능하다고 낙관적으로
         가정한다.
         """
-        self.obstacle_mask = occupancy >= threshold
+        self.obstacle_mask = occupancy >= threshold  # 셀별로 threshold 이상이면 True(장애물)인 불리언 배열 통째로 생성
 
     def is_obstacle(self, row: int, col: int) -> bool:
         """주어진 셀이 점유되어 있으면 True를 반환한다."""
