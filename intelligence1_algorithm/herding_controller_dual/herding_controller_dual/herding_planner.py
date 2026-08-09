@@ -669,14 +669,18 @@ def compute_endgame_pincer(
     body_clearance_m: float,
     stand_distance_m: float,
     trigger_radius_m: float,
-    half_angle_rad: float = np.pi / 2.0,
+    half_angle_rad: float = np.pi / 3.0,   # 60도 -- 실측 채택값
 ) -> PincerPair | None:
     """표적이 트랩 근처면, 트랩 반대편 좌우를 막는 두 지점을 돌려준다.
 
     표적에서 **트랩 반대 방향**을 기준으로 ±`half_angle_rad`만큼 벌린 두
-    지점(표적 중심 반지름 `stand_distance_m` 원 위). 기본값 90도면 두 로봇이
-    표적의 양 옆을 막아, 표적이 갈 수 있는 방향이 트랩 쪽과 정반대쪽만
-    남는다 -- 정반대쪽은 두 로봇 사이라 위협이 겹쳐 실질적으로 막힌다.
+    지점(표적 중심 반지름 `stand_distance_m` 원 위). 두 로봇이 표적의 뒤쪽
+    좌우를 동시에 막아, 표적에 남는 방향이 트랩 쪽으로 수렴한다.
+
+    각도는 클수록 좋지 않다. 실측(3트랩 x 50회 = 150쌍, 구석회피 표적)에서
+    ±60도 90.0% / ±90도 46.0% / ±120도 15.3% 였다. 크게 벌리면 두 로봇
+    사이가 뚫려 표적이 그리로 빠져나가고, 좁히면 한 대와 다를 바 없어진다.
+    채택값은 `config/herding_params.yaml`의 `endgame_half_angle_deg: 60.0`.
 
     표적이 `trigger_radius_m`보다 멀면 None (그 경우 평소 몰이 방식 유지).
     """

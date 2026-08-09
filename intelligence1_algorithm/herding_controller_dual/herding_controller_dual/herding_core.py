@@ -134,13 +134,13 @@ class HerdingConfig:
     # 못 넘고 옆으로 빠진 것이 확인돼 만든 모드다.
     endgame_pincer_enabled: bool = False
     endgame_trigger_radius_m: float = 0.8
-    endgame_half_angle_deg: float = 90.0
+    endgame_half_angle_deg: float = 60.0
     # 표적이 트리거 반경 안에 이 시간(초) 이상 머무는데도 포획이 안 되면
     # 그때 협공으로 전환한다. 0이면 즉시 발동. 얌전한 표적은 그냥 밀면
     # 바로 들어가는데 협공하느라 두 로봇이 벌어지면 미는 힘이 약해져
     # 오히려 나빠진다(실측: reactive_flee 90.7%->72.7%) -- 그래서 '먼저
     # 밀어보고 안 들어가면 협공'으로 조건을 건다.
-    endgame_stall_sec: float = 2.0
+    endgame_stall_sec: float = 3.0
 
     def __post_init__(self) -> None:
         """herd를 교착 상태에 빠뜨리는 것으로 알려진 파라미터 조합을 거부한다.
