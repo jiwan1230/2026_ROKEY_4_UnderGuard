@@ -8,7 +8,10 @@
   <license>Apache-2.0</license>
 
   <depend>turtle_interfaces</depend>
+  <depend>herding_controller</depend>
   <depend>rclpy</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
