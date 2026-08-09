@@ -34,12 +34,17 @@ class AppTest(unittest.TestCase):
         self.temp.cleanup()
 
     def _settings(self, mode):
+        root = Path(self.temp.name)
         return Settings(
             mode=mode,
             robots=(RobotConfig("robot4", "SCOUT"),),
             offline_timeout_sec=100,
             poll_interval_ms=1000,
             map_yaml_path=self.map_yaml,
+            # 기본값(data/history.db)은 cwd 기준이라 테스트 중 실제 저장소에
+            # 파일을 남긴다 — 임시 디렉터리로 격리한다.
+            history_db_path=root / "history.db",
+            history_image_dir=root / "captures",
         )
 
     def test_dashboard_and_live_apis_are_public(self):
@@ -57,6 +62,7 @@ class AppTest(unittest.TestCase):
         self.assertNotIn("로그아웃".encode(), dashboard)
         self.assertIn("탐지 마커".encode(), dashboard)
         self.assertIn("현재 세션 이벤트".encode(), dashboard)
+        self.assertIn("기록 조회".encode(), dashboard)
         self.assertIn(b'id="fleet-connection-state"', dashboard)
         self.assertNotIn(b'data-command=', dashboard)
         self.assertNotIn(b'id="stop-all-robots"', dashboard)
@@ -132,6 +138,53 @@ class AppTest(unittest.TestCase):
         self.assertEqual(found.status_code, 200)
         self.assertEqual(found.mimetype, "image/jpeg")
         self.assertEqual(found.data, b"raw-jpeg-bytes")
+
+    def test_history_routes_are_read_only_and_query_stored_records(self):
+        client = self.app.test_client()
+        store = self.app.extensions["history_store"]
+
+        # 기록이 없을 때
+        self.assertEqual(client.get("/api/history/summary").get_json(),
+                          {"detections": 0, "trail_points": 0})
+        self.assertEqual(client.get("/api/history/detections").get_json(), [])
+        self.assertEqual(client.get("/api/history/trail").get_json(), [])
+
+        detection_id = store.record_detection(
+            robot_id="robot4", object_type="LIVE_RODENT", map_x=1.0, map_y=2.0,
+            confidence=0.9, image_bytes=b"jpeg-bytes", image_ext="jpg",
+        )
+        store.record_trail_point(robot_id="robot4", map_x=1.0, map_y=2.0)
+
+        detections = client.get("/api/history/detections").get_json()
+        self.assertEqual(len(detections), 1)
+        self.assertEqual(detections[0]["id"], detection_id)
+        self.assertEqual(detections[0]["image_url"],
+                          f"/api/history/detections/{detection_id}/image")
+
+        image = client.get(detections[0]["image_url"])
+        self.assertEqual(image.status_code, 200)
+        self.assertEqual(image.data, b"jpeg-bytes")
+
+        self.assertEqual(client.get("/api/history/detections/9999/image").status_code, 404)
+
+        trail = client.get("/api/history/trail?robot_id=robot4").get_json()
+        self.assertEqual(len(trail), 1)
+
+        # 쓰기/삭제 라우트는 없다 — read-only 원칙 유지. GET 라우트 자체는
+        # 있으므로 다른 메서드는 404가 아니라 405(Method Not Allowed)다.
+        self.assertEqual(client.post("/api/history/detections", json={}).status_code, 405)
+        self.assertEqual(
+            client.delete(f"/api/history/detections/{detection_id}/image").status_code, 405
+        )
+
+    def test_history_query_params_reject_non_numeric_values(self):
+        client = self.app.test_client()
+        self.assertEqual(
+            client.get("/api/history/detections?since=not-a-number").status_code, 400
+        )
+        self.assertEqual(
+            client.get("/api/history/trail?limit=not-a-number").status_code, 400
+        )
 
     def test_removed_feature_css_is_not_shipped(self):
         response = self.app.test_client().get("/static/css/dashboard.css")

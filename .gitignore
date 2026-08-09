@@ -20,6 +20,10 @@ system_monitor.db
 *.sqlite3
 *.log
 
+# 기록 조회 탭의 더미/실제 저장소 (HistoryStore) — DB는 위 *.db로도 걸리지만
+# 캡처 이미지(data/captures/*.jpg)는 별도 패턴이 필요하다.
+Sysmon/backend/data/
+
 # IDE
 .vscode/
 .idea/

@@ -68,7 +68,7 @@ class MapService:
         return origin_x, origin_y, bounds["local_width_m"], bounds["local_height_m"]
 
     def world_to_pixel(self, x: float, y: float) -> tuple[float, float]:
-        """map 좌표(m)를 화면에 표시되는(90도 시계방향 회전된) PNG 픽셀 좌표로 변환한다.
+        """map 좌표(m)를 화면에 표시되는(90도 반시계방향 회전된) PNG 픽셀 좌표로 변환한다.
 
         입력: map frame 기준 ``x``, ``y`` 좌표다.
         출력: 회전된 이미지 좌측 상단 기준 픽셀 ``x``, ``y``다.
@@ -87,13 +87,14 @@ class MapService:
         local_x = math.cos(origin_yaw) * dx + math.sin(origin_yaw) * dy
         local_y = -math.sin(origin_yaw) * dx + math.cos(origin_yaw) * dy
         # 3) m 단위를 픽셀로 바꾼다. 원래는 "pixel_x=local_x, pixel_y=height-local_y"
-        #    (y축만 뒤집음)였는데, _load()에서 PNG 자체를 90도 시계방향으로
-        #    돌려서 내려주므로 좌표 변환도 그 회전을 반영해야 한다. 90도 CW
-        #    회전 + 기존 y-뒤집기를 합성하면 "height - (height - local_y)" =
-        #    "local_y"로 상쇄되어, 결국 local_x/local_y가 그대로 자리를
-        #    바꾸는 것과 같아진다(추가 높이 보정 불필요).
-        pixel_x = local_y / self._metadata["resolution"]
-        pixel_y = local_x / self._metadata["resolution"]
+        #    (y축만 뒤집음)였는데, _load()에서 PNG 자체를 90도 반시계방향으로
+        #    돌려서 내려주므로(ROTATE_90) 좌표 변환도 그 회전을 반영해야 한다.
+        #    x/y가 자리를 바꾸는 건 CW 회전과 같지만, CCW는 CW의 거울상이라
+        #    두 축 모두 원점 반대편(가로/세로 끝)에서부터 잰다 — 그래서 CW
+        #    버전과 달리 width/height를 빼는 보정이 남는다. (row,col) 인덱스로
+        #    직접 검증된 공식: new_col=old_row, new_row=(W-1)-old_col.
+        pixel_x = self._metadata["width"] - local_y / self._metadata["resolution"]
+        pixel_y = self._metadata["height"] - local_x / self._metadata["resolution"]
         return pixel_x, pixel_y
 
     def _load(self) -> None:
@@ -126,10 +127,11 @@ class MapService:
         if bool(config.get("negate", 0)):
             image = ImageOps.invert(image)
         # 원본 ROS 맵은 보통 세로로 길게 나온다. 화면에는 가로(landscape)로
-        # 보는 게 더 보기 편해서 90도 시계방향으로 돌려서 내려준다 — 이
+        # 보는 게 더 보기 편해서 90도 반시계방향으로 돌려서 내려준다 — 이
         # 회전은 world_to_pixel()의 좌표 변환, dashboard.js의
-        # createMapProjection과 항상 함께 맞춰야 한다.
-        image = image.transpose(Image.Transpose.ROTATE_270)
+        # createMapProjection과 항상 함께 맞춰야 한다. (실제 room_map.pgm으로
+        # numpy.rot90(arr, k=1)과 픽셀 단위로 비교 검증된 방향이다.)
+        image = image.transpose(Image.Transpose.ROTATE_90)
         width, height = image.size
         resolution = float(config["resolution"])
         origin = [float(value) for value in config["origin"]]

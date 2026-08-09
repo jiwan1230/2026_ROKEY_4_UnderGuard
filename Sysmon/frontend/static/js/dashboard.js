@@ -764,11 +764,12 @@ function createMapProjection(width, height) {
       const dy = Number(y) - originY;
       const localX = cosYaw * dx + sinYaw * dy;
       const localY = -sinYaw * dx + cosYaw * dy;
-      // 백엔드가 PNG를 90도 시계방향으로 돌려서 내려주므로(map_service.py
-      // _load 참고) localY가 가로(픽셀 x), localX가 세로(픽셀 y) 방향이
-      // 된다 — 두 함수는 항상 같이 바꿔야 한다.
-      const pixelX = localY / mapMetadata.resolution;
-      const pixelY = localX / mapMetadata.resolution;
+      // 백엔드가 PNG를 90도 반시계방향으로 돌려서 내려주므로(map_service.py
+      // _load의 ROTATE_90 참고) localY가 가로(픽셀 x), localX가 세로(픽셀 y)
+      // 방향이 되는 것까지는 시계방향과 같지만, 반시계는 그 거울상이라 두
+      // 축 모두 폭/높이에서 빼야 한다 — 두 함수는 항상 같이 바꿔야 한다.
+      const pixelX = mapMetadata.width - localY / mapMetadata.resolution;
+      const pixelY = mapMetadata.height - localX / mapMetadata.resolution;
       return {x : left + pixelX * imageScale, y : top + pixelY * imageScale};
     }
   };
@@ -1007,6 +1008,294 @@ function drawMap(snapshot) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 기록 조회 탭 — 실시간 폴링과 분리된 별도 화면이다. /api/history/*는
+// StateManager가 아니라 history_store.py(SQLite)에서 조회하며, 사용자가
+// "기록 조회" 탭을 열 때만 불러온다(실시간 탭 폴링에는 관여하지 않는다).
+// ---------------------------------------------------------------------------
+const HISTORY_TRAIL_COLORS = [ '#2997ff', '#ff9f0a', '#bf5af2', '#32d74b' ];
+let historyDetections = [];
+let selectedHistoryDetectionId = null;
+
+/**
+ * 기록 자체가(필터와 무관하게) 하나도 없을 때 보여줄 안내 문구다.
+ * 필터 때문에 잠깐 안 보이는 것과 구분해서, 이 경우에만 더미 데이터를
+ * 채우는 명령어를 알려준다.
+ */
+const HISTORY_SEED_HINT_HTML =
+    '아직 저장된 기록이 없습니다.<br>' +
+    '터미널에서 아래 명령으로 더미 데이터를 채워보세요:<br>' +
+    '<code>cd Sysmon/backend &amp;&amp; python3 seed_dummy_history.py</code>';
+
+/**
+ * 로봇 id를 일관된 색으로 매핑한다(트레일 선·범례가 매번 같은 색을 쓰도록).
+ * 입력: 로봇 id 문자열이다. 출력: HEX 색상 문자열이다.
+ * 사용: 기록 지도의 이동 경로 선, 카드 표시 등에서 재사용한다.
+ */
+const historyRobotColor = (() => {
+  const assigned = new Map();
+  return robotId => {
+    if (!assigned.has(robotId))
+      assigned.set(robotId,
+                   HISTORY_TRAIL_COLORS[assigned.size % HISTORY_TRAIL_COLORS.length]);
+    return assigned.get(robotId);
+  };
+})();
+
+/**
+ * 기록 지도(정적 맵 + 누적 이동 경로 + 탐지 위치)를 그린다.
+ * 입력: `/api/history/detections`, `/api/history/trail` 응답 배열이다.
+ * 출력: 없음. `#history-map-canvas`를 다시 그린다.
+ * 사용: 필터가 바뀌거나 새로고침할 때마다 `loadHistory()`가 호출한다.
+ */
+function drawHistoryMap(detections, trail, totalEmpty = false) {
+  const canvas = $('#history-map-canvas');
+  const rect = canvas.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, rect.width * scale);
+  canvas.height = Math.max(1, rect.height * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  const w = rect.width, h = rect.height;
+  const projection = createMapProjection(w, h);
+  const toCanvas = projection.toCanvas;
+
+  if (projection.imageRect) {
+    const area = projection.imageRect;
+    ctx.save();
+    ctx.globalAlpha = .55;
+    ctx.filter = 'brightness(.65) contrast(1.2)';
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(mapImage, area.x, area.y, area.width, area.height);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(152,152,157,.45)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(area.x, area.y, area.width, area.height);
+  }
+
+  const byRobot = new Map();
+  trail.forEach(point => {
+    if (point.map_x == null || point.map_y == null)
+      return;
+    if (!byRobot.has(point.robot_id))
+      byRobot.set(point.robot_id, []);
+    byRobot.get(point.robot_id).push(point);
+  });
+  byRobot.forEach((points, robotId) => {
+    if (points.length < 2)
+      return;
+    ctx.strokeStyle = historyRobotColor(robotId);
+    ctx.globalAlpha = .55;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    points.forEach((point, i) => {
+      const p = toCanvas(point.map_x, point.map_y);
+      i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+    });
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  });
+
+  detections.forEach(det => {
+    if (det.map_x == null || det.map_y == null)
+      return;
+    drawDetectionMarker(ctx, det.object_type, toCanvas(det.map_x, det.map_y), 5, .85);
+  });
+
+  const hasData = detections.length > 0 || trail.length > 0;
+  const mapEmpty = $('#history-map-empty');
+  mapEmpty.classList.toggle('hidden', hasData);
+  if (!hasData)
+    mapEmpty.innerHTML = totalEmpty
+        ? HISTORY_SEED_HINT_HTML
+        : '이 필터 조건에 해당하는 경로/탐지가 없습니다.';
+}
+
+/**
+ * 탐지 기록 카드 목록을 그린다(썸네일·종류·로봇·시각·좌표).
+ * 입력: `/api/history/detections` 응답 배열이다.
+ * 출력: 없음. `#history-detection-list`를 다시 채운다.
+ * 사용: `loadHistory()`가 지도 렌더링과 함께 호출한다.
+ */
+function renderHistoryDetectionList(detections, totalEmpty = false) {
+  const list = $('#history-detection-list');
+  if (!detections.length) {
+    list.innerHTML = `<div class="empty">${
+        totalEmpty ? HISTORY_SEED_HINT_HTML : '이 필터 조건에 해당하는 탐지 기록이 없습니다.'
+    }</div>`;
+    return;
+  }
+  list.innerHTML = detections
+                        .map(det => {
+                          const label = objectLabels[det.object_type] ||
+                              det.object_type || '대상';
+                          const thumb = det.image_url
+                              ? `<img src="${det.image_url}" alt="${label} 증거 이미지" loading="lazy">`
+                              : '<div class="no-image">사진<br>없음</div>';
+                          const coords = (det.map_x != null && det.map_y != null)
+                              ? `(${n(det.map_x, 2)}, ${n(det.map_y, 2)})`
+                              : '좌표 없음';
+                          const confidence = det.confidence != null
+                              ? ` · 신뢰도 ${Math.round(det.confidence * 100)}%`
+                              : '';
+                          return `<button type="button" class="history-card${
+                              det.id === selectedHistoryDetectionId ? ' selected' : ''}"
+                              data-detection-id="${det.id}">
+                              ${thumb}
+                              <div class="history-card-body">
+                                <div class="history-card-title">${escapeHtml(label)}
+                                  ${det.is_dummy ? '<span class="dummy-badge">DUMMY</span>' : ''}
+                                </div>
+                                <div class="history-card-meta">
+                                  ${formatTime(det.timestamp)} · ${escapeHtml(det.robot_id || '—')}<br>
+                                  ${coords}${confidence}
+                                </div>
+                              </div>
+                            </button>`;
+                        })
+                        .join('');
+}
+
+/**
+ * 필터된 시간 범위 안에서 탐지가 언제 일어났는지 점으로 찍어 보여준다.
+ * 입력: 탐지 배열과 타임라인 시작 시각(초, epoch)이다 — 끝은 항상 지금이다.
+ * 출력: 없음. `#history-timeline`을 다시 채운다.
+ * 사용: `loadHistory()`가 목록·지도와 함께 호출한다.
+ */
+function renderHistoryTimeline(detections, windowStart, totalEmpty = false) {
+  const container = $('#history-timeline');
+  const empty = $('#history-timeline-empty');
+  container.querySelectorAll('.timeline-tick').forEach(tick => tick.remove());
+  empty.classList.toggle('hidden', detections.length > 0);
+  if (!detections.length) {
+    empty.innerHTML = totalEmpty
+        ? HISTORY_SEED_HINT_HTML
+        : '이 필터 조건에 해당하는 기록이 없습니다.';
+    return;
+  }
+
+  const now = Date.now() / 1000;
+  const start = windowStart != null
+      ? windowStart
+      : Math.min(...detections.map(det => det.timestamp));
+  const span = Math.max(1, now - start);
+
+  detections.forEach(det => {
+    const ratio = Math.min(1, Math.max(0, (det.timestamp - start) / span));
+    const tick = document.createElement('button');
+    tick.type = 'button';
+    tick.className = `timeline-tick type-${(det.object_type || '').toLowerCase()}${
+        det.id === selectedHistoryDetectionId ? ' selected' : ''}`;
+    tick.style.left = `${ratio * 100}%`;
+    tick.dataset.detectionId = det.id;
+    const label = objectLabels[det.object_type] || det.object_type || '대상';
+    tick.title = `${formatTime(det.timestamp)} · ${label} · ${det.robot_id || '—'}`;
+    container.appendChild(tick);
+  });
+}
+
+/**
+ * 탐지 하나를 "선택 상태"로 만들어 큰 사진·상세 정보를 보여준다.
+ * 입력: 선택할 탐지의 id다(목록/타임라인 어느 쪽에서 눌렀든 동일하게 처리).
+ * 출력: 없음. 상세 패널, 목록 카드, 타임라인 점의 선택 표시를 모두 갱신한다.
+ * 사용: 타임라인 점 클릭, 목록 카드 클릭 핸들러에서 호출한다.
+ */
+function selectHistoryDetection(detectionId) {
+  const detection = historyDetections.find(det => det.id === detectionId);
+  if (!detection)
+    return;
+  selectedHistoryDetectionId = detectionId;
+
+  document.querySelectorAll('.history-card').forEach(card => {
+    card.classList.toggle('selected', Number(card.dataset.detectionId) === detectionId);
+  });
+  document.querySelectorAll('.timeline-tick').forEach(tick => {
+    tick.classList.toggle('selected', Number(tick.dataset.detectionId) === detectionId);
+  });
+
+  const label = objectLabels[detection.object_type] || detection.object_type || '대상';
+  $('#history-detail-photo').innerHTML = detection.image_url
+      ? `<img src="${detection.image_url}" alt="${escapeHtml(label)} 증거 이미지">`
+      : '<div class="no-image large">이 기록에는<br>저장된 사진이 없습니다</div>';
+
+  const coords = (detection.map_x != null && detection.map_y != null)
+      ? `(${n(detection.map_x, 2)}, ${n(detection.map_y, 2)})`
+      : '—';
+  const confidence = detection.confidence != null
+      ? `${Math.round(detection.confidence * 100)}%`
+      : '—';
+  $('#history-detail-meta').innerHTML = `
+    <dt>시각</dt><dd>${formatTime(detection.timestamp)}${
+        detection.is_dummy ? ' <span class="dummy-badge">DUMMY</span>' : ''}</dd>
+    <dt>종류</dt><dd>${escapeHtml(label)}</dd>
+    <dt>로봇</dt><dd>${escapeHtml(detection.robot_id || '—')}</dd>
+    <dt>좌표</dt><dd>${coords}</dd>
+    <dt>신뢰도</dt><dd>${confidence}</dd>
+  `;
+}
+
+/**
+ * 필터 값(종류·로봇·기간)을 읽어 기록을 다시 조회하고 지도·목록을 갱신한다.
+ * 입력: 없음. `#history-filter-*` select 값을 직접 읽는다.
+ * 출력: 완료 시 화면이 갱신되는 Promise다.
+ * 사용: 탭을 열 때, 새로고침 버튼, 필터 변경 시 호출한다.
+ */
+async function loadHistory() {
+  const objectType = $('#history-filter-object-type').value;
+  const robotId = $('#history-filter-robot').value;
+  const windowSec = Number($('#history-filter-window').value) || 0;
+  const since = windowSec > 0 ? (Date.now() / 1000 - windowSec) : null;
+
+  const params = new URLSearchParams();
+  if (objectType)
+    params.set('object_type', objectType);
+  if (robotId)
+    params.set('robot_id', robotId);
+  if (since != null)
+    params.set('since', String(since));
+
+  const trailParams = new URLSearchParams(params);
+  try {
+    const [ summary, detections, trail ] = await Promise.all([
+      request('/api/history/summary'),
+      request(`/api/history/detections?${params.toString()}`),
+      request(`/api/history/trail?${trailParams.toString()}`)
+    ]);
+    $('#history-summary').querySelector('strong').textContent =
+        `탐지 ${summary.detections}건 · 경로 ${summary.trail_points}개 기록됨`;
+
+    const robotSelect = $('#history-filter-robot');
+    if (robotSelect.options.length <= 1) {
+      const robotIds = [...new Set(trail.map(point => point.robot_id))].sort();
+      robotIds.forEach(id => {
+        const option = document.createElement('option');
+        option.value = id;
+        option.textContent = id;
+        robotSelect.appendChild(option);
+      });
+    }
+
+    const totalEmpty = summary.detections === 0 && summary.trail_points === 0;
+    historyDetections = detections;
+    if (!detections.some(det => det.id === selectedHistoryDetectionId))
+      selectedHistoryDetectionId = detections[0]?.id ?? null;
+
+    renderHistoryDetectionList(detections, totalEmpty);
+    renderHistoryTimeline(detections, since, totalEmpty);
+    drawHistoryMap(detections, trail, totalEmpty);
+    if (selectedHistoryDetectionId != null) {
+      selectHistoryDetection(selectedHistoryDetectionId);
+    } else {
+      $('#history-detail-photo').innerHTML = `<div class="no-image large">${
+          totalEmpty ? HISTORY_SEED_HINT_HTML : '이 필터 조건에 해당하는 기록이 없습니다.'
+      }</div>`;
+      $('#history-detail-meta').innerHTML = '';
+    }
+  } catch (error) {
+    toast('기록을 불러오지 못했습니다: ' + error.message, 'error');
+  }
+}
+
 /**
  * 서버 스냅샷을 한 번 조회해 대시보드 전체를 갱신한다.
  * 입력: 없음. `/api/snapshot`을 사용한다.
@@ -1121,6 +1410,48 @@ $('#close-event-dialog')
 $('#event-dialog').addEventListener('click', event => {
   if (event.target === event.currentTarget)
     event.currentTarget.close();
+});
+
+document.querySelectorAll('.view-tab').forEach(tab => tab.addEventListener('click', () => {
+  const view = tab.dataset.view;
+  document.querySelectorAll('.view-tab').forEach(item => {
+    const active = item === tab;
+    item.classList.toggle('active', active);
+    if (active)
+      item.setAttribute('aria-current', 'page');
+    else
+      item.removeAttribute('aria-current');
+  });
+  $('#view-live').classList.toggle('hidden', view !== 'live');
+  $('#view-history').classList.toggle('hidden', view !== 'history');
+  // 실시간 화면 전용 "한 화면 고정" CSS(html,body{overflow:hidden} 등,
+  // dashboard.css의 min-height 미디어쿼리)를 기록 조회 화면이 물려받으면
+  // 안 된다. body 클래스만으로는 부족했다 — 그 규칙이 <html>에도 똑같이
+  // 걸려있어서, <html>은 인라인 스타일로 직접 덮어써야 확실히 이긴다.
+  const isHistory = view === 'history';
+  document.body.classList.toggle('history-mode', isHistory);
+  document.documentElement.style.overflow = isHistory ? 'auto' : '';
+  document.documentElement.style.height = isHistory ? 'auto' : '';
+  document.body.style.overflow = isHistory ? 'auto' : '';
+  document.body.style.height = isHistory ? 'auto' : '';
+  if (isHistory)
+    loadHistory();
+}));
+[ 'history-filter-object-type', 'history-filter-robot', 'history-filter-window' ]
+    .forEach(id => $(`#${id}`).addEventListener('change', loadHistory));
+$('#history-refresh').addEventListener('click', loadHistory);
+
+// 목록 카드/타임라인 점은 loadHistory()가 매번 innerHTML을 새로 채우므로
+// 위임(delegation)으로 한 번만 걸어 둔다.
+$('#history-detection-list').addEventListener('click', event => {
+  const card = event.target.closest('.history-card');
+  if (card)
+    selectHistoryDetection(Number(card.dataset.detectionId));
+});
+$('#history-timeline').addEventListener('click', event => {
+  const tick = event.target.closest('.timeline-tick');
+  if (tick)
+    selectHistoryDetection(Number(tick.dataset.detectionId));
 });
 
 loadMap();

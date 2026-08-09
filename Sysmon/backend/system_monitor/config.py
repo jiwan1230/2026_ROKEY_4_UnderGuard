@@ -71,6 +71,18 @@ class Settings:
     # 이전 mini 프로젝트 때 쓰던 좌표계가 다른 옛 맵이라 대체했다.
     map_yaml_path: Path = Path("../../../minipjt/mini_turtle4/resource/room_map.yaml")
     ros_interface: RosInterfaceConfig = field(default_factory=RosInterfaceConfig)
+    # MONITOR_MODE=replay 전용 — herding_controller_dual 검증 시뮬레이션이 남긴
+    # 궤적(replay_manager.DEFAULT_FRAMES_PATH) 중 몇 번째 trial을 얼마나 빠르게
+    # 재생할지다. 파일 경로 자체는 patch 우려 없이 패키지에 번들돼 있어 기본값이면
+    # 충분하고, 필요하면 REPLAY_FRAMES_PATH로 다른 파일을 가리킬 수 있다.
+    replay_frames_path: Path | None = None
+    replay_trial_index: int = 0
+    replay_speed: float = 1.0
+    # 기록 조회 탭 전용 — 실시간 뷰(StateManager)와 분리된 영구 저장소다.
+    # 상대경로는 Path.cwd() 기준(run_*.sh가 cd하는 Sysmon/backend/)이라
+    # 기본값으로 두면 backend/data/ 아래에 생긴다. *.db는 .gitignore 처리됨.
+    history_db_path: Path = Path("data/history.db")
+    history_image_dir: Path = Path("data/captures")
 
 
 def load_settings() -> Settings:
@@ -108,6 +120,15 @@ def load_settings() -> Settings:
                 "../../../minipjt/mini_turtle4/resource/room_map.yaml",
             )
         ),
+        replay_frames_path=(
+            Path(os.environ["REPLAY_FRAMES_PATH"])
+            if os.getenv("REPLAY_FRAMES_PATH")
+            else None
+        ),
+        replay_trial_index=int(os.getenv("REPLAY_TRIAL", "0")),
+        replay_speed=float(os.getenv("REPLAY_SPEED", "1.0")),
+        history_db_path=Path(os.getenv("HISTORY_DB_PATH", "data/history.db")),
+        history_image_dir=Path(os.getenv("HISTORY_IMAGE_DIR", "data/captures")),
         ros_interface=RosInterfaceConfig(
             fleet_status_topic=os.getenv("ROS_FLEET_STATUS_TOPIC", "/fleet/status"),
             fleet_event_topic=os.getenv("ROS_FLEET_EVENT_TOPIC", "/fleet/event"),
