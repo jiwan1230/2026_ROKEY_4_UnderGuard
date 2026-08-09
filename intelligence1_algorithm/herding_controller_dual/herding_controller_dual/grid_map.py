@@ -20,6 +20,10 @@ class GridMap:
 
     def __init__(self, config: GridConfig) -> None:
         self.config = config
+        # shape=(height, width) — world_to_cell/cell_to_world이 쓰는 (row, col)
+        # 인덱싱과 순서를 맞춘 것. numpy 배열의 첫 축(행)이 row(=y), 둘째 축(열)이
+        # col(=x)이라, 다른 곳에서처럼 여기서도 (x, y)가 아니라 (row, col) 순서로
+        # 인덱싱해야 한다(예: is_obstacle(row, col), 반대로 하면 조용히 잘못된 셀을 가리킨다).
         self.obstacle_mask = np.zeros((config.height_cells, config.width_cells), dtype=bool)
 
     def world_to_cell(self, x: float, y: float) -> tuple[int, int]:

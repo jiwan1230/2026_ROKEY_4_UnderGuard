@@ -6,6 +6,12 @@ import numpy as np
 
 from herding_controller_dual.grid_map import GridMap
 
+# (x, y) 순서의 8방위 벡터 — [N, NE, E, SE, S, SW, W, NW] 순으로 45도씩 회전한다
+# (world_to_cell의 row=y/col=x 규약과 달리, 여기 방향 벡터는 world 좌표계 그대로다).
+# 대각선 성분은 정규화 전 크기가 sqrt(2)라, 그대로 두면 이 파일 전체에서
+# 반복되는 `_DIRECTIONS @ 단위벡터` 내적 비교(벽 방향/이동 방향/로봇 반대
+# 방향과의 정렬도)가 축방향(N/E/S/W)과 대각 방향에서 서로 다른 스케일로
+# 나온다 — 그래서 여기서 미리 단위벡터로 맞춰 둔다.
 _DIRECTIONS = np.array(
     [[0, 1], [1, 1], [1, 0], [1, -1], [0, -1], [-1, -1], [-1, 0], [-1, 1]],
     dtype=float,
