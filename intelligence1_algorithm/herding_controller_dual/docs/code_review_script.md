@@ -1,5 +1,19 @@
 # 코드 리뷰 발표 대본
 
+> ## ✅ 최신 문서 (2026-08-09)
+>
+> **코드 리뷰는 이 문서 하나로 진행한다.**
+>
+> 예전 `code_review_master.md` / `code_review_study_guide.md` / `code_walkthrough.md`
+> 3종은 2026-08-06 기준(엔드게임 협공·재-SLAM 맵 이전)이라 내용이 맞지 않아
+> **삭제했다.** 그 문서들을 참조하는 자료가 있으면 이 문서로 대체할 것.
+>
+> 함께 보는 문서:
+> - [`references.md`](references.md) — 참고 논문과 우리가 바꾼 것 (4부 상세)
+> - [`notion_summary.md`](notion_summary.md) — 개발 기록 요약 (노션 붙여넣기용)
+> - [`run_guide.md`](run_guide.md) — 실행 방법
+> - [`operator_protocol.md`](operator_protocol.md) — RC카 조작 매뉴얼 (시연 담당자)
+
 > **진행 순서**: 디렉토리 구조 → 왜 이렇게 나눴는가 → 왜 이 숫자인가 → 어떤 이론을 어떻게 적용했는가 → 세부 코드
 >
 > 앞의 네 단계가 "왜"에 대한 답이고, 마지막이 "무엇"에 대한 답이다.

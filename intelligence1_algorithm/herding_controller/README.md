@@ -65,12 +65,11 @@ ALGO-001/002/003/005 실제 맵 기준 4개 게이트 전부 PASS, 추상 아레
 
 `~/robot1_goal`은 발행하지 않는다 — 로봇 1(Driver)은 이 패키지가 조종하지 않는다.
 
-전체 표는 [docs/code_review_study_guide.md](docs/code_review_study_guide.md) 참고.
+전체 표는 최종본 패키지의 [코드 리뷰 발표 대본](../herding_controller_dual/docs/code_review_script.md) 참고.
 
 ## 문서
 
-- [코드 리뷰 스터디 가이드](docs/code_review_study_guide.md) — 아키텍처/시퀀스/FSM 다이어그램, 설계↔코드↔테스트 매칭, 예상 Q&A
-- [코드 워크스루](docs/code_walkthrough.md) — 파일별 클래스/함수 색인
+- [코드 리뷰 발표 대본](../herding_controller_dual/docs/code_review_script.md) — **최신**. 설계 근거, 임계값 근거, 이론 적용, 예상 Q&A
 - [설계 스펙](../docs/superpowers/specs/2026-08-04-herding-controller-design.md)
 - [최종 검증 리포트](../docs/superpowers/plans/2026-08-04-herding-controller-final-report.md) — 2026-08-05 시점 스냅샷(역할 동적 배정 가정 하의 결과, 지금은 역할이 고정으로 바뀌어 구조가 다름). 현재 수치는 위 "검증 결과" 절 참고
 - [트러블슈팅 노트](../herding_controller_트러블슈팅_노트.md) — 실패 사례, 파라미터 튜닝 히스토리, 아키텍처 정정 및 실제 맵 재검증 전체 과정(10번 항목)

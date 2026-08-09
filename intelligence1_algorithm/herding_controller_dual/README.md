@@ -89,5 +89,10 @@ ros2 run herding_controller_dual herding_node --ros-args --params-file config/he
 
 ## 문서
 
-- [트러블슈팅 노트](../herding_controller_트러블슈팅_노트.md) 14번 항목 — 이 패키지를 만든 배경, 최신 플랜 A 위로 이식한 과정, 검증 결과
-- `docs/` 아래 문서는 플랜 A 기준으로 작성된 것을 그대로 복사해왔다 — 아키텍처 설명 중 "역할 고정"/"로봇 A는 조종 안 함" 부분은 이 패키지에는 적용되지 않으니 주의.
+문서 목록과 상태는 [docs/README.md](docs/README.md) 참고.
+
+- [**코드 리뷰 발표 대본**](docs/code_review_script.md) — ✅ **최신**. 리뷰는 이 문서로 진행한다
+- [참고 논문](docs/references.md) — 무엇을 참고했고 어디서 벗어났는지
+- [개발 기록 요약](docs/notion_summary.md) — 노션 붙여넣기용
+- [실행 안내](docs/run_guide.md) — 다른 컴퓨터에서 이어하기
+- [조작자 매뉴얼](docs/operator_protocol.md) — RC카 조작 (시연 담당자 필독)
