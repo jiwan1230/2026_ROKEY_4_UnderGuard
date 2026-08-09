@@ -44,8 +44,11 @@ class TrapCheckNode(Node):
         # 후진의 180° 회전 — Create3가 곧은 후진(linear.x 음수)을 못 해서 돌아서 감.
         # 두 회전을 반대 방향으로 줘 heading 오차 상쇄. turn_sec은 실측 180°에 맞출 것.
         self.turn_speed = self.declare_parameter('turn_speed', 1.0).value      # rad/s
-        self.turn_sec = self.declare_parameter('turn_sec', 4.0).value          # 실측 180° 소요(z=1.0)
+        self.turn_sec = self.declare_parameter('turn_sec', 3.14).value         # 실측 180° 소요(z=1.0)
         self.install_wait = self.declare_parameter('install_wait', 10.0).value  # 사람이 trap 놓을 시간
+        # 후진 180° 회전이 명령상 끝나도 로봇은 감속·정착 중 — 이만큼 더 기다린 뒤
+        # trap_installed를 쏴야 detector가 완전히 멈춘 자세에서 trap 위치를 뽑는다.
+        self.settle_sec = self.declare_parameter('settle_sec', 1.5).value
         self.beep_hz = self.declare_parameter('beep_hz', 1000).value
         self.beep_sec = self.declare_parameter('beep_sec', 1.0).value
 
@@ -91,6 +94,7 @@ class TrapCheckNode(Node):
         self.get_logger().info(f'0.5m 도착 — {self.install_wait:.0f}초 설치 대기')
         time.sleep(self.install_wait)                       # 사람이 trap 놓음
         self._retreat()                                     # 0.5→0.8m 후진
+        time.sleep(self.settle_sec)                         # 회전 완전 정지·정착 후 판단
         msg = String(data=fleet_msg.event('trap_installed', hx, hy))
         self.event_pub.publish(msg)     # 관찰용 (전역)
         self.local_pub.publish(msg)     # 내 detector 상태 전이용 (로봇별)
