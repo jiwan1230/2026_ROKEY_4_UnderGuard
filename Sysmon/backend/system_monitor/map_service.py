@@ -22,12 +22,6 @@ class MapService:
         self._png: bytes | None = None
 
     def describe(self, image_url: str) -> dict[str, Any]:
-        """대시보드가 맵을 그릴 때 필요한 메타데이터를 반환한다.
-
-        입력: PNG를 제공하는 Flask API URL이다.
-        출력: 사용 가능 여부, 크기, 해상도, 원점, 실제 좌표 범위다.
-        사용: ``GET /api/map`` 응답을 만들 때 호출한다.
-        """
 
         try:
             self._load()
@@ -53,13 +47,6 @@ class MapService:
         return self._png
 
     def bounds(self) -> tuple[float, float, float, float]:
-        """맵의 origin(x, y)과 실제 폭·높이(m)를 반환한다.
-
-        입력: 없음. 출력: ``(origin_x, origin_y, width_m, height_m)``다.
-        로드 실패 시 ``ValueError``/``OSError``를 그대로 전파한다.
-        사용: MockManager가 맵 어디에 있든 그 범위 안에서만 로봇을
-        움직이도록 배선할 때 호출한다(맵 파일이 바뀌어도 코드 수정 불필요).
-        """
 
         self._load()
         assert self._metadata is not None
@@ -68,13 +55,6 @@ class MapService:
         return origin_x, origin_y, bounds["local_width_m"], bounds["local_height_m"]
 
     def world_to_pixel(self, x: float, y: float) -> tuple[float, float]:
-        """map 좌표(m)를 화면에 표시되는(90도 시계방향 회전된) PNG 픽셀 좌표로 변환한다.
-
-        입력: map frame 기준 ``x``, ``y`` 좌표다.
-        출력: 회전된 이미지 좌측 상단 기준 픽셀 ``x``, ``y``다.
-        사용: 프런트엔드 Canvas도 동일한 계산식으로 로봇과 마커를 배치한다
-        (dashboard.js의 ``createMapProjection`` 참고, 이 함수와 항상 같이 바꾼다).
-        """
 
         self._load()
         assert self._metadata is not None

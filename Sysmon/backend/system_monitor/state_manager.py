@@ -209,15 +209,17 @@ class StateManager:
     def mark_heartbeat(self, robot_id: str) -> None:
         self.update_robot(robot_id)
 
+    # 웹의 이벤트 타임라인에 새로운 이벤트를 추가
     def add_event(
         self,
         message: str,
         *,
         robot_id: str | None = None,
+        # severity는 “얼마나 중요한 문제인가?”를 나타냄
         severity: str = "INFO",
+        # 무슨 종류의 이벤트인지를 나타냄
         event_type: str = "SYSTEM",
     ) -> dict[str, Any]:
-        """타임라인 사건을 추가하고 직렬화 가능한 복사본을 반환한다."""
 
         with self._lock:
             event = Event(
