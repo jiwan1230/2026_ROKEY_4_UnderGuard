@@ -66,6 +66,11 @@ class RobotAgent(Node):
         # detector 사망 대비 — hold heartbeat(1초 주기 True)가 이 시간 넘게
         # 끊기면 hold를 자동 해제하고 순찰을 재개한다.
         self.hold_lease = self.declare_parameter('hold_lease_sec', 3.0).value
+        # herding_controller_dual은 10Hz로 target_pose를 쏜다 — 매번 goToPose를
+        # 부르면 Nav2가 초당 10번 선점당해 경로를 다시 짜다 제자리에서 떤다.
+        # 직전에 실제로 보낸 goal과 이만큼(m) 이상 차이날 때만 재전송한다.
+        # 시간 기준 대신 거리 기준 — 빠르게 움직이는 국면에서 시간 기준은 반응이 늦다.
+        self.goal_resend_dist = self.declare_parameter('goal_resend_dist', 0.18).value
 
         self.state = 'IDLE'
         self.battery = 100
@@ -90,6 +95,7 @@ class RobotAgent(Node):
         # 언도킹 중 받은 target_pose — 버리면 detector가 60초 timeout까지 기다
         # 리므로(SWEEP 첫 구멍 goal 등) 보류했다가 언도킹 완료 후 주행한다.
         self.pending_target = None
+        self._last_goal_xy = None  # 마지막으로 실제 전송한 goal (goal_resend_dist 판정용)
 
         self.status_pub = self.create_publisher(String, '/fleet/status', 10)
         self.create_subscription(String, '/fleet/command', self.command_cb, 10)
@@ -156,6 +162,7 @@ class RobotAgent(Node):
                 # 접근/추적 goal도 끊는다 — 순찰만 끊으면 Nav2가 계속 주행한다.
                 self.nav.cancelTask()
                 self.driving = False
+                self._last_goal_xy = None
 
     def start_patrol(self):
         """waypoint 순찰 시작. 이미 도는 중이면 무시. waypoint는 첫 호출 때 로드."""
@@ -259,6 +266,7 @@ class RobotAgent(Node):
             if not self.nav.isTaskComplete():
                 return
             self.driving = False
+            self._last_goal_xy = None
             result = self.nav.getResult()
             if result == TaskResult.SUCCEEDED:
                 self.get_logger().info('목표 도착')
@@ -321,6 +329,7 @@ class RobotAgent(Node):
         if msg.data and self.driving:
             self.nav.cancelTask()
             self.driving = False
+            self._last_goal_xy = None
             self.get_logger().info('주행 goal 취소 (cancel_drive)')
 
     def hold_cb(self, msg):
@@ -370,12 +379,17 @@ class RobotAgent(Node):
             if self.dock_phase == 'UNDOCK':
                 self.pending_target = msg   # 언도킹 끝나면 _dock_tick이 주행
             return
+        x, y = msg.pose.position.x, msg.pose.position.y
+        if self.driving and self._last_goal_xy is not None:
+            d = math.hypot(x - self._last_goal_xy[0], y - self._last_goal_xy[1])
+            if d < self.goal_resend_dist:
+                return           # 직전 goal과 충분히 가까움 — 재전송 생략(재계획 폭주 방지)
         self.stop_patrol()
         self.nav.goToPose(msg)
         self.driving = True         # 결과 감시 대상 (patrol_tick이 성패를 찍는다)
+        self._last_goal_xy = (x, y)
         self.get_logger().info(
-            f'목표 주행: ({msg.pose.position.x:.2f}, {msg.pose.position.y:.2f})',
-            throttle_duration_sec=1.0)
+            f'목표 주행: ({x:.2f}, {y:.2f})', throttle_duration_sec=1.0)
 
     def report(self):
         self.status_pub.publish(String(data=fleet_msg.status(
@@ -451,6 +465,8 @@ class _FakeAgent:
         self.ns = 'robot4'
         self.after_undock = None
         self.pending_target = None
+        self._last_goal_xy = None
+        self.goal_resend_dist = 0.18
         self.hold, self.hold_at, self.hold_lease = False, 0.0, 3.0
         self.patrolling = self.driving = False
         self.lap_from = self.lap_start = 0
@@ -586,6 +602,18 @@ def _self_check():
     a = _FakeAgent(_FakeNav(True, None, False, False), None)
     a.target_cb(msg)
     assert a.nav.goto_pose is msg
+    # goal_resend_dist: 직전 goal과 가까운 재발행(10Hz 몰이 등)은 재전송 생략
+    a.driving = True
+    a.nav.goto_pose, a.nav.calls = None, []
+    near = types.SimpleNamespace(pose=types.SimpleNamespace(
+        position=types.SimpleNamespace(x=1.05, y=2.05)))   # ~0.07m — 문턱(0.18) 안
+    a.target_cb(near)
+    assert a.nav.goto_pose is None and a.nav.calls == []
+    # 문턱 넘게 움직이면 재전송
+    far = types.SimpleNamespace(pose=types.SimpleNamespace(
+        position=types.SimpleNamespace(x=1.5, y=2.0)))      # 0.5m — 문턱 밖
+    a.target_cb(far)
+    assert a.nav.goto_pose is far
     # 도킹 중이면 목표 주행 무시 (도크 이동과 충돌 방지) — 보류도 안 함
     a = _FakeAgent(_FakeNav(True, None, False, False), 'NAV')
     a.target_cb(msg)
