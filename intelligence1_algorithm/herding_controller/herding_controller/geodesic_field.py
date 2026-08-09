@@ -103,14 +103,14 @@ class GeodesicField:
         h, w = self.distance.shape
         r0, r1 = max(row - radius_cells, 0), min(row + radius_cells, h - 1)
         c0, c1 = max(col - radius_cells, 0), min(col + radius_cells, w - 1)
-        d_r0c0 = self.distance[row, c0]
-        d_r0c1 = self.distance[row, c1]
-        d_r1c0 = self.distance[r0, col]
-        d_r1c1 = self.distance[r1, col]
-        if not np.isfinite([d_r0c0, d_r0c1, d_r1c0, d_r1c1]).all():
+        d_left = self.distance[row, c0]
+        d_right = self.distance[row, c1]
+        d_down = self.distance[r0, col]
+        d_up = self.distance[r1, col]
+        if not np.isfinite([d_left, d_right, d_down, d_up]).all():
             return None
-        grad_x = (d_r0c1 - d_r0c0) / 2.0
-        grad_y = (d_r1c1 - d_r1c0) / 2.0
+        grad_x = (d_right - d_left) / 2.0
+        grad_y = (d_up - d_down) / 2.0
         grad = np.array([grad_x, grad_y])
         norm = np.linalg.norm(grad)
         if norm < 1e-9:

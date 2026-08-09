@@ -103,17 +103,19 @@ class GeodesicField:
         h, w = self.distance.shape
         r0, r1 = max(row - radius_cells, 0), min(row + radius_cells, h - 1)  # 위/아래 이웃 행(그리드 경계로 클램프)
         c0, c1 = max(col - radius_cells, 0), min(col + radius_cells, w - 1)  # 좌/우 이웃 열(그리드 경계로 클램프)
-        # 중심차분(central difference)용 4개 샘플. 변수명의 "r0/r1/c0/c1"은 그냥 표시일 뿐, 실제로는
-        # grad_x 계산엔 row(현재 행) 고정 + col만 c0/c1로 바꾼 값을, grad_y 계산엔 col(현재 열) 고정 +
-        # row만 r0/r1로 바꾼 값을 쓴다(둘 다 4개 모서리가 아니라 십자 모양 2쌍).
-        d_r0c0 = self.distance[row, c0]   # grad_x용 — 현재 행, 왼쪽(c0)
-        d_r0c1 = self.distance[row, c1]   # grad_x용 — 현재 행, 오른쪽(c1)
-        d_r1c0 = self.distance[r0, col]   # grad_y용 — 위쪽(r0), 현재 열
-        d_r1c1 = self.distance[r1, col]   # grad_y용 — 아래쪽(r1), 현재 열
-        if not np.isfinite([d_r0c0, d_r0c1, d_r1c0, d_r1c1]).all():
+        # 중심차분(central difference)용 4개 샘플 -- 네 모서리가 아니라 십자 모양이다.
+        # 좌우 2개는 현재 "행"을 고정하고 열만 바꿔 x방향 기울기를, 상하 2개는 현재
+        # "열"을 고정하고 행만 바꿔 y방향 기울기를 잰다.
+        # (2026-08-09: 이름이 d_r0c0/d_r1c0 식이라 "행 r1, 열 c0"으로 읽혔는데 실제로는
+        #  [r0, col]이었다 -- 네 모서리를 쓰려던 옛 이름의 잔재라 방향 이름으로 바꿨다.)
+        d_left = self.distance[row, c0]    # 현재 행, 왼쪽 열
+        d_right = self.distance[row, c1]   # 현재 행, 오른쪽 열
+        d_down = self.distance[r0, col]    # 아래쪽 행(r0), 현재 열
+        d_up = self.distance[r1, col]      # 위쪽 행(r1), 현재 열
+        if not np.isfinite([d_left, d_right, d_down, d_up]).all():
             return None  # 샘플 중 하나라도 도달 불가(inf) — 기울기 신뢰 불가
-        grad_x = (d_r0c1 - d_r0c0) / 2.0  # x(=col) 방향 중심차분 근사
-        grad_y = (d_r1c1 - d_r1c0) / 2.0  # y(=row) 방향 중심차분 근사
+        grad_x = (d_right - d_left) / 2.0   # x(=col) 방향 중심차분 근사
+        grad_y = (d_up - d_down) / 2.0  # y(=row) 방향 중심차분 근사
         grad = np.array([grad_x, grad_y])
         norm = np.linalg.norm(grad)
         if norm < 1e-9:
