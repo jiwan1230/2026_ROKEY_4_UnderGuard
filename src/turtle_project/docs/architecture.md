@@ -3,6 +3,13 @@
 > 조사 기준: `setup.py` entry_points(9개 노드) → 각 노드 소스 → import된 헬퍼까지
 > 실제 코드만 확인. README·주석의 "예정/TODO" 문구는 근거로 쓰지 않고, 코드가
 > 실제로 하는 일만 판정했다. (조사일 2026-08-06)
+>
+> **2026-08-09 정정**: 아래 "쥐몰이·goal" 항목을 조사 당시 todo로 판정했으나,
+> 알고리즘 파트가 8/6에 `rat_herding_node`를 `herding_controller`(플랜 A)에
+> 연결해 main에 반영했다(당시엔 이 브랜치에 병합되지 않아 안 보였다). 몰이
+> 알고리즘 자체는 시뮬레이션 성공률 96.0%(기본 표적) / 98.0%(사람 조작
+> 표적)까지 검증 완료 -- 각 n=300, 로봇 2대 협공의 기여도 통제 실험으로
+> 확인(구조 14건 : 역행 0건, p=0.00012). 실물 검증은 아직. 해당 행만 정정하고 나머지는 재조사하지 않았다.
 
 ## 1. 데이터 흐름도
 
@@ -80,7 +87,7 @@ flowchart TB
 | trap 점검 | [trap_check_node.py:30-32](../turtle_project/trap_check_node.py#L30-L32) | **todo** | cb가 `pass` — 판정 로직 없음 (기준 미정) |
 | 구멍 DB | [db_node.py:20-25](../turtle_project/db_node.py#L20-L25) | **todo** | query가 항상 `exists=False`, holes 저장/조회 없음 |
 | 쥐몰이·B배정 | [rat_herding_node.py:27-34](../turtle_project/rat_herding_node.py#L27-L34) | **done** | command_cb가 HERD 대상을 동적 인식·퍼블리셔 생성 — 동작 |
-| 쥐몰이·goal | [rat_herding_node.py:36-44](../turtle_project/rat_herding_node.py#L36-L44) | **todo** | event_cb가 로그만 — 몰이 goal 계산·발행 없음 (알고리즘 미구현) |
+| 쥐몰이·goal | [rat_herding_node.py:36-44](../turtle_project/rat_herding_node.py#L36-L44) | **done**(정정, 08-09) | goal_cb가 herding_controller의 robot2_goal을 실제 target_pose로 relay — 알고리즘 쪽 몰이 로직 연결·시뮬 검증(96.0% / 98.0%) 완료. 실물 검증은 아직 |
 | 웹캠 감시 | [webcam_node.py:27-29](../turtle_project/webcam_node.py#L27-L29) | **todo** | tick이 `pass` — VideoCapture/YOLO/homography 없음 |
 | fleet_msg | [fleet_msg.py:11-35](../turtle_project/fleet_msg.py#L11-L35) | **done** | status/command/event 조립·파싱 round-trip self-check 통과 |
 | depth_math | [depth_math.py:8-76](../turtle_project/depth_math.py#L8-L76) | **done** | decode/deproject/depth_spread 등 self-check 통과 |
@@ -99,7 +106,7 @@ flowchart TB
 | robot_agent | 각 로봇 PC | 🟡 partial (순찰 done / target_cb·dock todo) |
 | central_node | 중앙 PC | 🟡 partial (핵심 조율 done / 교대 잔여·이벤트 todo) |
 | db_node | 중앙 PC | 🔴 todo (서비스 껍데기) |
-| rat_herding_node | 중앙 PC | 🟡 partial (B배정 done / 몰이 goal todo) |
+| rat_herding_node | 중앙 PC | 🟢 done (B배정·몰이 goal relay 모두 동작, 정정 08-09) |
 | webcam_node | 중앙 PC | 🔴 todo (배관만) |
 
 > PC 구성: **내 PC = central + robot4 제어**, **다른 PC = robot6 제어만**.
