@@ -73,18 +73,18 @@ class EscapeModel:
         (herding_controller_dual)는 역할이 매 주기 바뀔 수 있어 호출부
         (herding_core.py)가 그 주기의 실제 blocker_id-1을 넘겨야 한다.
         """
-        wall_dir = self._nearest_wall_direction(target_pos)
-        base = self._base_weights(wall_dir)
-        base += self._robot_repulsion(target_pos, robot_positions, blocker_index)
-        base += self._momentum(target_vel)
-        base = np.clip(base, a_min=0.0, a_max=None)
-        base = self._mask_obstacles(target_pos, base)
+        wall_dir = self._nearest_wall_direction(target_pos)  # 근처 벽 방향(없으면 None)
+        base = self._base_weights(wall_dir)                  # 요인1: 벽과의 관계(향촉성)
+        base += self._robot_repulsion(target_pos, robot_positions, blocker_index)  # 요인2: 로봇 반발
+        base += self._momentum(target_vel)                   # 요인3: 진행 관성
+        base = np.clip(base, a_min=0.0, a_max=None)           # 합산 후 음수 방어적 제거
+        base = self._mask_obstacles(target_pos, base)         # 벽 쪽 방향은 확률 0으로
 
         total = base.sum()
-        if total <= 1e-9:
+        if total <= 1e-9:  # 8방향 전부 0 (완전히 막혔거나 모든 요인이 0) — 퇴화 방지
             valid = self._valid_mask(target_pos)
             if valid.any():
-                base = valid.astype(float)
+                base = valid.astype(float)  # 갈 수 있는 방향들에 균등 확률
             else:
                 # 완전히 갇힌 상태: 유효한 방향이 하나도 없다. 무효한 all-zero
                 # 퇴화 벡터를 만드는 대신 균등 분포로 대체하여 확률의 합이
@@ -92,24 +92,27 @@ class EscapeModel:
                 # 나쁘다"는 것을 나타낸다.
                 base = np.full(8, 1.0 / 8.0)
             total = base.sum()
-        probabilities = base / total
+        probabilities = base / total  # 정규화 — 합이 1인 확률분포로
 
         routes = self._top_k_routes(target_pos, probabilities)
         return EscapeEstimate(directions=_DIRECTIONS.copy(), probabilities=probabilities, top_k_routes=routes)
 
     def _nearest_wall_direction(self, target_pos: np.ndarray) -> np.ndarray | None:
-        row, col = self.grid_map.world_to_cell(*target_pos)
+        """target_pos 주변 radius칸 안에서 가장 가까운 장애물 셀을 향하는 단위벡터. 없으면 None."""
+        row, col = self.grid_map.world_to_cell(*target_pos)   # 타겟이 있는 셀
         radius = self.config.wall_detect_radius_cells
+        # 타겟 주변 (2*radius+1)x(2*radius+1) 정사각 윈도우 — 그리드 경계를 넘지 않게 클램프
         row_lo, row_hi = max(0, row - radius), min(self.grid_map.config.height_cells, row + radius + 1)
         col_lo, col_hi = max(0, col - radius), min(self.grid_map.config.width_cells, col + radius + 1)
-        window = self.grid_map.obstacle_mask[row_lo:row_hi, col_lo:col_hi]
+        window = self.grid_map.obstacle_mask[row_lo:row_hi, col_lo:col_hi]  # 그 윈도우만 잘라냄
         if not window.any():
-            return None
-        rows, cols = np.nonzero(window)
+            return None  # 윈도우 안에 장애물이 하나도 없음 — 근처에 벽 없음
+        rows, cols = np.nonzero(window)  # 윈도우 안 장애물 셀들의 (row, col) — 윈도우 로컬 좌표
+        # 윈도우 로컬 좌표를 "타겟 기준 상대 (x, y)" 오프셋으로 변환
         offsets = np.stack([cols - (col - col_lo), rows - (row - row_lo)], axis=1).astype(float)
-        nearest = offsets[np.argmin(np.linalg.norm(offsets, axis=1))]
+        nearest = offsets[np.argmin(np.linalg.norm(offsets, axis=1))]  # 그중 타겟과 가장 가까운 오프셋
         norm = np.linalg.norm(nearest)
-        return nearest / norm if norm > 1e-9 else None
+        return nearest / norm if norm > 1e-9 else None  # 단위벡터로. norm=0(타겟이 벽 셀 안)이면 방향 미정
 
     def _base_weights(self, wall_dir: np.ndarray | None) -> np.ndarray:
         """향촉성(thigmotaxis) 기본 확률: 벽과의 관계로 8방향에 확률을 나눠 준다.
@@ -171,15 +174,15 @@ class EscapeModel:
         """
         contribution = np.zeros(8)
         for i, robot_pos in enumerate(robot_positions):
-            away = target_pos - robot_pos
+            away = target_pos - robot_pos     # 로봇 -> 타겟 방향(정규화 전) = 타겟이 멀어질 방향
             dist = np.linalg.norm(away)
             if dist < 1e-6:
-                continue
+                continue  # 로봇과 타겟이 같은 지점 — 방향 미정, 이 로봇은 기여 없음
             if i == blocker_index and dist > self.config.robot_repulsion_activation_distance_m:
-                continue
-            away = away / dist
-            weight = self.config.robot_repulsion_weight / dist
-            contribution += np.clip(_DIRECTIONS @ away, 0.0, None) * weight
+                continue  # Blocker인데 활성화 거리보다 멂 — 게이팅으로 기여 제외
+            away = away / dist               # 단위벡터화
+            weight = self.config.robot_repulsion_weight / dist  # 가까울수록 큰 가중치(거리 반비례)
+            contribution += np.clip(_DIRECTIONS @ away, 0.0, None) * weight  # 멀어지는 방향들에 가중치 누적
         return contribution
 
     def _momentum(self, target_vel: np.ndarray) -> np.ndarray:
@@ -200,17 +203,19 @@ class EscapeModel:
         return np.clip(_DIRECTIONS @ heading, 0.0, None) * self.config.momentum_weight
 
     def _valid_mask(self, target_pos: np.ndarray) -> np.ndarray:
+        """8방향 각각 "한 칸 이동하면 장애물이 아니고 그리드 안"이면 True인 불리언 배열."""
         row, col = self.grid_map.world_to_cell(*target_pos)
         valid = np.zeros(8, dtype=bool)
         for i, (dx, dy) in enumerate(_DIRECTIONS):
-            next_row, next_col = row + int(round(dy)), col + int(round(dx))
+            next_row, next_col = row + int(round(dy)), col + int(round(dx))  # 그 방향으로 한 칸 이동한 셀
             if self.grid_map.in_bounds(next_row, next_col) and not self.grid_map.is_obstacle(next_row, next_col):
                 valid[i] = True
         return valid
 
     def _mask_obstacles(self, target_pos: np.ndarray, weights: np.ndarray) -> np.ndarray:
+        """장애물 방향의 weights를 0으로 덮어쓴다."""
         valid = self._valid_mask(target_pos)
-        return np.where(valid, weights, 0.0)
+        return np.where(valid, weights, 0.0)  # 유효하면 원래 weight, 아니면 0
 
     def _top_k_routes(self, target_pos: np.ndarray, probabilities: np.ndarray) -> list[np.ndarray]:
         valid = self._valid_mask(target_pos)
@@ -225,8 +230,8 @@ class EscapeModel:
             # 전체의 순위를 매긴다 — 이 경우 경로가 장애물 셀을 가리켜도
             # 무방하며, 이는 "좋은 선택지가 없음"을 나타낸다.
             candidate_indices = np.arange(len(probabilities))
-        order = candidate_indices[np.argsort(probabilities[candidate_indices])[::-1]]
-        k = min(self.config.escape_route_top_k, len(order))
+        order = candidate_indices[np.argsort(probabilities[candidate_indices])[::-1]]  # 후보를 확률 내림차순 정렬
+        k = min(self.config.escape_route_top_k, len(order))  # 요청한 K개와 실제 후보 수 중 작은 쪽
         top_indices = order[:k]
-        lookahead_m = self.grid_map.config.resolution_m * 3
-        return [target_pos + _DIRECTIONS[i] * lookahead_m for i in top_indices]
+        lookahead_m = self.grid_map.config.resolution_m * 3  # 시각화용 짧은 미리보기 길이(3셀)
+        return [target_pos + _DIRECTIONS[i] * lookahead_m for i in top_indices]  # 각 방향으로 그만큼 나아간 점

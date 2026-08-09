@@ -154,16 +154,16 @@ def _rasterize_escape_probabilities(
     height, width = grid_map.config.height_cells, grid_map.config.width_cells
     grid = np.zeros((height, width))
     try:
-        row0, col0 = grid_map.world_to_cell(float(target_position[0]), float(target_position[1]))
+        row0, col0 = grid_map.world_to_cell(float(target_position[0]), float(target_position[1]))  # 타겟이 있는 셀
     except (ValueError, TypeError):
-        return grid
-    for (dx, dy), probability in zip(directions, probabilities):
-        for step in range(1, cells_per_ray + 1):
+        return grid  # 타겟이 그리드 밖 — all-zero 그리드로 폴백
+    for (dx, dy), probability in zip(directions, probabilities):  # 8방향 각각에 대해
+        for step in range(1, cells_per_ray + 1):        # 그 방향으로 cells_per_ray칸까지 광선을 그림
             row = row0 + int(round(dy * step))
             col = col0 + int(round(dx * step))
             if not grid_map.in_bounds(row, col):
-                break
-            grid[row, col] = max(grid[row, col], float(probability))
+                break  # 그리드 경계에서 광선 조기 중단
+            grid[row, col] = max(grid[row, col], float(probability))  # 겹치는 광선은 합이 아니라 최댓값
     return grid
 
 
@@ -185,10 +185,10 @@ class HerdingNode(Node):
         self.config = _load_config(self)
         self.core = HerdingCore(self.config)
 
-        self._target_pos = None
-        self._robot1_pos = np.zeros(2)
+        self._target_pos = None                          # 아직 관측 없음
+        self._robot1_pos = np.zeros(2)                    # pose 수신 전 자리표시자(placeholder)
         self._robot2_pos = np.zeros(2)
-        self._robot1_heading = np.array([1.0, 0.0])
+        self._robot1_heading = np.array([1.0, 0.0])        # 기본 헤딩: +x 방향
         self._robot2_heading = np.array([1.0, 0.0])
         # 각 로봇에 대한 실제 pose가 도착하기 전까지 robotN_pos는 의미 없는
         # (0, 0) 자리 표시자다. 목표점 발행은 둘 다 True로 바뀔 때까지
@@ -196,7 +196,7 @@ class HerdingNode(Node):
         # 않은 상태에서 그리드 원점 쪽으로 명령받는 일은 없다.
         self._robot1_pose_received = False
         self._robot2_pose_received = False
-        self._occupancy = None
+        self._occupancy = None  # /map을 아직 못 받음 — 그동안 HerdingCore는 장애물 없다고 취급
         # ~/target_pose가 도착한 시점과 다음 제어 주기가 그것을 소비하는
         # 시점 사이에서만 True이다. False인 상태로 주기를 맞이하면, 마지막
         # (오래된) 위치를 다시 넣는 대신 HerdingCore에게 "이번 주기에는
@@ -208,9 +208,9 @@ class HerdingNode(Node):
         # 1/control_rate_hz 카운터가 아니라 실제로 경과한 노드 클록 시간이므로,
         # 타이머 지터나 콜백 누락이 있어도 capture_hold_sec /
         # occlusion_timeout_sec가 실제 시간에 충실하게 유지된다.
-        self._nominal_dt = 1.0 / self.config.control_rate_hz
-        self._last_cycle_sec: float | None = None
-        self._elapsed_sec = 0.0
+        self._nominal_dt = 1.0 / self.config.control_rate_hz  # 명목상 제어 주기(초) — dt 계산 안 될 때 폴백
+        self._last_cycle_sec: float | None = None              # 직전 주기의 벽시계 시각
+        self._elapsed_sec = 0.0                                 # HerdingCore에 넘길 누적 경과시간
 
         map_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(PoseStamped, "~/target_pose", self._on_target_pose, 10)
@@ -300,8 +300,8 @@ class HerdingNode(Node):
                 # KF와 모든 timeout이 정체되므로, 이번 주기는 명목 주기로
                 # 대체한다.
                 dt = self._nominal_dt
-        self._last_cycle_sec = now_sec
-        self._elapsed_sec += dt
+        self._last_cycle_sec = now_sec   # 다음 주기가 쓸 "직전 시각" 갱신
+        self._elapsed_sec += dt          # HerdingCore에 넘길 누적 시간(sim_time_sec)
 
         # 이전 주기 이후에 도착한 pose만 관측으로 취급한다; 그렇지 않으면
         # estimator가 오래된 위치를 계속 재융합하여 결코 LOST로 타임아웃되지

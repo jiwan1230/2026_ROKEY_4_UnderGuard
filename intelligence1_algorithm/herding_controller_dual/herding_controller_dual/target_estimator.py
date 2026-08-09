@@ -27,10 +27,10 @@ class TargetEstimator:
 
     def __init__(self, config: EstimatorConfig) -> None:
         self.config = config
-        self._x = np.zeros(4)
-        self._P = np.eye(4) * 1e3
-        self._initialized = False
-        self._time_since_obs = 0.0
+        self._x = np.zeros(4)          # 상태벡터 [px, py, vx, vy], 첫 관측 전엔 원점+정지로 가정
+        self._P = np.eye(4) * 1e3      # 공분산: 초깃값은 "전혀 모른다"는 뜻으로 크게 잡음
+        self._initialized = False      # 첫 update() 호출 여부 (원점 초깃값을 실제 위치로 덮어쓸지 판단)
+        self._time_since_obs = 0.0     # 마지막 관측 이후 경과 시간(occlusion 판정용)
 
     def predict(self, dt: float) -> None:
         """새로운 측정값 없이 필터 상태를 dt초만큼 전진시킨다.
@@ -53,11 +53,11 @@ class TargetEstimator:
         그래야 재관측 시 위치가 아니라 "얼마나 오래 못 봤는지"만으로
         occlusion_timeout_sec 판정이 가능해진다.
         """
-        F = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]])
-        Q = np.eye(4) * self.config.process_noise * dt
-        self._x = F @ self._x
-        self._P = F @ self._P @ F.T + Q
-        self._time_since_obs += dt
+        F = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]])  # 상태전이행렬 (위 docstring 수식)
+        Q = np.eye(4) * self.config.process_noise * dt  # 과정 잡음 공분산 — dt에 비례해 누적
+        self._x = F @ self._x                # 상태 예측: x_pred = F @ x
+        self._P = F @ self._P @ F.T + Q       # 공분산 예측: P_pred = F P F^T + Q
+        self._time_since_obs += dt            # 못 본 시간 누적
 
     def update(self, measurement: np.ndarray) -> None:
         """새로운 (x, y) 위치 관측값을 필터에 융합한다.
@@ -77,23 +77,23 @@ class TargetEstimator:
         있어 첫 innovation이 비현실적으로 크게 튀는 것을 방지한다.
         """
         if not self._initialized:
-            self._x[:2] = measurement
+            self._x[:2] = measurement       # 원점(0,0) 초깃값 대신 첫 실측 위치로 바로 시작
             self._initialized = True
-        H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]])
-        R = np.eye(2) * self.config.measurement_noise
-        innovation = measurement - H @ self._x
-        S = H @ self._P @ H.T + R
-        K = self._P @ H.T @ np.linalg.inv(S)
-        self._x = self._x + K @ innovation
-        self._P = (np.eye(4) - K @ H) @ self._P
-        self._time_since_obs = 0.0
+        H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]])   # 관측행렬 — 위치(px,py)만 관측, 속도는 못 봄
+        R = np.eye(2) * self.config.measurement_noise  # 관측 잡음 공분산 (센서가 얼마나 못 믿을만한가)
+        innovation = measurement - H @ self._x    # 잔차 = 실제 관측 - 예측했던 관측(H@x)
+        S = H @ self._P @ H.T + R                 # 잔차 공분산 (예측 불확실성 + 관측 불확실성)
+        K = self._P @ H.T @ np.linalg.inv(S)      # 칼만 이득 — 잔차를 상태에 얼마나 반영할지
+        self._x = self._x + K @ innovation        # 상태 갱신: 예측 + 이득*잔차
+        self._P = (np.eye(4) - K @ H) @ self._P   # 공분산 갱신 — 관측을 반영해 불확실성 감소
+        self._time_since_obs = 0.0                # 방금 관측했으므로 경과시간 리셋
 
     def get_state(self) -> TargetState:
         """현재 위치/속도 추정치와 LOST 상태를 반환한다."""
-        is_lost = self._time_since_obs > self.config.occlusion_timeout_sec
+        is_lost = self._time_since_obs > self.config.occlusion_timeout_sec  # timeout 넘게 못 봤으면 LOST
         return TargetState(
-            position=self._x[:2].copy(),
-            velocity=self._x[2:].copy(),
+            position=self._x[:2].copy(),   # 상태벡터 앞 2개 = 위치. .copy()로 호출부가 내부 상태를 못 건드리게
+            velocity=self._x[2:].copy(),   # 뒤 2개 = 속도
             covariance=self._P.copy(),
             is_lost=is_lost,
             time_since_observation=self._time_since_obs,

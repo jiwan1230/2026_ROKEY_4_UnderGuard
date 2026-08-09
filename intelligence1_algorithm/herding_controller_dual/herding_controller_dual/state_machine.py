@@ -18,15 +18,15 @@ class FSMState(Enum):
 @dataclass
 class FSMInputs:
     """FSM이 이번 주기의 다음 전이를 결정하는 데 필요한 신호들."""
-    target_observed: bool
-    kf_converged: bool
-    distance_to_goal_m: float
-    capture_radius_m: float
-    escape_prob_concentrated: bool
-    occlusion_elapsed_sec: float
-    occlusion_timeout_sec: float
-    capture_hold_required_sec: float
-    dt: float
+    target_observed: bool          # 이번 주기에 타겟이 실제로 관측됐는가
+    kf_converged: bool             # 칼만 필터 속도 추정이 신뢰할 만한가 (target_estimator.py)
+    distance_to_goal_m: float      # 타겟 추정 위치 <-> 포획존(goal) 거리
+    capture_radius_m: float        # 이 반경 안이면 "포획존 근처"로 본다
+    escape_prob_concentrated: bool  # 도주 확률 분포가 한 방향에 쏠려 있는가 (escape_model.py)
+    occlusion_elapsed_sec: float   # 마지막 관측 이후 경과 시간
+    occlusion_timeout_sec: float   # 이 시간 넘게 못 보면 LOST로 전이
+    capture_hold_required_sec: float  # 포획 반경 안에 이만큼 연속 체류해야 CAPTURED
+    dt: float                      # 이번 제어 주기 길이(초) — capture 타이머 누적에 사용
 
 
 class HerdingStateMachine:
@@ -68,7 +68,7 @@ class HerdingStateMachine:
             # "도주 확률이 한쪽 방향에 집중되어 있다"는 조건도 함께 필요하다.
             # 위치만 보고 CORNER로 넘어가면, 반경 안에 있어도 여전히 사방으로
             # 도망칠 여지가 있는 타겟을 성급하게 "구석에 몰렸다"고 오판하게 된다.
-            in_capture_zone = inputs.distance_to_goal_m <= inputs.capture_radius_m
+            in_capture_zone = inputs.distance_to_goal_m <= inputs.capture_radius_m  # 포획 반경 안에 들어왔는가
             if in_capture_zone and inputs.escape_prob_concentrated:
                 state = FSMState.CORNER
         elif state == FSMState.CORNER:
@@ -76,7 +76,7 @@ class HerdingStateMachine:
             # 퍼지면) 즉시 HERD로 되돌아간다 -- CORNER 전용 별도 하강 조건이
             # 없는 이유는, "구석에 몰림"이 HERD 판정 조건의 부정으로 정확히
             # 정의되기 때문이다.
-            in_capture_zone = inputs.distance_to_goal_m <= inputs.capture_radius_m
+            in_capture_zone = inputs.distance_to_goal_m <= inputs.capture_radius_m  # 포획 반경 안에 들어왔는가
             if not (in_capture_zone and inputs.escape_prob_concentrated):
                 state = FSMState.HERD
         elif state == FSMState.LOST:

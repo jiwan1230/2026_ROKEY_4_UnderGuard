@@ -33,35 +33,35 @@ logger = logging.getLogger(__name__)
 @dataclass
 class HerdingConfig:
     """config/herding_params.yaml의 ros__parameters 블록을 평평하게 옮긴 것."""
-    frame_id: str
-    control_rate_hz: float
-    capture_zone_x_m: float
-    capture_zone_y_m: float
-    capture_radius_m: float
-    capture_hold_sec: float
-    grid_resolution_m: float
-    grid_width_cells: int
-    grid_height_cells: int
-    kf_process_noise: float
-    kf_measurement_noise: float
-    occlusion_timeout_sec: float
-    markov_wall_follow_p: float
-    markov_wall_hug_p: float
-    markov_center_p: float
-    momentum_weight: float
-    robot_repulsion_weight: float
-    wall_detect_radius_cells: int
-    escape_route_top_k: int
-    escape_concentration_threshold: float
-    drive_distance_m: float
-    flee_reaction_distance_m: float
-    panic_distance_m: float
-    alignment_threshold: float
-    drive_distance_ease_factor: float
-    block_lookahead_m: float
-    min_robot_separation_m: float
-    diffusion_rate: float
-    decay_factor: float
+    frame_id: str                      # 좌표계 이름(보통 "map")
+    control_rate_hz: float             # 제어 주기 — herding_node.py의 타이머 주기
+    capture_zone_x_m: float            # 포획존(트랩) x좌표
+    capture_zone_y_m: float            # 포획존(트랩) y좌표
+    capture_radius_m: float            # 이 반경 안이면 "포획존 근처"
+    capture_hold_sec: float            # 포획 판정에 필요한 연속 체류 시간
+    grid_resolution_m: float           # 격자 한 칸의 크기(m) — grid_map.py
+    grid_width_cells: int              # 격자 가로 칸 수
+    grid_height_cells: int             # 격자 세로 칸 수
+    kf_process_noise: float            # 칼만필터 과정 잡음 — target_estimator.py
+    kf_measurement_noise: float        # 칼만필터 관측 잡음
+    occlusion_timeout_sec: float       # 이 시간 넘게 못 보면 LOST
+    markov_wall_follow_p: float        # 도주모델: 벽 따라가기 기본확률 — escape_model.py
+    markov_wall_hug_p: float           # 도주모델: 벽에 붙기 기본확률
+    markov_center_p: float             # 도주모델: 중앙으로 갈 기본확률
+    momentum_weight: float             # 도주모델: 진행방향 관성 가중치
+    robot_repulsion_weight: float      # 도주모델: 로봇 반발 가중치
+    wall_detect_radius_cells: int      # 벽 탐지 윈도우 반경(칸)
+    escape_route_top_k: int            # 시각화용 상위 K개 도주경로
+    escape_concentration_threshold: float  # 이 이상이면 "도주확률이 한쪽에 쏠림"(FSM CORNER 조건)
+    drive_distance_m: float            # Driver가 타겟 뒤에서 유지하는 거리 — herding_planner.py
+    flee_reaction_distance_m: float    # 타겟이 로봇에 반응해 도망가기 시작하는 거리
+    panic_distance_m: float            # 이보다 가까우면 Driver가 패닉-후퇴
+    alignment_threshold: float         # 이 이상 정렬되면 드라이브 거리를 완화(ease)
+    drive_distance_ease_factor: float  # 완화 시 drive_distance를 몇 배로 늘릴지
+    block_lookahead_m: float           # Blocker 목표점 lookahead 거리
+    min_robot_separation_m: float      # 로봇 두 대의 최소 이격 거리
+    diffusion_rate: float              # occlusion belief 확산율 — occlusion_grid.py
+    decay_factor: float                # occlusion belief 감쇠율
     grid_origin_x_m: float = 0.0
     grid_origin_y_m: float = 0.0
     # Blocking Point 이력현상(hysteresis) 유지 시간 -- _stabilize_blocking_point()
@@ -170,14 +170,14 @@ class HerdingConfig:
 @dataclass
 class Observation:
     """한 제어 주기 분량의 센서 입력을, 순수 Python/numpy 타입으로 표현한 것."""
-    target_measurement: np.ndarray | None
+    target_measurement: np.ndarray | None  # 이번 주기 타겟 관측 (x,y), 못 봤으면 None
     robot1_pos: np.ndarray
     robot2_pos: np.ndarray
     robot1_heading: np.ndarray
     robot2_heading: np.ndarray
-    occupancy: np.ndarray | None
-    sim_time_sec: float
-    dt: float
+    occupancy: np.ndarray | None   # OccupancyGrid 배열, 아직 /map 없으면 None
+    sim_time_sec: float             # 누적 경과 시간 (이력현상/타이머 판정 기준)
+    dt: float                       # 이번 주기 길이(초)
 
 
 @dataclass
@@ -229,7 +229,7 @@ class HerdingCore:
 
     def __init__(self, config: HerdingConfig) -> None:
         self.config = config
-        self.goal_pos = np.array([config.capture_zone_x_m, config.capture_zone_y_m], dtype=float)
+        self.goal_pos = np.array([config.capture_zone_x_m, config.capture_zone_y_m], dtype=float)  # 포획존 좌표
         self.grid_map = GridMap(GridConfig(
             resolution_m=config.grid_resolution_m, width_cells=config.grid_width_cells,
             height_cells=config.grid_height_cells, origin_x_m=config.grid_origin_x_m,
@@ -478,9 +478,11 @@ class HerdingCore:
         기준 위치에서 평가하면 두 로봇 모두에게 동일한 기하학적 driving
         point를 얻을 수 있다.
         """
-        away = target_pos - direction_goal
+        away = target_pos - direction_goal   # goal -> target 방향(정규화 전), "Driver가 서는 쪽" 방향
         norm = float(np.linalg.norm(away))
-        away = away / norm if norm > 1e-6 else np.array([1.0, 0.0])
+        away = away / norm if norm > 1e-6 else np.array([1.0, 0.0])  # 단위벡터화
+        # panic_distance_m + drive_distance_m + 1.0 만큼 떨어뜨려, 확실히 panic 반경 밖의
+        # 기준 위치를 만든다(그래야 compute_driving_point가 retreat 대신 정상 분기를 탄다).
         reference = target_pos + away * (self.config.panic_distance_m + self.config.drive_distance_m + 1.0)
         return compute_driving_point(
             target_pos, target_vel, direction_goal, reference, self.planner_config
@@ -508,14 +510,14 @@ class HerdingCore:
 
         target_observed = observation.target_measurement is not None
         if target_observed:
-            self.estimator.predict(observation.dt)
-            self.estimator.update(observation.target_measurement)
+            self.estimator.predict(observation.dt)      # 먼저 dt만큼 예측
+            self.estimator.update(observation.target_measurement)  # 그 다음 실제 관측으로 보정
             self._first_observation_seen = True
         elif self._first_observation_seen:
-            self.estimator.predict(observation.dt)
+            self.estimator.predict(observation.dt)  # 관측 없음 — 예측만(첫 관측 이후에만 의미 있음)
 
         target_state = self.estimator.get_state()
-        kf_converged = self._first_observation_seen and not target_state.is_lost
+        kf_converged = self._first_observation_seen and not target_state.is_lost  # 관측 이력 있고 최근에도 봤음
 
         # escape_model.compute()가 FSM 상태 판단(escape_concentrated)보다
         # 먼저 실행돼야 하므로, 이 시점엔 이번 주기의 역할이 아직 새로
@@ -538,11 +540,11 @@ class HerdingCore:
             )
 
         distance_to_goal = float(np.linalg.norm(target_state.position - self.goal_pos)) \
-            if self._first_observation_seen else float("inf")
+            if self._first_observation_seen else float("inf")  # 아직 한 번도 못 봤으면 "무한히 멀다"로 취급
         escape_concentrated = bool(
             escape_estimate is not None
             and escape_estimate.probabilities.max() >= self.config.escape_concentration_threshold
-        )
+        )  # 8방향 중 최댓값이 문턱 이상 = 도주로가 한쪽으로 쏠려 있음
 
         fsm_state = self.fsm.step(FSMInputs(
             target_observed=target_observed, kf_converged=kf_converged,
@@ -636,6 +638,9 @@ class HerdingCore:
                         half_angle_rad=np.radians(self.config.endgame_half_angle_deg),
                     )
                     if pincer is not None:
+                        # 두 로봇을 point_a/point_b에 그대로 배정(straight)할지 서로 바꿔(crossed)
+                        # 배정할지, 이동거리 합이 더 작은 쪽을 골라 로봇들이 서로 경로를
+                        # 가로지르지 않게 한다 (아래 guard/shaping/pressure 분기도 동일 패턴).
                         straight = (float(np.linalg.norm(observation.robot1_pos - pincer.point_a))
                                     + float(np.linalg.norm(observation.robot2_pos - pincer.point_b)))
                         crossed = (float(np.linalg.norm(observation.robot1_pos - pincer.point_b))
@@ -711,6 +716,7 @@ class HerdingCore:
                         self.config.robot_radius_m, self.config.robot_wall_clearance_m,
                         stand_radius_m=self.config.drive_distance_m,
                     )
+                    # (위 pincer 분기와 동일 패턴) 이동거리 합이 더 작은 배정을 선택
                     straight = (float(np.linalg.norm(observation.robot1_pos - shaping.point_a))
                                 + float(np.linalg.norm(observation.robot2_pos - shaping.point_b)))
                     crossed = (float(np.linalg.norm(observation.robot1_pos - shaping.point_b))
@@ -777,11 +783,11 @@ class HerdingCore:
                         deadlock_release=False, pressure_coverage=pressure_coverage,
                     )
 
-                driving = compute_driving_point(
+                driving = compute_driving_point(   # Driver(현재 driver_id 로봇)의 목표점
                     target_state.position, target_state.velocity, direction_goal,
                     driver_pos, self.planner_config,
                 )
-                panic = driving.is_panic
+                panic = driving.is_panic  # Driver가 너무 가까워져 후퇴 중인지
 
                 if escape_estimate is not None:
                     raw_blocking_point = compute_blocking_point(
