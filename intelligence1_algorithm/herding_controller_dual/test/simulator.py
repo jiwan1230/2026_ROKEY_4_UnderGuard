@@ -20,7 +20,16 @@ class SimulatorConfig:
     robot_max_speed_mps: float = 0.3
     target_max_speed_mps: float = 0.4
     dt: float = 0.1
+    # 몰이 제한 시간. 2026-08-09부터 이 예산은 **표적을 발견한 순간부터**
+    # 센다 (run_trial_real_map 한정). 그 전까지는 시행 시작부터 셌는데,
+    # 로봇 파트의 실제 순찰 경로(36점)를 쓰기 시작하면서 탐색에만 중앙값
+    # 46.8초가 걸려(옛 임의 5점 경로에서는 9.4초) 예산의 40%가 순찰에
+    # 잡아먹혔다. 그러면 몰이 알고리즘 성능이 아니라 순찰 경로 길이를
+    # 재게 된다 -- 실패 시행이 전부 "트랩 2~4m 밖에서 시간초과"였다.
     max_sim_time_sec: float = 120.0
+    # 표적을 발견할 때까지 허용하는 시간. 순찰은 알고리즘의 평가 대상이
+    # 아니므로 넉넉히 준다 -- 이 시간 안에 못 찾으면 그 시행은 실패로 남는다.
+    max_search_time_sec: float = 300.0
     robot_gain: float = 1.0
     # 로봇 1(Driver/로봇 A)이 "순찰하다가 표적을 방금 발견했다"고 가정할 때
     # 표적으로부터 떨어져 있는 거리 범위(m). 실제 운용에서 A는 발견한 순간의
@@ -444,9 +453,16 @@ def run_trial_real_map(
     goal_xy = np.array([herding_config.capture_zone_x_m, herding_config.capture_zone_y_m])
     trapped = False
 
-    steps = max(int(round(sim_config.max_sim_time_sec / sim_config.dt)), 0)
+    # 순찰(탐색) 구간과 몰이 구간에 각각 예산을 준다 -- 자세한 이유는
+    # SimulatorConfig.max_sim_time_sec 주석 참고. 몰이 예산은 발견 시점부터.
+    steps = max(int(round((sim_config.max_search_time_sec + sim_config.max_sim_time_sec)
+                          / sim_config.dt)), 0)
     for index in range(steps):
         sim_time_sec = index * sim_config.dt
+        if not discovered and sim_time_sec > sim_config.max_search_time_sec:
+            break                      # 순찰로 끝내 못 찾음 -- 실패로 남긴다
+        if discovered and sim_time_sec - discovery_time_sec > sim_config.max_sim_time_sec:
+            break                      # 몰이 예산 소진
         if not trapped and float(np.linalg.norm(target_state[:2] - goal_xy)) <= herding_config.capture_radius_m:
             trapped = True
             target_state = np.array([target_state[0], target_state[1], 0.0, 0.0])
@@ -478,7 +494,9 @@ def run_trial_real_map(
         if output.escape_top3:
             escape_snapshot = np.array(output.escape_top3)
 
-        elapsed_sec = sim_time_sec + sim_config.dt
+        # 소요 시간은 "발견 이후"로 잰다 -- 순찰 시간은 알고리즘 성능이 아니다.
+        elapsed_sec = (sim_time_sec + sim_config.dt
+                       - (discovery_time_sec if discovery_time_sec is not None else 0.0))
         if output.fsm_state == FSMState.CAPTURED:
             success = True
             min_dist = min(min_dist, tick_min)
