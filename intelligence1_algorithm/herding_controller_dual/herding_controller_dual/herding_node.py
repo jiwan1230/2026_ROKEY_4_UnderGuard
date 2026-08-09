@@ -80,6 +80,13 @@ _PARAM_DEFAULTS = {
     "endgame_trigger_radius_m": 0.8,
     "endgame_half_angle_deg": 60.0,
     "endgame_stall_sec": 3.0,
+    # --- 로봇 물리 치수 (협공 목표점의 벽 여유 검사에 사용) ---
+    # 2026-08-09: 코드 상수에서 이전. 목표점이 설 수 있는 자리인지 볼 때
+    # robot_radius_m + robot_wall_clearance_m를 요구 여유로 쓴다. 기체나
+    # 벽 이격 기준이 바뀌면 재빌드 없이 여기서 바꾼다. Nav2의 inflation
+    # radius와 어긋나면 우리가 유효하다고 판단한 목표점을 Nav2가 거부한다.
+    "robot_radius_m": 0.171,
+    "robot_wall_clearance_m": 0.03,
     # --- Occlusion 그리드 ---
     "diffusion_rate": 0.2,
     "decay_factor": 0.9,
