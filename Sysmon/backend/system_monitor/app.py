@@ -172,20 +172,23 @@ def create_app(settings: Settings | None = None) -> Flask:
             max_age=60,
         )
 
+    # 핵심 - 로봇별 카메라 이미지를 가져오는 API
+    # URL에서 받은 robot_id를 매개변수로 받음
     @app.get("/api/camera/<robot_id>/frame")
     def camera_frame(robot_id: str):
-        """로봇의 최신 카메라 프레임을 재인코딩 없이 그대로 반환한다.
 
-        아직 프레임을 한 번도 못 받은 로봇(Mock 모드 포함)은 404를 반환한다
-        — 실제 카메라 연동 전까지는 이 라우트 자체가 "준비만 된" 상태다.
-        """
-
+        # 중요 - 해당 로봇의 가장 최신 카메라 프레임을 가져옴
         frame = camera_frame_store.get(robot_id)
         if frame is None:
+            # 카메라 프레임이 아직 준비되지 않았다면, 
+            # no_frame_available이라는 오류 정보를 JSON 형식으로 만들어 HTTP 404 상태 코드와 함께 클라이언트에 반환
             return jsonify({"error": "no_frame_available"}), 404
         return send_file(
             BytesIO(frame.content),
             mimetype=f"image/{frame.format}",
+            # 중요 - 지도 → 거의 안 바뀜, 카메라 → 계속 최신 프레임으로 바뀜
+            # 카메라 이미지는 계속 바뀌는 실시간 데이터이기 때문에, 
+            # 캐시하지 않고 항상 최신 프레임을 받아오도록 max_age=0으로 설정
             max_age=0,
         )
 
@@ -206,15 +209,19 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     return app
 
+# Create_app() End
+#==========================================================================================================
 
 def start_background_service(app: Flask) -> None:
     """현재 모드의 수집기를 프로세스에서 한 번만 시작한다."""
 
+    # 중요 - 서비스가 이미 시작됐는지 확인
     if app.extensions.get("background_service_started"):
         return
     service = app.extensions["runtime_service"]
     service.start()
     app.extensions["background_service_started"] = True
+    # 중요 - 프로그램이 종료될 때 서비스를 안전하게 종료하도록 예약
     atexit.register(service.stop)
 
 
