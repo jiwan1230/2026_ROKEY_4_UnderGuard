@@ -37,6 +37,8 @@ class OpeningTestNode(Node):
         self.show = self.declare_parameter('show', True).value
         rgb_topic = self.declare_parameter('rgb_topic', RGB_TOPIC).value
         depth_topic = self.declare_parameter('depth_topic', DEPTH_TOPIC).value
+        info_topic = self.declare_parameter('camera_info_topic',
+                                            DEPTH_INFO_TOPIC).value
 
         self.bridge = CvBridge()
         self.fx = None      # stereo camera_info의 fx — side 마진 픽셀 변환용
@@ -46,7 +48,10 @@ class OpeningTestNode(Node):
             cv2.namedWindow(WINDOW)
             cv2.setMouseCallback(WINDOW, self.on_mouse)
 
-        self.create_subscription(CameraInfo, DEPTH_INFO_TOPIC, self.info_cb, 10)
+        # 센서 QoS로 구독 — 카메라가 best-effort로 발행하면 기본(RELIABLE)은
+        # fx를 영영 못 받아 옆 벽 확장이 항상 0이 된다.
+        self.create_subscription(CameraInfo, info_topic, self.info_cb,
+                                 qos_profile_sensor_data)
         # RGB와 depth를 header.stamp로 짝지어 함께 받는다 (같은 순간 프레임).
         self.rgb_sub = Subscriber(self, CompressedImage, rgb_topic,
                                   qos_profile=qos_profile_sensor_data)

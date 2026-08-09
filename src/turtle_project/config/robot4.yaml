@@ -1,0 +1,11 @@
+# robot4 전용 파라미터 — 로봇마다 다른 것만 담는다.
+# battery_threshold / battery_check_period / waypoints 는 두 대 공통이라
+# 여기 안 넣고 robot_agent.py 코드 기본값을 그대로 쓴다 (필요하면 줄 추가).
+# 실행: ros2 run turtle_project robot_agent --ros-args --params-file <경로>/robot4.yaml
+/**:
+  ros__parameters:
+    namespace: robot4
+    # 도크 '앞' 접근점 (map 절대좌표). undock 자세 실측값에서 뽑음 (room_map2 기준).
+    dock_x: -1.95
+    dock_y: -0.832
+    dock_yaw_deg: 90.0     # 도크를 바라보는 방향(도) — undock 때 +y를 봄
