@@ -109,7 +109,7 @@ class HerdingConfig:
     # 기여를 지표로 증명하는 것이다. 기본값 False로 기존 동작 유지.
     pressure_mode_enabled: bool = False
     # 로봇/표적의 물리 치수 -- 압박 선분 배치에만 쓴다 (TurtleBot 4 실측).
-    robot_radius_m: float = 0.171
+    robot_radius_m: float = 0.175
     robot_wall_clearance_m: float = 0.03
     # 압박 선분에서 두 로봇을 목표 반대편 기준 좌우로 얼마나 벌릴지(도).
     # 크면 진로를 넓게 덮지만 미는 힘(cos 성분)이 줄어드는 트레이드오프.

@@ -28,16 +28,16 @@ _PARAM_DEFAULTS = {
     "frame_id": "map",
     "control_rate_hz": 5.0,
     # --- 캡처 존 --- (2026-08-06: 실제 방의 "top" 트랩 좌표 기본값, config/herding_params.yaml 참고)
-    "capture_zone_x_m": -2.81,
-    "capture_zone_y_m": -5.36,
+    "capture_zone_x_m": -0.23,
+    "capture_zone_y_m": 0.72,
     "capture_radius_m": 0.3,
     "capture_hold_sec": 1.5,  # 2026-08-06: 3.0 -> 1.5, 실제 맵 재검증 결과 (config/herding_params.yaml 주석 참고)
     # --- 그리드 --- (2026-08-06: maps/room_map.yaml 실측값으로 교체)
     "grid_resolution_m": 0.05,
-    "grid_width_cells": 106,
-    "grid_height_cells": 147,
-    "grid_origin_x_m": -3.19,
-    "grid_origin_y_m": -9.03,
+    "grid_width_cells": 109,
+    "grid_height_cells": 149,
+    "grid_origin_x_m": -2.68,
+    "grid_origin_y_m": -6.08,
     # --- 타겟 추정기 (KF) ---
     "kf_process_noise": 0.1,
     "kf_measurement_noise": 0.05,
@@ -85,7 +85,7 @@ _PARAM_DEFAULTS = {
     # robot_radius_m + robot_wall_clearance_m를 요구 여유로 쓴다. 기체나
     # 벽 이격 기준이 바뀌면 재빌드 없이 여기서 바꾼다. Nav2의 inflation
     # radius와 어긋나면 우리가 유효하다고 판단한 목표점을 Nav2가 거부한다.
-    "robot_radius_m": 0.171,
+    "robot_radius_m": 0.175,
     "robot_wall_clearance_m": 0.03,
     # --- Occlusion 그리드 ---
     "diffusion_rate": 0.2,

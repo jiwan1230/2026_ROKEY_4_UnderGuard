@@ -8,8 +8,10 @@ herding_controller:
     # (top/left/bottom, test/real_map_arena.py의 TRAPS) 있다. 아래 값은
     # "top" 후보 좌표를 기본값으로 둔 것 -- 실제 시연에서는
     # docs/operator_protocol.md의 블라인드 선택 절차에 따라 미션별로 바뀐다.
-    capture_zone_x_m: -2.81
-    capture_zone_y_m: -5.36
+    # 2026-08-09 재-SLAM 맵 기준 'top' 덫. 세 후보는
+    # test/real_map_arena.py의 TRAPS 참고 (정식 검증은 3곳 전부 돈다).
+    capture_zone_x_m: -0.23
+    capture_zone_y_m: 0.72
     # 0.5 -> 0.3: 방이 작아 0.5m 반경은 트랩끼리·벽과 겹친다 (트러블슈팅 노트 8번 항목).
     capture_radius_m: 0.3
     # 3.0 -> 1.5 (2026-08-06, 트러블슈팅 노트 10번 항목): 실제 맵에서 표적이
@@ -26,14 +28,15 @@ herding_controller:
     # herding_node.py는 /map 수신 시 이 값들과 다르면 경고를 낸다 -- 반드시
     # 실제로 발행되는 맵과 일치해야 한다.
     grid_resolution_m: 0.05
-    grid_width_cells: 106
-    grid_height_cells: 147
+    # 2026-08-09 재-SLAM: 106x147 -> 109x149, origin도 함께 이동했다.
+    grid_width_cells: 109
+    grid_height_cells: 149
     # World coordinates of the grid's lower-left corner. These MUST match the
     # origin of the map published on /map (Nav2 maps are rarely at (0, 0)), or
     # every world<->cell conversion is offset and the obstacle mask, escape
     # model, and occlusion belief all address the wrong cells.
-    grid_origin_x_m: -3.19
-    grid_origin_y_m: -9.03
+    grid_origin_x_m: -2.68
+    grid_origin_y_m: -6.08
 
     # --- Target Estimator (KF) ---
     kf_process_noise: 0.1

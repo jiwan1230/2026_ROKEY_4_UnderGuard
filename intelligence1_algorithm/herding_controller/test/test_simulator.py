@@ -363,11 +363,21 @@ def test_step_body_rejects_positions_where_the_body_would_overlap_a_wall():
     low = np.array([grid.origin_x_m, grid.origin_y_m])
     high = low + np.array([grid.width_cells, grid.height_cells]) * grid.resolution_m
 
-    # 벽에서 0.20m 떨어진 지점(트랩 자리) -- 자유공간이지만 로봇 몸체
-    # (0.171m + 여유 0.03m = 0.201m)에는 1mm 모자란다.
-    tight = real_map_arena.TRAPS["top"]
-    assert not mask[grid_map.world_to_cell(*tight)], "이 지점은 자유공간이어야 테스트가 성립한다"
+    # 자유공간이지만 로봇 몸체(ROBOT_BODY_CLEARANCE_M)에는 모자라는 지점을
+    # 거리장에서 직접 찾는다. 전에는 TRAPS["top"]을 그런 지점이라고 하드코딩
+    # 했는데, 2026-08-09 재-SLAM으로 그 자리의 벽 여유가 0.20m -> 0.35m가
+    # 되면서 전제가 깨졌다. 맵이 또 바뀌어도 견디도록 조건으로 고른다.
+    body = real_map_arena.ROBOT_BODY_CLEARANCE_M
+    fits_target_not_robot = (~mask) & (clearance >= real_map_arena.TARGET_RADIUS_M) & (clearance < body)
+    rows, cols = np.nonzero(fits_target_not_robot)
+    assert len(rows), "몸체는 못 들어가고 표적만 들어가는 셀이 맵에 있어야 테스트가 성립한다"
+    # 시작점에서 가장 먼 후보를 골라, 한 스텝으로 도달 못 해 통과하는 일이 없게 한다.
     start = real_map_arena.ROBOT_A_SPAWN.copy()
+    xs = grid.origin_x_m + cols * grid.resolution_m
+    ys = grid.origin_y_m + rows * grid.resolution_m
+    k = int(np.argmin(np.hypot(xs - start[0], ys - start[1])))
+    tight = np.array([xs[k], ys[k]])
+    assert not mask[grid_map.world_to_cell(*tight)], "이 지점은 자유공간이어야 테스트가 성립한다"
 
     as_point = real_map_arena._step_body(grid_map, start, tight, low, high)
     np.testing.assert_allclose(as_point, tight, atol=1e-9)  # 점으로 보면 갈 수 있고

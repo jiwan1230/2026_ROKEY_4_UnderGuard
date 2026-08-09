@@ -1,9 +1,14 @@
+# src/turtle_project/resource/room_map.yaml 의 사본 (2026-08-09 재-SLAM 반영).
+# 로봇 파트가 방을 다시 SLAM 하면 이 두 파일(pgm/yaml)도 같이 갱신해야 한다 --
+# 원점이 바뀌면 덫/스폰 좌표가 전부 어긋난다 (real_map_arena.py 상수도 함께).
 image: room_map.pgm
 mode: trinary
 resolution: 0.05
-origin: [-3.19, -9.03, 0]
+origin: [-2.68, -6.08, 0]
 negate: 0
 occupied_thresh: 0.65
 # 회색값 205는 occupancy≈0.196 — free_thresh 0.25면 free로 뚫려 벽 통과 위험.
 # 0.196으로 낮춰 회색을 unknown으로 보존한다 (실기서 OccupancyGrid 덤프로 확인).
+# 로봇 파트 원본은 0.25라, 이 값은 우리 쪽에서만 낮춘 것이다 -- 실기 연동 시
+# 로봇 파트 room_map.yaml도 0.196으로 맞춰야 Nav2가 벽을 통과하지 않는다.
 free_thresh: 0.196

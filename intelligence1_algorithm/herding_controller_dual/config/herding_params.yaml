@@ -8,8 +8,10 @@ herding_controller_dual:
     # (top/left/bottom, test/real_map_arena.py의 TRAPS) 있다. 아래 값은
     # "top" 후보 좌표를 기본값으로 둔 것 -- 실제 시연에서는
     # docs/operator_protocol.md의 블라인드 선택 절차에 따라 미션별로 바뀐다.
-    capture_zone_x_m: -2.81
-    capture_zone_y_m: -5.36
+    # 2026-08-09 재-SLAM 맵 기준 'top' 덫. 세 후보는
+    # test/real_map_arena.py의 TRAPS 참고 (정식 검증은 3곳 전부 돈다).
+    capture_zone_x_m: -0.23
+    capture_zone_y_m: 0.72
     # 0.5 -> 0.3: 방이 작아 0.5m 반경은 트랩끼리·벽과 겹친다 (트러블슈팅 노트 8번 항목).
     capture_radius_m: 0.3
     # 3.0 -> 1.5 (2026-08-06, 트러블슈팅 노트 10번 항목): 실제 맵에서 표적이
@@ -26,14 +28,15 @@ herding_controller_dual:
     # herding_node.py는 /map 수신 시 이 값들과 다르면 경고를 낸다 -- 반드시
     # 실제로 발행되는 맵과 일치해야 한다.
     grid_resolution_m: 0.05
-    grid_width_cells: 106
-    grid_height_cells: 147
+    # 2026-08-09 재-SLAM: 106x147 -> 109x149, origin도 함께 이동했다.
+    grid_width_cells: 109
+    grid_height_cells: 149
     # World coordinates of the grid's lower-left corner. These MUST match the
     # origin of the map published on /map (Nav2 maps are rarely at (0, 0)), or
     # every world<->cell conversion is offset and the obstacle mask, escape
     # model, and occlusion belief all address the wrong cells.
-    grid_origin_x_m: -3.19
-    grid_origin_y_m: -9.03
+    grid_origin_x_m: -2.68
+    grid_origin_y_m: -6.08
 
     # --- Target Estimator (KF) ---
     kf_process_noise: 0.1
@@ -177,15 +180,21 @@ herding_controller_dual:
 
     # --- 로봇 물리 치수 (2026-08-09, 코드 상수에서 이전) ---
     # 협공 목표점이 "로봇이 실제로 설 수 있는 자리"인지 검사할 때 요구하는
-    # 여유 = robot_radius_m + robot_wall_clearance_m = 0.201 m.
+    # 여유 = robot_radius_m + robot_wall_clearance_m = 0.205 m.
     #
-    # robot_radius_m: TurtleBot 4 실측 342 x 339 mm의 외접 반경.
+    # robot_radius_m: 로봇 파트 config/nav2.yaml의 robot_radius(0.175)와
+    #   맞춘 값. 우리가 더 작게 보면 Nav2가 거부할 목표를 유효 판정하게 된다.
+    #   (TurtleBot 4 실측 342 x 339 mm의 외접 반경은 0.171)
     # robot_wall_clearance_m: 벽에 딱 붙지 않도록 두는 여유(3 cm).
     #
     # 주의: Nav2의 inflation radius가 이 값(0.201 m)보다 크면, 우리가
     # 유효하다고 판단해 보낸 목표점을 Nav2가 도달 불가로 거부한다.
-    # 로봇 파트와 값을 맞춰야 한다.
-    robot_radius_m: 0.171
+    # 로봇 파트와 값을 맞춰야 한다. 2026-08-09 확인: nav2.yaml의
+    # inflation_radius = 0.25로 우리 여유(0.205)보다 크다. 치명 영역은
+    # robot_radius(0.175)라 목표가 거부되진 않지만 비용이 높은 자리다.
+    # 실기에서 협공 지점 접근이 나쁘면 아래 벽 여유를 0.075로 올려
+    # 합을 0.25에 맞춘다.
+    robot_radius_m: 0.175
     robot_wall_clearance_m: 0.03
 
     # --- Occlusion Grid ---

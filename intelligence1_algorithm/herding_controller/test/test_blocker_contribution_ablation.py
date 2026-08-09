@@ -106,11 +106,21 @@ def test_frozen_blocker_stays_at_spawn_even_during_deadlock_release():
                 for pos in result.robot2_trajectory
             )
             assert max_disp < 1.0, f"seed={seed}: frozen Blocker moved {max_disp:.2f}m from spawn"
-            # 리뷰가 구체적으로 실측한 두 시드는 훨씬 더 엄격하게 검증한다:
-            # 픽스 이전엔 이 두 시드에서 3.02m가 관측되었고, 픽스 이후엔
-            # resolve_separation조차 걸리지 않아 사실상 0m여야 한다.
-            if seed in (999_000, 999_003):
-                assert max_disp < 0.05, (
-                    f"seed={seed}: expected ~0m (no resolve_separation trigger observed "
-                    f"pre-fix analysis), got {max_disp:.2f}m"
-                )
+            # 상한을 resolve_separation이 낼 수 있는 최대치로 조인다. 그 함수는
+            # Driver의 driving point에서 min_robot_separation_m만큼 밀어낸
+            # 지점을 돌려주므로, 스폰에서 그보다 더 벗어났다면 그건
+            # resolve_separation이 아니라 deadlock release가 목표를 덮어쓴
+            # 것이다(픽스 이전 실측 3.02m).
+            #
+            # 2026-08-09: 원래는 seed 999000/999003에 대해 "<0.05m"로 못박았는데,
+            # 그건 옛 맵에서 그 두 시드가 우연히 resolve_separation에 안 걸렸다는
+            # 관측이었을 뿐이다. 재-SLAM으로 스폰과 트랩의 상대 위치가 바뀌자
+            # 같은 시드에서 0.19m가 나왔다 -- 위 주석이 정상 범위(<0.2m)라고
+            # 적어둔 그 동작이다. 시드별 실측치 대신 알고리즘이 보장하는
+            # 경계로 바꿔, 맵이 또 바뀌어도 버그만 잡히게 한다.
+            assert max_disp < config.min_robot_separation_m, (
+                f"seed={seed}: frozen Blocker moved {max_disp:.2f}m from spawn, "
+                f"which exceeds what resolve_separation can explain "
+                f"(min_robot_separation_m={config.min_robot_separation_m}) -- "
+                "deadlock release likely overwrote the goal again"
+            )
