@@ -659,24 +659,24 @@ def compute_guard_point(
 # 그 앞), 두 로봇이 트랩 입구 양옆을 막으면 표적이 갈 곳이 트랩뿐이 된다.
 
 
-@dataclass
+@dataclass  # "정보 여러 개를 한 상자에 묶어라"고 파이썬에게 시키는 것. 아래 3줄이 그 상자 안의 칸들
 class PincerPair:
     """엔드게임에서 트랩 입구 양옆을 막는 두 지점."""
-    point_a: np.ndarray
-    point_b: np.ndarray
-    active: bool
+    point_a: np.ndarray  # np.ndarray = numpy(숫자 계산 라이브러리)의 배열 타입. 여기선 [x, y] 좌표 두 숫자를 담는 상자. 로봇1이 설 자리
+    point_b: np.ndarray  # 위와 같은 타입. 로봇2가 설 자리
+    active: bool  # bool = 참(True)/거짓(False) 둘 중 하나만 담는 타입. 협공이 실제로 성립했는지
 
 
 def compute_endgame_pincer(
-    target_pos: np.ndarray,
-    trap_pos: np.ndarray,
-    grid_map: GridMap,
-    clearance_m,
-    body_clearance_m: float,
-    stand_distance_m: float,
-    trigger_radius_m: float,
-    half_angle_rad: float = np.pi / 3.0,   # 60도 -- 실측 채택값
-) -> PincerPair | None:
+    target_pos: np.ndarray,  # 쥐 좌표 [x, y] — np.ndarray는 숫자 여러 개를 한 덩어리로 담는 타입(여기선 2개)
+    trap_pos: np.ndarray,    # 덫 좌표 [x, y]. 타입은 target_pos와 같음
+    grid_map: GridMap,       # GridMap = 이 프로젝트에서 만든 "방 지도" 전용 타입(클래스). 어디가 벽인지 담고 있음
+    clearance_m,             # 타입을 안 적어둔 값. 각 칸이 벽에서 얼마나 떨어졌는지 담은 숫자 격자(2차원 배열)
+    body_clearance_m: float, # float = 소수점이 있을 수 있는 숫자 하나(정수 아님). 예: 0.201
+    stand_distance_m: float, # float — 로봇이 쥐로부터 떨어져 설 거리(m)
+    trigger_radius_m: float, # float — 협공을 시작할 기준 거리(m)
+    half_angle_rad: float = np.pi / 3.0,   # float에 "= 값"이 붙으면 기본값이란 뜻: 안 넘겨주면 이 값(60도, 라디안 단위)을 자동으로 씀. 60도 -- 실측 채택값
+) -> PincerPair | None:  # "-> 타입"은 이 함수가 끝나고 돌려주는 값의 타입. PincerPair 상자 하나, 또는 None(아무것도 없음) 둘 중 하나
     """쥐가 덫 코앞까지 왔는데 안 잡히면, 두 로봇이 갈라져 설 좌우 두 자리를 알려준다.
 
     **이게 이 프로젝트의 핵심이다.** 그냥 미는 것만으로는 로봇 한 대로도
@@ -699,29 +699,32 @@ def compute_endgame_pincer(
     쥐가 아직 `trigger_radius_m`보다 멀리 있으면 협공을 안 하고 None을
     돌려준다 (그럴 땐 평소처럼 미는 로봇 + 막는 로봇 방식을 쓴다).
     """
-    target = np.asarray(target_pos, dtype=float)
-    trap = np.asarray(trap_pos, dtype=float)
-    to_trap = trap - target                          # 쥐 → 덫 방향
-    dist = float(np.linalg.norm(to_trap))
+    target = np.asarray(target_pos, dtype=float)  # 쥐 위치를 계산하기 좋은 숫자 형태로 (계산 준비운동, 의미 없음)
+    trap = np.asarray(trap_pos, dtype=float)       # 덫 위치도 마찬가지
+    to_trap = trap - target                          # 쥐 → 덫 방향. 좌표를 빼면 "그 방향을 가리키는 화살표"가 나온다
+    dist = float(np.linalg.norm(to_trap))             # 그 화살표의 길이 = 쥐와 덫 사이 실제 거리(m)
     if dist > trigger_radius_m or dist < 1e-6:
-        return None  # 아직 덫 근처가 아니거나 이미 덫 위에 있음 — 협공 안 함
-    inward = to_trap / dist                           # 쥐 → 덫 방향 (길이 1)
-    outward = -inward                       # 덫 반대편 = 로봇들이 서는 쪽
-    perp = np.array([-outward[1], outward[0]])  # outward와 수직인 방향 — 좌우로 벌어지는 축
+        return None  # 아직 덫 근처가 아니거나(0.8m보다 멂) 이미 덫 위에 있음(거리 0) — 협공 안 함
+    inward = to_trap / dist                           # 화살표를 길이로 나누면 "방향만" 남는다 (길이가 항상 1인 화살표)
+    outward = -inward                       # 방향을 반대로 뒤집은 것. "덫 쪽"의 정반대 = 로봇이 서야 할 쪽
+    perp = np.array([-outward[1], outward[0]])  # (x,y)->(-y,x)로 바꾸면 90도 돌아간다는 공식. 좌우로 벌어지는 축이 된다
 
     def place(sign):
         """"덫 반대편"에서 좌(sign=+1) 또는 우(sign=-1)로 벌어진 자리를 계산한다. 벽에 걸리면 덜 벌려서 다시 시도."""
         for angle in (half_angle_rad, half_angle_rad * 0.7, half_angle_rad * 0.4):  # 60도 안 되면 42도, 그래도 안 되면 24도
+            # cos/sin은 "이 각도만큼 돌면 가로/세로로 얼마나 가는지" 알려주는 숫자(시계 바늘 방향 구하기와 같음).
+            # outward 방향에서 시작해서 perp 쪽으로 angle만큼 기울인 새 방향을 만든다. sign이 +1/-1이면 좌우 어느 쪽으로 기울지 정해짐.
             offset = outward * np.cos(angle) + perp * (sign * np.sin(angle))
-            point = target + offset * stand_distance_m
+            point = target + offset * stand_distance_m  # 쥐 위치에서 그 방향으로 stand_distance_m(예 0.3m)만큼 간 자리 = 로봇이 실제로 설 좌표
             if _cell_clearance(point, grid_map, clearance_m) >= body_clearance_m:
-                return point
+                return point  # 그 자리가 벽에서 충분히 떨어져 있음(로봇 몸이 들어갈 공간 있음) — 여기로 확정
         return None  # 세 각도 다 벽에 걸림 — 이쪽엔 로봇이 설 자리가 없음
 
-    point_a, point_b = place(+1.0), place(-1.0)   # 왼쪽/오른쪽 대칭으로 자리 계산
+    point_a, point_b = place(+1.0), place(-1.0)   # 미니 계산기를 두 번 돌려서 왼쪽 자리, 오른쪽 자리를 각각 구함
     if point_a is None or point_b is None:
         return None  # 한쪽이라도 설 자리가 없으면 협공 불가 — 평소 방식으로
-    # 두 자리가 너무 가까우면(로봇끼리 겹치면) 협공이라고 할 수 없다.
+    # 두 자리 사이 거리를 재서, 로봇 두 대가 겹칠 만큼 가까우면(로봇끼리 겹치면) 협공이라고 할 수 없다.
+    # -0.03은 컴퓨터 소수점 계산이 아주 살짝 오차 나는 것을 미리 봐주는 여유값.
     if float(np.linalg.norm(point_a - point_b)) < 2.0 * (body_clearance_m - 0.03):
         return None
-    return PincerPair(point_a=point_a, point_b=point_b, active=True)
+    return PincerPair(point_a=point_a, point_b=point_b, active=True)  # 여기까지 왔으면 성공 — 두 좌표를 상자에 담아 반환
