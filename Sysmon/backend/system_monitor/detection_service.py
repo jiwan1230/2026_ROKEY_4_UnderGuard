@@ -1,9 +1,13 @@
-"""
+'''
 ROS에서 들어온 탐지 결과를 받아서
 탐지 기록을 추가하고,
 로봇의 역할과 상태를 변경하고,
 이벤트까지 생성
-"""
+'''
+
+# 탐지 이후 임무에 영향을 주는 주요 사건들을 관제 상태와 이벤트로 변환하는 역할도 함께
+# 배터리가 부족하면 새로운 임무 배정에 영향을 주기 때문에, 저배터리와 배터리 복구 처리도 이곳에 포함
+
 
 from __future__ import annotations
 
@@ -16,20 +20,22 @@ from .state_manager import StateManager, is_rat_object
 TARGET_FIELDS = ("object_type", "confidence", "distance", "map_x", "map_y", "source")
 
 # 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 #
+'''
+탐지 데이터를 받아서 시스템 상태를 갱신.
+탐지 등록 → 쥐 여부 확인 → 필요 시 역할 배정 → 로봇 상태 갱신 → 타임라인 이벤트 추가.
+'''
 def process_detection(
     # 현재 로봇 상태, 탐지 목록, 이벤트 등을 관리하는 StateManager 객체를 받음
-
     state: StateManager,
-    # ROS나 다른 곳에서 들어온 탐지 결과 데이터
+    ## ROS나 다른 곳에서 들어온 탐지 결과 데이터
     detection: dict[str, Any],
     *,
-    # 탐지가 발생했을 때 이벤트 타임라인에 기록할 메시지
+    ## 탐지가 발생했을 때 이벤트 타임라인에 기록할 메시지
     event_message: str,
     fallback_state: str | None = None,
     fallback_task: str | None = None,
     camera_status: str | None = None,
 ) -> dict[str, Any]:
-    '''탐지 데이터를 받아서 시스템 상태를 갱신하는 process_detection() 함수의 입력값 정의'''
 
     # 중요 #
     # 원본 detection을 복사
@@ -40,58 +46,55 @@ def process_detection(
     # 소스마다 다르게 들어올 수 있는 객체 이름을 시스템에서 쓰는 표준 이름으로 바꿈
     # (LIVE_RODENT/ENTRY_POINT/DROPPINGS) 정해진 위험 신호 이름으로 통일
     data["object_type"] = normalize_risk_signal(data["object_type"])
-    # robot_id가 실제 등록된 로봇인지 확인 — 없는 로봇이면 여기서 예외로 걸린다.
+    # robot_id가 실제 등록된 로봇인지 확인
     state.get_robot(robot_id)
     # 중요 #
     # 정리된 탐지 데이터를 StateManager의 탐지 목록에 저장
     item = state.add_detection(data)
-    # 쥐(LIVE_RODENT) 계열 탐지일 때만 역할 자동배정을 시도한다.
-    # 이미 다른 로봇이 먼저 발견해서 배정이 끝났으면 None이 돌아온다.
     # 중요 #
+    # object_type이 쥐 계열인지 확인하고, 쥐라면 해당 로봇을 기준으로 역할 자동 배정을 시도
     assignment = (
         state.assign_roles_from_rat_detection(robot_id)
         if is_rat_object(data["object_type"])
         else None
     )
-    # assign_roles_from_rat_detection이 role을 바꿨을 수도 있으니
-    # 최신 role을 다시 읽어온 뒤 아래 _update_robot_target에 넘긴다.
+    # 역할 배정으로 role이 바뀌었을 수 있기 때문에, 로봇 정보를 다시 가져옴
     robot = state.get_robot(robot_id)
 
     # 중요 #
-    # 이 로봇이 무엇을 탐지했고 현재 역할이 무엇인지 보고, 
-    # 다음 상태·작업·target 정보를 갱신
+    # 이 로봇이 무엇을 탐지했고 현재 역할이 무엇인지 보고,
+    # _update_robot_target()으로 넘겨 다음 상태·작업·target 정보를 갱신
     _update_robot_target(
         state,
         robot_id,
         robot["role"],
-        # 정리된 탐지 결과
+        ## 정리된 탐지 결과
         data,
-        # 로봇에게 적용할 “기본 상태값 문자열”
+        ## 로봇에게 적용할 “기본 상태값 문자열”
         fallback_state=fallback_state,
         fallback_task=fallback_task,
         camera_status=camera_status,
     )
-    # 새로운 역할 배정이 실제로 발생했는지 확인
+    ## 새로운 역할 배정이 실제로 발생했는지 확인
     if assignment:
         # 그 내용을 이벤트로 기록
         _record_role_assignment(state, robot_id, assignment)
 
-    # 중요 #
-    # 지도 마커와는 별개로, 최근 이벤트 타임라인에도 이 탐지를 남긴다.
+    ## 중요 #
+    ## 지도 마커와는 별개로, 최근 이벤트 타임라인에도 이 탐지를 남긴다.
     state.add_event(
         # 화면에 보여줄 탐지 메시지
         event_message,
         robot_id=robot_id,
         event_type="DETECTION",
     )
-    # state.add_detection(data)로 저장했던 탐지 결과 item을 최종 반환
+    ## state.add_detection(data)로 저장했던 탐지 결과 item을 최종 반환
     return item
 
 
 def record_target_lost(state: StateManager, robot_id: str) -> dict[str, Any]:
     """마지막 target을 유지하면서 현재 세션에 대상 유실 사건을 추가한다."""
 
-    # 중요 #
     # target(마지막으로 본 위치)은 여기서 절대 안 지운다 — 로봇이 대상을
     # 놓쳐도 화면에는 "마지막으로 본 위치"가 계속 남아있어야 재탐색에
     # 도움이 되므로, state/작업 필드만 바꾸고 target은 그대로 둔다.
@@ -102,7 +105,6 @@ def record_target_lost(state: StateManager, robot_id: str) -> dict[str, Any]:
         nav_status="CANCELED",
         current_task="대상 재탐색 대기",
     )
-    # 중요 #
     return state.add_event(
         "추적 대상을 놓쳤습니다. 마지막 탐지 위치를 유지합니다.",
         robot_id=robot_id,
@@ -119,7 +121,6 @@ def record_low_battery(
     '''배터리 값을 반영하고 현재 세션에 저전압 경고를 추가한다.'''
 
     state.update_robot(robot_id, battery=battery)
-    # 중요 #
     # 실제로 임무 배정을 막는 로직은 따로 없다(System Monitor는 로봇에
     # 명령을 내리지 않는 read-only 관제라서) — 대신 이벤트 문구 자체에
     # "신규 확인 임무를 제한한다"는 의미를 담아 운영자에게 전달한다.
@@ -173,6 +174,10 @@ def record_trap_installed(
             )
         map_x = robot["position"]["x"]
         map_y = robot["position"]["y"]
+    # 위 두 if문을 조합하면 여기서 map_x/map_y는 항상 float다(둘 다 None이면
+    # 방금 채웠고, 하나만 None인 경우는 이미 위에서 예외로 걸렀다) — 다만
+    # 타입 체커는 이 두 조건의 조합까지는 못 따라가므로 명시적으로 알려준다.
+    assert map_x is not None and map_y is not None
     # 중요 #
     # 트랩은 detections와 별도 목록(add_trap)에 쌓인다 — 지도에서 다른
     # 모양(네모)으로 그려지고 탐지 마커와는 섞이지 않는다.
@@ -198,6 +203,10 @@ def record_trap_installed(
 
 
 # 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 #
+'''
+탐지 처리 도중 내부적으로 호출.
+(process_detection 과정에서) 탐지 대상과 로봇 역할을 보고 다음 상태와 작업을 결정
+'''
 def _update_robot_target(
     state: StateManager,
     robot_id: str,
@@ -208,41 +217,37 @@ def _update_robot_target(
     fallback_task: str | None,
     camera_status: str | None,
 ) -> None:
-    """탐지 종류와 역할을 기준으로 카드에 표시할 다음 상태를 계산한다."""
 
+    # 탐지 결과에서 object_type을 가져옴
     object_type = str(detection["object_type"])
     # 중요 #
-    # 판단 우선순위: 쥐 탐지 > 이 로봇의 역할(SURVEY_TRAP) > 호출부가
-    # 넘긴 fallback. 쥐를 실제로 본 로봇은 역할과 무관하게 무조건 추적
-    # 상태로 바뀐다 — "쥐를 본 로봇이 쫓는다"가 역할 배정보다 우선한다.
+    # 쥐를 본 로봇은 바로 추적 상태로 바꿈
     if is_rat_object(object_type):
         next_state = "TRACKING"
         next_task = "쥐 추적 중"
+    # 침입구나 트랩을 조사하는 상태로 바꿉
     elif robot_role == "SURVEY_TRAP":
         # BRD상 이 역할의 로봇은 트랩을 직접 설치하지 않고 상태만 확인한다.
         next_state = "SEARCHING"
         next_task = "침입구·트랩 상태 확인"
     else:
-        # 위 두 조건에 안 걸리면(예: 아직 역할 미배정 SCOUT가 배설물을
-        # 봄) 호출한 쪽이 넘겨준 기본값을 쓴다 — ros_bridge/mock_manager가
-        # 상황에 맞는 fallback_state/task를 정해서 넘긴다.
         next_state = fallback_state
         next_task = fallback_task
 
     # fallback도 없으면(둘 다 None) 로봇 상태를 아예 안 바꾼다 —
     # 애매한 상태로 덮어쓰는 것보다 이전 상태를 유지하는 쪽이 안전하다.
     if next_state and next_task:
+        # 바꿀 로봇 정보를 changes 딕셔너리에 모음
         changes: dict[str, Any] = {
             "state": next_state,
             "current_task": next_task,
-            # target에는 TARGET_FIELDS로 제한된 필드만 담는다 — 그래야
-            # 카메라 오버레이·지도의 "현재 대상" 표시가 이번 탐지 내용만
-            # 정확히 반영한다(review_status 등 불필요한 값이 안 섞임).
             # 중요 #
+            # TARGET_FIELDS에 적어둔 key들값을 detection에서 가져와 target 필드에 저장
             "target": {key: detection.get(key) for key in TARGET_FIELDS},
         }
         if camera_status is not None:
             changes["camera_status"] = camera_status
+        # changes에 모은 내용을 해당 로봇에 반영
         state.update_robot(robot_id, **changes)
 
 
@@ -254,7 +259,7 @@ def _record_role_assignment(
     """최초 역할 배정 결과를 현재 세션의 타임라인에 추가한다."""
 
     support_text = ", ".join(assignment["support_robot_ids"]) or "없음"
-    # 중요 #
+
     # process_detection이 assignment가 실제로 있을 때(=이번 호출에서
     # 새로 배정됐을 때)만 이 함수를 부르므로, 여기서는 별도 조건 없이
     # 바로 이벤트 하나만 남기면 된다.

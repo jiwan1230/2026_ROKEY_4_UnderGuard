@@ -1,5 +1,5 @@
 '''
-로봇 상태 데이터와 카메라 이미지 데이터의 성격이 다르기 때문에 StateManager와 따로 관리.
+로봇 상태 데이터와 카메라 이미지 데이터의 성격이 다르기 때문에 StateManager와 따로 관리...
 
 StateManager는 로봇의 배터리, 위치, 상태 같은 비교적 가벼운 정보를 주기적으로 JSON으로 만들어 웹에 전달.
 
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 
 # 중요 #
-# 이미지 데이터, 이미지 형식, 수신 시간에 대한 정보가 함께 필요하기 때문에 하나의 객체로 묶음
+# 이미지 데이터, 이미지 형식, 수신 시간에 대한 정보가 함께 필요하기 때문에 하나의 클래스 객체로 묶음
 # @dataclass는 이런 데이터 저장용 클래스를 간단하게 정의할 수 있게 해줌 (생성자 따로작성x)
 @dataclass
 class CameraFrame:
@@ -36,15 +36,15 @@ class CameraFrameStore:
         # # robot_id를 key로 해서 각 로봇의 최신 카메라 프레임 하나씩 저장
         self._frames: dict[str, CameraFrame] = {}
 
-    # 중요 # 
+    # 중요 #
     def update(self, robot_id: str, content: bytes, format_: str) -> None:
         '''# 같은 로봇 ID로 새 이미지가 들어오면, 이전 이미지를 새 이미지로 덮어씀'''
-        with self._lock:          
+        with self._lock:
             self._frames[robot_id] = CameraFrame(
                 content=content, format=format_, received_at=time.time()
             )
 
-    # 중요 # 
+    # 중요 #
     def get(self, robot_id: str) -> CameraFrame | None:
         """특정 로봇의 최신 카메라 프레임을 가져옴"""
 

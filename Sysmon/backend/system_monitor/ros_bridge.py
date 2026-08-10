@@ -181,41 +181,52 @@ class RosBridge:
         self._thread.join(timeout=2.0)
         self._thread = None
 
+    # 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 #
     def _spin(self) -> None:
-        """ROS 노드를 만들고 종료 요청이 올 때까지 메시지를 처리한다."""
+        """ROS 노드를 만들어서 실행하고, 종료 요청이 올 때까지 메시지를 처리한다."""
 
         # rclpy.init -> Node 생성 -> rclpy.spin 순서가 ROS 2 노드의 기본
-        # 생명주기다. spin이 구독 메시지와 타이머 콜백을 반복 실행한다.
+        # ROS 2 통신 기능을 사용하기 위해 ROS 2를 초기화
         rclpy.init(args=None)
+        # ROS 2의 노드를 만들기 위한 Node 클래스를 가져옴
         from rclpy.node import Node
 
+        # 현재 객체인 self를 bridge라는 이름으로 하나 더 참조
         bridge = self
 
+        # 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 #
+        # ROS 2에서 Fleet 상태 메시지를 받기 위한 노드와 구독자를 만드는 부분
         class MonitorNode(Node):
             def __init__(self) -> None:
+                # 노드 이름을 system_monitor_bridge로 설정
                 super().__init__("system_monitor_bridge")
-                # 공용 Fleet 토픽은 로봇별 namespace가 붙지 않는다. 숫자 10은
-                # 콜백이 처리하기 전까지 보관할 메시지 큐의 기본 깊이다.
                 self.create_subscription(
                     String,
+                    # 로봇의 현재 상태와 배터리 정보를 받는 토픽
                     bridge.interface.fleet_status_topic,
+                    # 문자열을 로봇 ID / 상태 / 배터리로 분리하고, Fleet 상태를 웹 화면에서 사용하는 상태로 변환
+                    # 이후 로봇의 상태, 배터리, 현재 작업, 이동 여부를 StateManager에 반영
                     bridge._on_fleet_status,
                     10,
                 )
                 self.create_subscription(
                     String,
+                    # Fleet에서 발생한 사건/이벤트 정보를 받는 토픽
                     bridge.interface.fleet_event_topic,
                     bridge._on_fleet_event,
                     10,
                 )
                 for robot in bridge.robots:
+                    # 현재 로봇의 ID 저장
                     rid = robot.robot_id
                     # 기본 인자로 rid를 고정해 모든 lambda가 마지막 로봇을
                     # 참조하는 파이썬 late-binding 문제를 방지한다.
                     if Detection3DArray is not None:
                         self.create_subscription(
                             Detection3DArray,
+                            # 웹캠의 객체 탐지 결과를 받는 토픽
                             robot.topic(bridge.interface.webcam_detections_topic),
+                            # 탐지 메시지가 오면 어떤 로봇의 웹캠 탐지인지 구분해서 _on_detection()으로 전달
                             lambda msg, robot_id=rid: bridge._on_detection(
                                 robot_id, "WEBCAM", msg
                             ),
@@ -223,6 +234,7 @@ class RosBridge:
                         )
                         self.create_subscription(
                             Detection3DArray,
+                            # OAK-D의 객체 탐지 결과를 받는 토픽
                             robot.topic(bridge.interface.oakd_detections_topic),
                             lambda msg, robot_id=rid: bridge._on_detection(
                                 robot_id, "OAK-D", msg
@@ -232,29 +244,35 @@ class RosBridge:
                     if Odometry is not None:
                         self.create_subscription(
                             Odometry,
+                            # 로봇의 위치·방향·속도 정보를 받는 토픽
                             robot.topic(bridge.interface.odometry_topic),
                             lambda msg, robot_id=rid: bridge._on_odom(robot_id, msg),
                             10,
                         )
+                    # BatteryState는 ROS 2의 sensor_msgs 패키지에서 제공하는 메시지 타입
                     if BatteryState is not None:
                         self.create_subscription(
                             BatteryState,
+                            # 로봇의 배터리 정보를 받는 토픽
                             robot.topic(bridge.interface.battery_topic),
                             lambda msg, robot_id=rid: bridge._on_battery(robot_id, msg),
                             10,
                         )
+                    # CompressedImage는 JPEG 같은 형태로 압축된 카메라 이미지 데이터를 전달할 때 사용하는 ROS 메시지 타입
                     if CompressedImage is not None:
-                        # 카메라는 데이터가 크고 최신 프레임이 중요하므로 일반
-                        # 큐 대신 ROS의 센서 데이터용 QoS 정책을 사용한다.
                         self.create_subscription(
                             CompressedImage,
+                            # 카메라 영상 프레임을 받는 토픽
                             robot.topic(bridge.interface.camera_frame_topic),
                             lambda msg, robot_id=rid: bridge._on_camera_frame(
                                 robot_id, msg
                             ),
+                            # 카메라 데이터는 크고 최신 프레임이 중요하기 때문에,
+                            # 일반 큐 크기 대신 ROS 2의 센서 데이터용 QoS인 qos_profile_sensor_data를 사용
                             qos_profile_sensor_data,
                         )
-                # 새 메시지가 없어도 0.5초마다 마지막 쥐 탐지 시각을 검사한다.
+                # 0.5초마다 _check_target_timeouts()를 실행해서,
+                # 일정 시간 동안 쥐가 다시 탐지되지 않으면 대상 유실 상태인지 확인
                 self.create_timer(0.5, bridge._check_target_timeouts)
 
         self._node = MonitorNode()
@@ -370,34 +388,48 @@ class RosBridge:
             return self._last_active_robot_id
         return self.robots[0].robot_id
 
+    # 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 #
     def _on_detection(self, robot_id: str, source: str, msg: Any) -> None:
         """카메라의 Detection3DArray 안에 든 탐지를 하나씩 처리한다."""
 
+        # 여러 콜백이 동시에 데이터를 바꾸지 않도록 안전하게 잠금
         with self._data_lock:
-            # 탐지 메시지 자체도 로봇이 통신 중이라는 증거이므로 heartbeat를
-            # 갱신해 정상 로봇이 화면에서 OFFLINE으로 바뀌지 않게 한다.
+            # 탐지 메시지가 들어왔으므로 이 로봇이 현재 통신 중이라고 표시
             self.state.mark_heartbeat(robot_id)
+            # 한 메시지 안에 들어있는 여러 객체 탐지 결과를 하나씩 꺼내서 처리
             for detection_msg in msg.detections:
+
+                # 중요 #
+                # 탐지 결과를 robot_id, 객체 종류, 신뢰도, 거리, 좌표 같은 관제용 데이터 형태(dict)로 변환
                 data = self._to_detection_data(robot_id, source, msg, detection_msg)
                 if data is None:
                     continue
+
+                # 중요 #
+                # detection_service의 process_detection 함수를 실행하여,
+                # 변환된 탐지 데이터를 실제 관제 시스템 상태와 이벤트에 반영하기 위해 결과를 변수에 저장
                 item = process_detection(
+                    # 현재 로봇 상태를 관리하는 객체
                     self.state,
+                    # 앞에서 변환한 탐지 데이터
                     data,
                     event_message=f"{source}에서 {data['object_type']}를 탐지했습니다.",
                     fallback_state=(
                         "APPROACHING" if source != "OAK-D" else "SEARCHING"
                     ),
+                    # 현재 작업을 "쥐 탐지 확인 중" 같은 형태로 설정
                     fallback_task=f"{data['object_type']} 탐지 확인 중",
                     camera_status="NORMAL",
                 )
+
+                # 중요 #
+                # 탐지 출처가 OAK-D이고, 탐지한 객체가 살아있는 쥐인지 확인
                 if source.upper() == "OAK-D" and is_live_rodent(
                     item["object_type"]
                 ):
-                    # OAK-D의 살아 있는 쥐 탐지만 추적 유지 신호로 취급한다.
-                    # monotonic 시간은 시스템 시계가 바뀌어도 경과 시간 계산이
-                    # 거꾸로 흐르지 않아 timeout 측정에 적합하다.
+                    # 해당 로봇이 쥐를 마지막으로 본 시간을 현재 시간으로 저장
                     self._last_live_rodent_at[robot_id] = time.monotonic()
+                    # 이전에 이 로봇이 대상 유실로 기록되어 있었다면 그 표시를 제거
                     self._target_lost_reported.discard(robot_id)
 
     def _to_detection_data(
@@ -441,20 +473,26 @@ class RosBridge:
             "image_url": self.camera_frame_store.image_url_for(robot_id),
         }
 
+    # 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 #
     def _on_odom(self, robot_id: str, msg: Any) -> None:
-        """Odometry 메시지에서 위치, 방향, 속도를 계산해 저장한다."""
+        """
+        Odometry 메시지에서 로봇의 위치, 방향, 이동 속도를 계산해서 StateManager에 갱신.
+        이 값이 관제 화면에서 로봇 위치와 이동 상태를 표시하는 데 사용.
+        """
 
-        # 현재 위치는 Odometry header 좌표계 기준이다. 실제 지도 표시는 후속 TF
-        # 연동에서 map -> base_link 위치로 교체해야 한다.
+        # 로봇의 현재 위치(x, y 등)
         p = msg.pose.pose.position
+        # 로봇의 방향 정보(쿼터니언)
         q = msg.pose.pose.orientation
         header = getattr(msg, "header", None)
+        # 이 위치가 어느 좌표계 기준인지 확인
         position_frame = str(getattr(header, "frame_id", "odom") or "odom").strip("/")
         # ROS의 방향은 쿼터니언(x, y, z, w)으로 오지만 2D 지도는 수평 회전각
         # yaw만 필요하다. 아래는 쿼터니언을 yaw 라디안으로 바꾸는 공식이다.
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        # 로봇의 x, y축 이동 속도
         v = msg.twist.twist.linear
-        # x축과 y축 속도를 합쳐 실제 평면 이동 속도의 크기를 구한다.
+        # x축과 y축 속도를 합쳐 실제 평면 이동 속도의 크기를 계산
         speed = math.hypot(v.x, v.y)
         self.state.update_robot(
             robot_id,
@@ -465,8 +503,12 @@ class RosBridge:
             slam_status="NORMAL",
         )
 
+    # 중요 #
     def _on_battery(self, robot_id: str, msg: Any) -> None:
-        """배터리 값을 백분율로 통일하고 저전압 경고를 관리한다."""
+        """
+        배터리 메시지를 받으면 값을 0~100% 형태로 정리해서 로봇 상태에 반영하고,
+        임계값보다 낮아지면 저전압 경고를 기록
+        """
 
         percentage = msg.percentage
         # 센서가 값을 제공하지 않았거나 NaN(Not a Number)이면 무시한다.
@@ -491,8 +533,12 @@ class RosBridge:
             if value >= self.low_battery_threshold + 2:
                 self._low_battery_reported.discard(robot_id)
 
+    # 중요 #
     def _on_camera_frame(self, robot_id: str, msg: Any) -> None:
-        """압축 카메라 프레임의 원본 바이트를 최신 프레임 캐시에 넣는다."""
+        """
+        카메라에서 받은 압축 이미지 데이터를 최신 프레임으로 저장하고,
+        이후 웹 관제 화면에서 사용할 수 있도록 함
+        """
 
         # 이미 JPEG 등으로 압축된 데이터를 다시 인코딩하지 않는다. API는
         # CameraFrameStore에서 이 최신 바이트를 꺼내 브라우저에 전달한다.
