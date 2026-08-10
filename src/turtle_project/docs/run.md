@@ -34,8 +34,9 @@ ros2 run turtle_project robot_agent --ros-args \
 ## 중앙 PC (전체에서 한 번만 — 네임스페이스 없음)
 
 ```bash
-ros2 run turtle_project db_node        # 구멍 DB (sqlite)
-ros2 run turtle_project central_node   # 조율 (부트스트랩·교대·쥐대응)
+# central_node, db_node, webcam_node, rat_herding_node(배관), herding_node(몰이 알고리즘)를 한 번에.
+# herding_node는 turtle_project.herding 내장 (플랜 A 단일 blocker).
+ros2 launch turtle_project central_pc.launch.py
 ```
 
 central을 띄우면 전원 도킹 상태에서 **자동으로 한 대를 UNDOCK시켜 순찰을 시작**한다

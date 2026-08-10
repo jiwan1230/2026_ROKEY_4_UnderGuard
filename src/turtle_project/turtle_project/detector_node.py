@@ -196,6 +196,7 @@ class DetectorNode(Node):
         self.hole = None        # 점검 대상 구멍의 map 좌표 (INSPECTING/재설치용)
         self.reinstall_count = 0  # trap_bad/미검출로 인한 재설치 횟수
         self.done_holes = []      # 이번 순찰에 확인 끝낸 구멍 좌표들 — PATROL에 초기화
+        self.first_sight = None   # 이번 opening을 순찰 중 처음 목격한 좌표 (아래 참고)
         # 쥐 추적 판정기 (포획/놓침). tracking True일 때만 굴린다.
         self.rat = RatTracker(cap_r, cap_s, lost_s)
         self.tracking = False
@@ -418,7 +419,15 @@ class DetectorNode(Node):
         if xy is None:
             return
         if already_done(xy, self.done_holes, self.done_hole_dist):
-            return          # 이번 순찰에 이미 확인한 구멍 — 무시 (순찰 진행)
+            # 이번 순찰에 이미 확인한 구멍 — 무시 (순찰 진행)
+            self.get_logger().info(
+                f'이미 확인한 구멍 ({xy[0]:.2f}, {xy[1]:.2f}) — 무시',
+                throttle_duration_sec=5.0)
+            return
+        # 순찰 시점(원거리·비스듬)의 목격 좌표는 접근 후 보정좌표와 크게 다를 수
+        # 있다(wall depth 오차). 이 좌표도 완료 시 기록해야 다음 바퀴에 같은
+        # 자리서 또 봐도(같은 오차 → 비슷한 좌표) already_done에 걸린다.
+        self.first_sight = xy
         self._start_approach(xy, depth_frame)
 
     def _request_db(self, x, y):
@@ -737,30 +746,38 @@ class DetectorNode(Node):
         return self.get_clock().now().nanoseconds / 1e9
 
     def _verify(self, box, img_shape, depth):
+        """도착 지점(0.8m)에서 opening 재검출 → depth_spread로 진짜 구멍 판정."""
         if box is None:
             self._verify_miss('opening 재검출 실패')
             return
-        du1, dv1 = to_depth_px(box[0], box[1], img_shape, depth.shape)
-        du2, dv2 = to_depth_px(box[2], box[3], img_shape, depth.shape)
-        z = depth_at(depth, (du1 + du2) // 2, (dv1 + dv2) // 2)
-        side = side_px(self.side_margin, z, self.K[0, 0])
-        gap = depth_spread(depth, du1, dv1, du2, dv2, side=side)
+        gap = self._opening_gap(box, img_shape, depth)
         if gap is None:
             self._verify_miss('depth 유효 픽셀 부족')
             return
         if gap >= self.depth_gap:
-            self.get_logger().info(f'진짜 opening 확인 (gap={gap:.3f}m) — 설치 지시')
-            # db 저장(opening_confirmed) 후 최초 설치. 이후 재점검/재설치는
-            # trap_check 이벤트로 이어진다. 최초 설치는 재설치 카운트에 안 넣음.
-            self.event_pub.publish(String(data=fleet_msg.event(
-                'opening_confirmed', *self.target)))
-            self.hole = self.target
-            self.reinstall_count = 0
-            self._send_install()
+            self._confirm_opening(gap)
         else:
             self.get_logger().info(
                 f'opening 아님 (gap={gap:.3f}m < {self.depth_gap}) — 순찰 재개')
             self._finish_opening()
+
+    def _opening_gap(self, box, img_shape, depth):
+        """opening 박스의 depth_spread(구멍 안쪽 vs 둘레 벽 깊이차). 유효 픽셀 부족이면 None."""
+        du1, dv1 = to_depth_px(box[0], box[1], img_shape, depth.shape)
+        du2, dv2 = to_depth_px(box[2], box[3], img_shape, depth.shape)
+        z = depth_at(depth, (du1 + du2) // 2, (dv1 + dv2) // 2)
+        side = side_px(self.side_margin, z, self.K[0, 0])
+        return depth_spread(depth, du1, dv1, du2, dv2, side=side)
+
+    def _confirm_opening(self, gap):
+        """진짜 opening 확정 → db 저장(opening_confirmed) 후 최초 설치.
+        접근 중 검증(_refresh_approach)·close-range 검증(_verify) 공용."""
+        self.get_logger().info(f'진짜 opening 확인 (gap={gap:.3f}m) — 설치 지시')
+        self.event_pub.publish(String(data=fleet_msg.event(
+            'opening_confirmed', *self.target)))
+        self.hole = self.target
+        self.reinstall_count = 0
+        self._send_install()
 
     def _verify_miss(self, why):
         self.verify_count += 1
@@ -857,10 +874,13 @@ class DetectorNode(Node):
 
         처리한 구멍 좌표를 done_holes에 넣어 두면 이후 순찰 중 그 구멍을 다시
         감지해도 무시된다 → 같은 구멍 반복 점검 없이 순찰이 진행된다."""
-        hole = self.hole or self.target
-        if hole is not None and not already_done(hole, self.done_holes,
-                                                 self.done_hole_dist):
-            self.done_holes.append(hole)
+        # 같은 구멍의 세 가지 측정치를 전부 기록: DB좌표(hole)·접근 보정좌표(target)·
+        # 순찰 목격좌표(first_sight). 재감지는 순찰 시점 좌표로 들어오므로
+        # first_sight가 특히 중요 — 보정좌표만 기록하면 매 바퀴 가드가 빗나간다.
+        for hole in (self.hole, self.target, self.first_sight):
+            if hole is not None and not already_done(hole, self.done_holes,
+                                                     self.done_hole_dist):
+                self.done_holes.append(hole)
         self._hold_patrol(False)
         self._reset()
 
@@ -871,6 +891,7 @@ class DetectorNode(Node):
         self.hole = None
         self.verify_count = 0
         self.reinstall_count = 0
+        self.first_sight = None
 
     def robot_xy(self):
         try:

@@ -15,6 +15,8 @@ setup(
         ('share/' + package_name + '/config', glob('config/*.yaml')),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         ('share/' + package_name + '/scripts', glob('scripts/*.sh')),
+        # 쥐몰이 RViz 뷰 (알고리즘 파트) -- escape_probability/goal 시각화용.
+        ('share/' + package_name + '/rviz', glob('rviz/*.rviz')),
         # model·map·waypoint를 설치본에 넣어 /home/rokey 하드코딩을 없앤다 (15-1).
         # room_map.yaml의 image는 같은 디렉터리 상대경로라 pgm도 함께 설치.
         ('share/' + package_name + '/resource', [
@@ -22,6 +24,7 @@ setup(
             'resource/patrol_waypoints.yaml',
             'resource/room_map.yaml',
             'resource/room_map.pgm',
+            'resource/herding_params.yaml',
         ]),
     ],
     install_requires=['setuptools'],
@@ -44,6 +47,7 @@ setup(
             'central_node = turtle_project.central_node:main',
             'db_node = turtle_project.db_node:main',
             'rat_herding_node = turtle_project.rat_herding_node:main',
+            'herding_node = turtle_project.herding.herding_node:main',
             'webcam_node = turtle_project.webcam_node:main',
         ],
     },
