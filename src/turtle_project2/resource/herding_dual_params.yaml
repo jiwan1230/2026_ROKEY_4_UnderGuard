@@ -1,0 +1,202 @@
+herding_controller:
+  ros__parameters:
+    frame_id: "map"
+    control_rate_hz: 5.0
+
+    # --- Capture Zone ---
+    # 2026-08-06: 실제 방(maps/room_map.pgm)에는 포획구역 후보가 3곳
+    # (top/left/bottom, test/real_map_arena.py의 TRAPS) 있다. 아래 값은
+    # "top" 후보 좌표를 기본값으로 둔 것 -- 실제 시연에서는
+    # docs/operator_protocol.md의 블라인드 선택 절차에 따라 미션별로 바뀐다.
+    # 2026-08-09 재-SLAM 맵 기준 'top' 덫. 세 후보는
+    # test/real_map_arena.py의 TRAPS 참고 (정식 검증은 3곳 전부 돈다).
+    capture_zone_x_m: -2.44
+    capture_zone_y_m: -3.48
+    # 0.5 -> 0.3: 방이 작아 0.5m 반경은 트랩끼리·벽과 겹친다 (트러블슈팅 노트 8번 항목).
+    capture_radius_m: 0.3
+    # 3.0 -> 1.5 (2026-08-06, 트러블슈팅 노트 10번 항목): 실제 맵에서 표적이
+    # 반경 0.3m 안에 실제로 들어오는 것 자체는 거의 항상 성공했지만(최근접
+    # 거리 0~0.02m가 흔함), 3.0초 연속 체류는 방이 좁아 표적이 자연스럽게
+    # 반경 경계를 들락거리는 진동 때문에 실패했다. 1.5초로 낮추자 성공률이
+    # 0.3% -> 65%(reactive_flee, 3개 트랩 통합, N=300)로 뛰었다 -- 여전히
+    # "우연히 스쳐서" 성공하는 게 아니라 실제 체류를 요구하는 값이다
+    # (포획 판정에는 escape_prob 집중 조건도 함께 걸려 있음, §escape_concentration_threshold).
+    capture_hold_sec: 1.5
+
+    # --- Grid ---
+    # 2026-08-06: maps/room_map.yaml(실제 SLAM 맵)의 실측값으로 교체.
+    # herding_node.py는 /map 수신 시 이 값들과 다르면 경고를 낸다 -- 반드시
+    # 실제로 발행되는 맵과 일치해야 한다.
+    grid_resolution_m: 0.05
+    # 2026-08-09 재-SLAM: 106x147 -> 109x149, origin도 함께 이동했다.
+    grid_width_cells: 109
+    grid_height_cells: 149
+    # World coordinates of the grid's lower-left corner. These MUST match the
+    # origin of the map published on /map (Nav2 maps are rarely at (0, 0)), or
+    # every world<->cell conversion is offset and the obstacle mask, escape
+    # model, and occlusion belief all address the wrong cells.
+    grid_origin_x_m: -2.68
+    grid_origin_y_m: -6.08
+
+    # --- Target Estimator (KF) ---
+    kf_process_noise: 0.1
+    kf_measurement_noise: 0.05
+    occlusion_timeout_sec: 3.0
+
+    # --- Escape Model (Markov) ---
+    markov_wall_follow_p: 0.70
+    markov_wall_hug_p: 0.20
+    markov_center_p: 0.10
+    momentum_weight: 0.4
+    robot_repulsion_weight: 1.5
+    wall_detect_radius_cells: 1
+    escape_route_top_k: 3
+    # Max escape-direction probability at or above which the distribution counts as
+    # "concentrated", gating the HERD->CORNER transition (and the CORNER->HERD fallback).
+    escape_concentration_threshold: 0.5
+
+    # --- Herding Control ---
+    # Task 15 tuning (historical, 10x10m abstract arena): drive_distance_m=0.75,
+    # flee_reaction_distance_m=1.0, panic_distance_m=0.35. THESE THREE VALUES ARE
+    # INTERDEPENDENT -- do not change one in isolation. Two hard geometric
+    # constraints drive them regardless of arena size (still true for the
+    # 2026-08-06 real-map values below):
+    #   (1) drive_distance_m * drive_distance_ease_factor MUST stay below
+    #       flee_reaction_distance_m. The Driver converges onto its driving point and
+    #       stops there; if that point sits outside the target's reaction radius the
+    #       target never flees and the whole system deadlocks with zero progress.
+    #   (2) drive_distance_m must exceed panic_distance_m by enough that normal
+    #       tracking overshoot does not trip the panic retreat.
+    # 2026-08-06: re-swept for the real 5.3x7.35m room (트러블슈팅 노트 10번 항목) --
+    # the abstract-arena values above made the robots panic almost constantly
+    # (up to 84%) in the room's ~1m-wide corridors. Current shipped values:
+    drive_distance_m: 0.3
+    flee_reaction_distance_m: 0.42
+    # 2026-08-08: 시뮬레이터가 로봇(반지름 0.171m)과 RC카(반지름 0.101m)를 점이
+    # 아니라 실제 크기로 다루기 시작하면서, 두 중심 사이 최소 물리 거리가
+    # 0.272m가 됐다 -- 즉 이 값(0.12)은 물리적으로 도달 불가능해 panic 후퇴가
+    # 사실상 꺼져 있는 상태다. 그런데 실측해보니 그게 오히려 낫다:
+    # panic_distance_m을 물리적으로 유효한 값으로 올리면(0.30/0.35) 성공률이
+    # 85.8% -> 82.5%/83.3%로 떨어진다. Driver가 불필요하게 후퇴해 밀어내기가
+    # 약해지기 때문이다. 몸체 크기 자체가 예전에 panic 후퇴가 하던 "너무
+    # 가까이 붙지 않기"를 물리적으로 보장하므로 소프트웨어 후퇴는 이제
+    # 중복이다. 값을 바꾸려면 반드시 run_real_map_algo_suite로 재검증할 것.
+    panic_distance_m: 0.12
+    alignment_threshold: 0.7
+    drive_distance_ease_factor: 1.15
+    # Raised 1.2 -> 3.0: the highest-leverage parameter measured, BUT only once
+    # constraint (1) above holds. Applying this change alone, on a config that still
+    # violates (1), takes the success rate from 20% DOWN to 2.5%. Fix the ratio first.
+    #
+    # Mechanism: NOT "distorting the flee vector" -- ReactiveFlee gates on a hard
+    # cutoff at flee_reaction_distance_m, so a robot at 1.2 m (or 3.0 m) contributes
+    # exactly zero to the flee sum. What actually changes is TRANSIT interference: the
+    # Blocker continuously chases a goal that moves with the target, and at a short
+    # lookahead its path repeatedly crosses inside the 1.0 m radius, injecting flee
+    # impulses that fight the Driver's push. Measured fraction of HERD/CORNER cycles
+    # with a robot inside the reaction radius: 34.9% at bl=1.2 -> 21.0% at bl=3.0.
+    # The Blocker's role in this regime is geometric containment, not applied force.
+    #
+    # Measured on reactive_flee (holding drive_distance_m=0.7, ease=1.0):
+    # 1.2 -> 25%, 2.0 -> 62%, 3.0 -> 82%. Beyond ~6 m every candidate bearing leaves
+    # the 10x10 m grid, compute_blocking_point falls through to target_pos, and the
+    # Blocker rams the target (12.0 -> 82% panic rate), so 3.0 is an interior optimum,
+    # not a "disable the Blocker" degenerate value.
+    # NOTE: 3.0 m was scaled to the (old) 10x10m abstract validation arena.
+    # 2026-08-06: real room is 5.3m x 7.35m (maps/room_map.yaml) -- applying
+    # the documented rule (~1/3 of the arena's shorter side) gives 1.8m.
+    block_lookahead_m: 1.8
+
+    # Blocking Point 이력현상(hysteresis) 유지 시간 -- herding_core.py의
+    # _stabilize_blocking_point() 참고. 표적 위치가 문턱 근처를 오갈 때
+    # 목표 후보가 매 제어 주기(0.2초)마다 요동치는 걸 막으려고 도입했다
+    # (트러블슈팅 노트 10-6). 다만 이 값이 너무 크면 반대로 로봇이 목표에
+    # 도착하기도 전에 다음 커밋에서 또 먼 곳으로 바뀌는 지연(lag)이 생겨,
+    # Blocker가 계속 뒤쫓기만 하고 자리를 못 잡는 것처럼 보인다(10-7).
+    # run_real_map_algo_suite 스윕으로 재검증한 값을 쓴다.
+    blocking_point_commit_sec: 1.0
+
+    # 교착(deadlock) 감지 -- herding_core.py의 _update_deadlock_state()/
+    # _deadlock_release_point() 참고 (트러블슈팅 노트 11-8). Driver와
+    # Blocker가 서로 다른 각도에서 밀다가, 지정된 포획존이 아닌 방 안의
+    # 다른 벽 구석에 표적을 우연히 핀서로 가둬버리는 경우가 있었다
+    # (left 트랩 기준 N=150 중 26건, 전부 벽에서 0.2m 이내 구석에서 표적이
+    # 완전히 정지). 표적이 deadlock_stall_sec 이상 거의 안 움직이는데도
+    # 아직 포획존 근처가 아니면, Blocker를 deadlock_release_distance_m만큼
+    # 뒤로 물러나게 해 협공 각도를 풀어준다.
+    deadlock_stall_sec: 3.0
+    deadlock_drift_radius_m: 0.1
+    deadlock_release_distance_m: 1.0
+
+    # 2026-08-06 실제 맵 재튜닝 (트러블슈팅 노트 10번 항목): drive_distance_m/
+    # panic_distance_m/flee_reaction_distance_m는 원래 10x10m 열린 아레나
+    # 기준으로 튜닝된 값이었다. 실제 방은 폭 1m 안팎의 좁은 복도가 많아서,
+    # 그 값 그대로는 로봇이 표적을 쫓을 때 거의 항상 panic_distance_m 안에
+    # 들어가 버렸다(패닉률 최대 84%). 방 규모에 맞게 함께 스윕한 결과,
+    # 아래 조합에서 패닉률이 3~19%로 정상화됐다 -- 위 (1)/(2) 제약(비율)은
+    # 그대로 유지된다: 0.3 * 1.15 = 0.345 < 0.42 (제약 1), 0.3 > 0.12 (제약 2).
+
+    # --- Minimum robot separation ---
+    # (Plan B) Driver and Blocker must stay this far apart, regardless of
+    # which physical robot (1 or 2) currently holds which role -- roles ARE
+    # reassigned dynamically here by RoleAssigner (see role_swap_* below),
+    # unlike Plan A (herding_controller) where robot1 is always Driver.
+    min_robot_separation_m: 0.6
+
+    # --- Dynamic Driver/Blocker role assignment (Plan B only, role_assigner.py::RoleAssigner) ---
+    # Ported unchanged from the old 10x10m arena tuning
+    # (algorithm/dual-robot-herding branch, 4abf472) -- not retuned for this
+    # room (5.3x7.35m). Swap only when the cost gap exceeds role_swap_margin
+    # AND at least role_swap_cooldown_sec has elapsed since the last swap.
+    role_swap_margin: 0.5
+    role_swap_cooldown_sec: 2.0
+    role_cost_turn_weight: 0.3
+
+
+    # --- 엔드게임 협공 (2026-08-09, 트러블슈팅 노트 16-15) ---
+    # 표적이 트랩 근처(endgame_trigger_radius_m)에 들어왔는데 endgame_stall_sec
+    # 동안 포획이 안 되면, 두 로봇이 트랩 반대편 좌우(±endgame_half_angle_deg)를
+    # 막아 표적이 트랩 쪽으로밖에 못 가게 한다.
+    #
+    # 근거: 실패 분석에서 현실적인 표적(구석에 몰리길 피하는 모델)의 실패
+    # 92건 중 91건이 트랩 0.6m 안까지 왔다가 마지막 7cm(최근접 중앙값 0.37m,
+    # 포획 반경 0.30m)를 못 넘고 옆으로 빠진 것이었다. 몰이는 이미 성공했고
+    # 마지막 봉인만 실패한 것이라, 그 구간에만 협공을 건다.
+    #
+    # 지연(3.0초)이 핵심이다: 전 구간/즉시 발동하면 얌전한 표적에서 두 로봇이
+    # 벌어지느라 미는 힘이 약해져 오히려 나빠진다(reactive_flee 90.7%->72.7%).
+    # "먼저 밀어보고 안 들어가면 그때 협공"이라야 회귀가 없다.
+    #
+    # 실측 (3트랩 x 50회 = 150쌍, 두 대 vs 한 대 동일 시드 페어링):
+    #   기존 모델 회귀 없음: reactive 90.7/90.7, wall_hugger 90.7/91.3,
+    #                        noisy_human 95.3/95.3
+    #   현실적 표적: 구석회피2.0 86.0/77.3(p=.011), 3.0 84.0/39.3(rescue 67,
+    #               regression 0), 4.0 68.0/12.0(rescue 84, regression 0)
+    #   시드 3개에서 모두 재현.
+    endgame_pincer_enabled: true
+    endgame_trigger_radius_m: 0.8
+    endgame_half_angle_deg: 60.0
+    endgame_stall_sec: 3.0
+
+    # --- 로봇 물리 치수 (2026-08-09, 코드 상수에서 이전) ---
+    # 협공 목표점이 "로봇이 실제로 설 수 있는 자리"인지 검사할 때 요구하는
+    # 여유 = robot_radius_m + robot_wall_clearance_m = 0.205 m.
+    #
+    # robot_radius_m: 로봇 파트 config/nav2.yaml의 robot_radius(0.175)와
+    #   맞춘 값. 우리가 더 작게 보면 Nav2가 거부할 목표를 유효 판정하게 된다.
+    #   (TurtleBot 4 실측 342 x 339 mm의 외접 반경은 0.171)
+    # robot_wall_clearance_m: 벽에 딱 붙지 않도록 두는 여유(3 cm).
+    #
+    # 주의: Nav2의 inflation radius가 이 값(0.201 m)보다 크면, 우리가
+    # 유효하다고 판단해 보낸 목표점을 Nav2가 도달 불가로 거부한다.
+    # 로봇 파트와 값을 맞춰야 한다. 2026-08-09 확인: nav2.yaml의
+    # inflation_radius = 0.25로 우리 여유(0.205)보다 크다. 치명 영역은
+    # robot_radius(0.175)라 목표가 거부되진 않지만 비용이 높은 자리다.
+    # 실기에서 협공 지점 접근이 나쁘면 아래 벽 여유를 0.075로 올려
+    # 합을 0.25에 맞춘다.
+    robot_radius_m: 0.175
+    robot_wall_clearance_m: 0.03
+
+    # --- Occlusion Grid ---
+    diffusion_rate: 0.2
+    decay_factor: 0.9

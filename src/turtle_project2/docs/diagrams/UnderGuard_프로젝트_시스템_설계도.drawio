@@ -1,0 +1,927 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" agent="OpenAI Codex" version="24.7.17" compressed="false" pages="6">
+  <diagram name="00_Overall_Architecture" id="00-page">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="00-0" />
+        <mxCell id="00-1" parent="00-0" />
+        <mxCell id="00-v1" value="UnderGuard — TurtleBot4 2대 방역·순찰 시스템" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#172554;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=26;align=left;verticalAlign=middle;spacing=10;fontStyle=1;dashed=0;fontColor=#ffffff;spacingLeft=20;" vertex="1" parent="00-1">
+          <mxGeometry x="20" y="20" width="1760" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v2" value="현재 저장소 기준 AS-IS 구조 · 초록=구현, 노랑=부분 구현, 빨강=TODO, 파랑 점선=검토 후 개선 설계" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#94a3b8;strokeWidth=2;fontColor=#0f172a;fontSize=12;align=left;verticalAlign=middle;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="20" y="88" width="1760" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v3" value="&lt;b&gt;범례&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="20" y="145" width="90" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v4" value="&lt;b&gt;구현됨&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="120" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v5" value="&lt;b&gt;부분 구현&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="250" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v6" value="&lt;b&gt;TODO/위험&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="380" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v7" value="&lt;b&gt;개선 설계&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="00-1">
+          <mxGeometry x="510" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v8" value="실선: 현재 데이터 흐름 · 점선: 계획/조건부 흐름" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="650" y="145" width="500" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v9" value="&lt;b&gt;Fast DDS Discovery Server&lt;/b&gt;&lt;br&gt;외부 배포 인프라&lt;br&gt;&lt;font color=&quot;#64748b&quot;&gt;메타 트래픽만 중계, 센서 payload 프록시 아님&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="650" y="205" width="500" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v10" value="&lt;b&gt;PC1 — Supervisor + robot4 제어&lt;/b&gt;&lt;br&gt;central/db + robot4 로컬 pipeline" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="30" y="320" width="540" height="640" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v11" value="&lt;b&gt;PC2 — robot6 제어&lt;/b&gt;&lt;br&gt;robot6 로컬 pipeline" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="630" y="320" width="540" height="640" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v12" value="&lt;b&gt;공유 Fleet 계층&lt;/b&gt;&lt;br&gt;ROS_DOMAIN 내 전역 토픽·서비스" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="1230" y="320" width="540" height="640" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v13" value="&lt;b&gt;CentralNode&lt;/b&gt; ✅&lt;br&gt;/fleet/status 수집&lt;br&gt;순찰 부트스트랩·교대&lt;br&gt;TRACK/HERD 역할 배정" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="55" y="385" width="235" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v14" value="&lt;b&gt;DbNode&lt;/b&gt; ✅&lt;br&gt;SQLite holes.db&lt;br&gt;QueryHole 서비스&lt;br&gt;opening/trap 상태 저장" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;fillColor=#f3e8ff;strokeColor=#7e22ce;strokeWidth=2;fontSize=13;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="00-1">
+          <mxGeometry x="310" y="385" width="235" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v15" value="&lt;b&gt;RatHerdingNode&lt;/b&gt; ⚠&lt;br&gt;HERD 대상 B 선택은 구현&lt;br&gt;&lt;font color=&quot;#b91c1c&quot;&gt;몰이 goal 계산·발행 TODO&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="55" y="550" width="235" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v16" value="&lt;b&gt;WebcamNode&lt;/b&gt; TODO&lt;br&gt;VideoCapture·YOLO·homography 미구현&lt;br&gt;tick()은 pass" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="310" y="550" width="235" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v17" value="&lt;b&gt;robot4 CameraNode&lt;/b&gt; ✅&lt;br&gt;RGB + Depth + CameraInfo ATS&lt;br&gt;→ synced/*" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="55" y="710" width="235" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v18" value="&lt;b&gt;robot4 DetectorNode&lt;/b&gt; ⚠&lt;br&gt;YOLO opening/rat + Depth/TF&lt;br&gt;DB·trap FSM·추적 goal" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="310" y="710" width="235" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v19" value="&lt;b&gt;robot4 RobotAgent&lt;/b&gt; ⚠&lt;br&gt;Nav2 waypoint/dock/target_pose&lt;br&gt;battery + fleet status" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="55" y="840" width="235" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v20" value="&lt;b&gt;robot4 TrapCheckNode&lt;/b&gt; ⚠&lt;br&gt;거리 판정·beep·설치 주행&lt;br&gt;고정 sleep 기반 완료" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="310" y="840" width="235" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v21" value="&lt;b&gt;robot6 CameraNode&lt;/b&gt; ✅&lt;br&gt;동일 namespace pipeline" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="655" y="385" width="235" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v22" value="&lt;b&gt;robot6 DetectorNode&lt;/b&gt; ⚠&lt;br&gt;동일 코드·robot6 namespace" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="910" y="385" width="235" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v23" value="&lt;b&gt;robot6 RobotAgent&lt;/b&gt; ⚠&lt;br&gt;robot6 Nav2 + dock&lt;br&gt;&lt;font color=&quot;#b91c1c&quot;&gt;dock 좌표는 현재 추측값&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="655" y="525" width="235" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v24" value="&lt;b&gt;robot6 TrapCheckNode&lt;/b&gt; ⚠&lt;br&gt;robot6 target_pose/cmd_audio" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="910" y="525" width="235" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v25" value="&lt;b&gt;/robot4 Nav2 + AMCL + TF&lt;/b&gt;&lt;br&gt;robot_bringup.launch.py&lt;br&gt;map + patrol waypoints + dock action" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="655" y="680" width="490" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v26" value="&lt;b&gt;/robot6 Nav2 + AMCL + TF&lt;/b&gt;&lt;br&gt;동일 nav2.yaml · namespace=/robot6" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="655" y="830" width="490" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v27" value="&lt;b&gt;/fleet/status&lt;/b&gt;&lt;br&gt;String: robot:state:battery&lt;br&gt;RobotAgent → Central" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="1255" y="385" width="225" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v28" value="&lt;b&gt;/fleet/command&lt;/b&gt;&lt;br&gt;String: robot:command&lt;br&gt;Central → Agent/Detector/Herding" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="1500" y="385" width="225" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v29" value="&lt;b&gt;/fleet/event&lt;/b&gt;&lt;br&gt;String: name:x:y&lt;br&gt;Detector/Trap → Central/DB" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="1255" y="520" width="225" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v30" value="&lt;b&gt;/db/query_hole&lt;/b&gt;&lt;br&gt;QueryHole service&lt;br&gt;Detector ↔ DbNode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="1500" y="520" width="225" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v31" value="&lt;b&gt;robot-local 상대 토픽&lt;/b&gt;&lt;br&gt;synced/* · target_pose · patrol_hold&lt;br&gt;trap_job · battery_state · cmd_audio" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="1255" y="655" width="470" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="00-v32" value="&lt;b&gt;현재 핵심 제한&lt;/b&gt;&lt;br&gt;① B 도킹 상태에서 HERD 직접 수신&lt;br&gt;② detector가 command robot 필터 안 함&lt;br&gt;③ dock/undock 완료를 성공으로 간주&lt;br&gt;④ opening 대기 timeout 없음&lt;br&gt;⑤ TRACK 후 미재검출 시 rat_lost 교착" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="00-1">
+          <mxGeometry x="1255" y="800" width="470" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e33" value="PC1 participants" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;endFill=1;strokeColor=#475569;strokeWidth=1;dashed=1;fontSize=11;fontColor=#475569;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v10" target="00-v9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e34" value="PC2 participants" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;endFill=1;strokeColor=#475569;strokeWidth=1;dashed=1;fontSize=11;fontColor=#475569;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v11" target="00-v9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e35" value="shared ROS domain" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;endFill=1;strokeColor=#475569;strokeWidth=1;dashed=1;fontSize=11;fontColor=#475569;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v12" target="00-v9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e36" value="synced/*" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v17" target="00-v18">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e37" value="target_pose / hold" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v18" target="00-v19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e38" value="trap_job" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v18" target="00-v20">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e39" value="target_pose" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v20" target="00-v19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e40" value="synced/*" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v21" target="00-v22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e41" value="target_pose / hold" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v22" target="00-v23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e42" value="trap_job" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v22" target="00-v24">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e43" value="target_pose" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v24" target="00-v23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e44" value="Nav2 actions" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v19" target="00-v25">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e45" value="Nav2 actions" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v23" target="00-v26">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e46" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v19" target="00-v27">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e47" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v23" target="00-v27">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e48" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v28" target="00-v19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e49" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v28" target="00-v23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e50" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v28" target="00-v18">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e51" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v28" target="00-v22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e52" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v18" target="00-v29">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e53" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v22" target="00-v29">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e54" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v20" target="00-v29">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e55" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v24" target="00-v29">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e56" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v29" target="00-v13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e57" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v29" target="00-v14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e58" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v18" target="00-v30">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e59" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v22" target="00-v30">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="00-e60" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="00-1" source="00-v30" target="00-v14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="01_Robot_Local_Pipeline" id="01-page">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="01-0" />
+        <mxCell id="01-1" parent="01-0" />
+        <mxCell id="01-v1" value="로봇 1대 로컬 파이프라인 — robot4/robot6 공통" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#172554;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=26;align=left;verticalAlign=middle;spacing=10;fontStyle=1;dashed=0;fontColor=#ffffff;spacingLeft=20;" vertex="1" parent="01-1">
+          <mxGeometry x="20" y="20" width="1760" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v2" value="__ns:=/robotX 상대 토픽 정렬 · 실제 Nav2 goal 소유자는 RobotAgent 하나" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#94a3b8;strokeWidth=2;fontColor=#0f172a;fontSize=12;align=left;verticalAlign=middle;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="20" y="88" width="1760" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v3" value="&lt;b&gt;범례&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="20" y="145" width="90" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v4" value="&lt;b&gt;구현됨&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="120" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v5" value="&lt;b&gt;부분 구현&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="250" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v6" value="&lt;b&gt;TODO/위험&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="380" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v7" value="&lt;b&gt;개선 설계&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="01-1">
+          <mxGeometry x="510" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v8" value="실선: 현재 데이터 흐름 · 점선: 계획/조건부 흐름" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="650" y="145" width="500" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v9" value="&lt;b&gt;OAK-D Pro&lt;/b&gt;&lt;br&gt;rgb/image_raw/compressed&lt;br&gt;stereo/image_raw/compressedDepth&lt;br&gt;stereo/camera_info" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="40" y="230" width="250" height="145" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v10" value="&lt;b&gt;CameraNode&lt;/b&gt; ✅&lt;br&gt;ApproximateTimeSynchronizer&lt;br&gt;queue=10 · slop=0.1s&lt;br&gt;변환 없이 재발행" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="340" y="230" width="250" height="145" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v11" value="&lt;b&gt;synced/*&lt;/b&gt;&lt;br&gt;CompressedImage RGB&lt;br&gt;CompressedImage Depth&lt;br&gt;CameraInfo" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="640" y="230" width="230" height="145" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v12" value="&lt;b&gt;DetectorNode&lt;/b&gt; ⚠&lt;br&gt;best.pt / conf=0.6&lt;br&gt;opening·rat·trap class 선택&lt;br&gt;Depth center + TF → map XY" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="920" y="220" width="300" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v13" value="&lt;b&gt;YOLO class?&lt;/b&gt;&lt;br&gt;opening / rat / trap" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontSize=12;align=center;verticalAlign=middle;spacing=6;" vertex="1" parent="01-1">
+          <mxGeometry x="1280" y="235" width="220" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v14" value="&lt;b&gt;opening branch&lt;/b&gt; ✅/⚠&lt;br&gt;hold → 접근 → DB 조회&lt;br&gt;depth_spread 검증&lt;br&gt;trap install/inspect FSM" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="1240" y="470" width="260" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v15" value="&lt;b&gt;rat branch&lt;/b&gt; ⚠&lt;br&gt;rat_detected event&lt;br&gt;TRACK 시 1Hz target_pose&lt;br&gt;capture/lost 판정" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="1520" y="470" width="240" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v16" value="&lt;b&gt;depth_math.py&lt;/b&gt; ✅&lt;br&gt;decode compressedDepth&lt;br&gt;RGB→Depth px 비례 변환&lt;br&gt;median depth · deproject&lt;br&gt;p90−p10 depth_spread" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="920" y="470" width="280" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v17" value="&lt;b&gt;TrapCheckNode&lt;/b&gt; ⚠&lt;br&gt;TrapJob install/inspect&lt;br&gt;hole↔trap ≤ 0.15m&lt;br&gt;beep + target_pose + 고정 wait" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="1240" y="710" width="260" height="155" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v18" value="&lt;b&gt;DbNode&lt;/b&gt; ✅&lt;br&gt;SQLite holes(x,y,trap_installed)&lt;br&gt;match radius=0.30m" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;fillColor=#f3e8ff;strokeColor=#7e22ce;strokeWidth=2;fontSize=13;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="01-1">
+          <mxGeometry x="1520" y="710" width="240" height="155" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v19" value="&lt;b&gt;RobotAgent&lt;/b&gt; ⚠&lt;br&gt;/fleet/command 필터&lt;br&gt;FollowWaypoints 무한 순찰&lt;br&gt;target_pose → goToPose&lt;br&gt;battery 저전압 → dock" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="650" y="700" width="300" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v20" value="&lt;b&gt;TurtleBot4Navigator / Nav2&lt;/b&gt; ✅&lt;br&gt;followWaypoints · goToPose&lt;br&gt;dock_send_goal · undock_send_goal&lt;br&gt;AMCL map→odom→base_link" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="300" y="720" width="300" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v21" value="&lt;b&gt;Create3 / Robot HW&lt;/b&gt;&lt;br&gt;battery_state · cmd_audio&lt;br&gt;cmd_vel · dock/undock action" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="40" y="735" width="220" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v22" value="&lt;b&gt;patrol_hold&lt;/b&gt;&lt;br&gt;Detector → Agent&lt;br&gt;True cancel / False restart" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="650" y="925" width="300" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v23" value="&lt;b&gt;target_pose fan-in&lt;/b&gt;&lt;br&gt;Detector + TrapCheck + Herding&lt;br&gt;→ RobotAgent 단일 구독" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="990" y="925" width="300" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="01-v24" value="&lt;b&gt;주의&lt;/b&gt;&lt;br&gt;RGB/Depth는 timestamp만 동기화한다. 공간 정렬은 카메라 설정에 의존한다.&lt;br&gt;TF/DB/Nav/trap 응답 실패 timeout이 없어 현재는 hold/상태가 교착될 수 있다." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="01-1">
+          <mxGeometry x="1330" y="915" width="430" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e25" value="sensor QoS" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v9" target="01-v10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e26" value="3개 stamp bundle" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v10" target="01-v11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e27" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v11" target="01-v12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e28" value="YOLO result" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v12" target="01-v13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e29" value="opening/trap" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v13" target="01-v14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e30" value="rat" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v13" target="01-v15">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e31" value="3D helpers" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#15803d;strokeWidth=2;dashed=0;fontSize=11;fontColor=#15803d;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v16" target="01-v12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e32" value="trap_job" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v14" target="01-v17">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e33" value="QueryHole / event" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v14" target="01-v18">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e34" value="target_pose" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v17" target="01-v19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e35" value="target_pose / hold" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v12" target="01-v19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e36" value="actions" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v19" target="01-v20">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e37" value="motion / dock" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v20" target="01-v21">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e38" value="battery" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v21" target="01-v19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e39" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v22" target="01-v19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="01-e40" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="01-1" source="01-v23" target="01-v19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="02_Fleet_and_Rat_Response" id="02-page">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="02-0" />
+        <mxCell id="02-1" parent="02-0" />
+        <mxCell id="02-v1" value="Fleet 조율과 쥐 대응 — 현재 구현 및 끊긴 고리" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#172554;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=26;align=left;verticalAlign=middle;spacing=10;fontStyle=1;dashed=0;fontColor=#ffffff;spacingLeft=20;" vertex="1" parent="02-1">
+          <mxGeometry x="20" y="20" width="1760" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v2" value="CentralNode의 실제 전이, Detector 추적, RatHerding TODO를 한 흐름으로 표시" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#94a3b8;strokeWidth=2;fontColor=#0f172a;fontSize=12;align=left;verticalAlign=middle;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="20" y="88" width="1760" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v3" value="&lt;b&gt;범례&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="20" y="145" width="90" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v4" value="&lt;b&gt;구현됨&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="120" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v5" value="&lt;b&gt;부분 구현&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="250" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v6" value="&lt;b&gt;TODO/위험&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="380" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v7" value="&lt;b&gt;개선 설계&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="02-1">
+          <mxGeometry x="510" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v8" value="실선: 현재 데이터 흐름 · 점선: 계획/조건부 흐름" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="650" y="145" width="500" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v9" value="&lt;b&gt;정상 순찰 교대&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="30" y="205" width="840" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v10" value="&lt;b&gt;RobotAgent status&lt;/b&gt;&lt;br&gt;robot:state:battery&lt;br&gt;주기 기본 10초" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="50" y="300" width="210" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v11" value="&lt;b&gt;Central coverage_action&lt;/b&gt;&lt;br&gt;busy 없고 waking 없으면&lt;br&gt;DOCKED/IDLE 한 대 선택" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="310" y="300" width="230" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v12" value="&lt;b&gt;UNDOCK 발행&lt;/b&gt;&lt;br&gt;현재 agent는 즉시&lt;br&gt;state=PATROLLING 설정" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="590" y="300" width="230" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v13" value="&lt;b&gt;배터리 &amp;lt; threshold&lt;/b&gt;&lt;br&gt;PATROLLING → RETURNING&lt;br&gt;dock 완료 → DOCKED" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="310" y="480" width="230" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v14" value="&lt;b&gt;DOCKED 전이&lt;/b&gt;&lt;br&gt;다른 로봇 UNDOCK&lt;br&gt;한 대 순찰 유지 시도" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="590" y="480" width="230" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e15" value="/fleet/status" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v10" target="02-v11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e16" value="/fleet/command" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v11" target="02-v12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e17" value="battery low" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v12" target="02-v13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e18" value="dock complete" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v13" target="02-v14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e19" value="다음 로봇" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v14" target="02-v11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v20" value="&lt;b&gt;현재 쥐 대응 흐름&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="910" y="205" width="860" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v21" value="&lt;b&gt;Detector patrol 감지&lt;/b&gt;&lt;br&gt;rat_detected:x:y 발행" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="930" y="300" width="210" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v22" value="&lt;b&gt;Central 역할 배정&lt;/b&gt;&lt;br&gt;A=patroller&lt;br&gt;B=나머지 로봇" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="1190" y="300" width="210" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v23" value="&lt;b&gt;A: TRACK&lt;/b&gt;&lt;br&gt;Agent=TRACKING&lt;br&gt;Detector tracking on" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="1450" y="285" width="220" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v24" value="&lt;b&gt;B: HERD&lt;/b&gt;&lt;br&gt;Agent=HERDING&lt;br&gt;HerdingNode가 B 선택" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="1450" y="445" width="220" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v25" value="&lt;b&gt;A Detector&lt;/b&gt;&lt;br&gt;쥐 좌표로 target_pose&lt;br&gt;capture/lost event" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="1190" y="470" width="210" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v26" value="&lt;b&gt;종료&lt;/b&gt;&lt;br&gt;A→PATROL&lt;br&gt;B→DOCK" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="930" y="485" width="210" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e27" value="/fleet/event" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v21" target="02-v22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e28" value="TRACK" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v22" target="02-v23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e29" value="HERD" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v22" target="02-v24">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e30" value="tracking" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v23" target="02-v25">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e31" value="captured/lost" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v25" target="02-v26">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v32" value="&lt;b&gt;문제 1&lt;/b&gt;&lt;br&gt;B는 보통 DOCKED인데 HERD 전에 UNDOCK이 없다.&lt;br&gt;RatHerding event_cb도 goal 계산 없이 로그만 남긴다." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="930" y="660" width="380" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v33" value="&lt;b&gt;문제 2&lt;/b&gt;&lt;br&gt;Detector command_cb가 robot 필드를 버려 robot4 TRACK에 robot6 detector도 켜진다." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="1330" y="660" width="380" height="125" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v34" value="&lt;b&gt;문제 3·5&lt;/b&gt;&lt;br&gt;UNDOCK 전에 PATROLLING 보고. dock 실패도 DOCKED 가능.&lt;br&gt;TRACK reset 후 재관측 0회면 rat_lost 없음." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="02-1">
+          <mxGeometry x="930" y="810" width="780" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="02-v35" value="&lt;b&gt;vNext 설계 요약&lt;/b&gt;&lt;br&gt;Central pending_after_undock: DOCKED B → UNDOCK → IDLE 확인 → HERD&lt;br&gt;Detector는 namespace robot_id 필터 · RatTracker tracking_started_at 추가&lt;br&gt;RatObservation typed topic + 실제 B_goal = rat 반대편 standoff 계산" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="02-1">
+          <mxGeometry x="260" y="760" width="600" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e36" value="개선 설계" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v32" target="02-v35">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e37" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v33" target="02-v35">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="02-e38" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="02-1" source="02-v34" target="02-v35">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="03_Opening_Trap_State_Machine" id="03-page">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="03-0" />
+        <mxCell id="03-1" parent="03-0" />
+        <mxCell id="03-v1" value="Opening 검증·DB·Trap 처리 상태기계" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#172554;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=26;align=left;verticalAlign=middle;spacing=10;fontStyle=1;dashed=0;fontColor=#ffffff;spacingLeft=20;" vertex="1" parent="03-1">
+          <mxGeometry x="20" y="20" width="1760" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v2" value="DetectorNode가 상태기계 주인, TrapCheckNode는 install/inspect 실행기, DbNode는 영속 저장소" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#94a3b8;strokeWidth=2;fontColor=#0f172a;fontSize=12;align=left;verticalAlign=middle;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="20" y="88" width="1760" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v3" value="&lt;b&gt;범례&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="20" y="145" width="90" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v4" value="&lt;b&gt;구현됨&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="120" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v5" value="&lt;b&gt;부분 구현&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="250" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v6" value="&lt;b&gt;TODO/위험&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="380" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v7" value="&lt;b&gt;개선 설계&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="03-1">
+          <mxGeometry x="510" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v8" value="실선: 현재 데이터 흐름 · 점선: 계획/조건부 흐름" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="650" y="145" width="500" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v9" value="&lt;b&gt;SEARCHING&lt;/b&gt;&lt;br&gt;YOLO opening 선택" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="60" y="260" width="190" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v10" value="&lt;b&gt;APPROACHING&lt;/b&gt;&lt;br&gt;hold=True&lt;br&gt;target_pose 발행&lt;br&gt;TF 거리로 도착 판정" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="320" y="240" width="220" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v11" value="&lt;b&gt;QUERYING&lt;/b&gt;&lt;br&gt;/db/query_hole async" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="610" y="260" width="200" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v12" value="&lt;b&gt;VERIFYING&lt;/b&gt;&lt;br&gt;재검출 + depth_spread&lt;br&gt;gap ≥ 0.05m?" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="890" y="230" width="230" height="145" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v13" value="&lt;b&gt;INSPECTING&lt;/b&gt;&lt;br&gt;YOLO trap 좌표 추출&lt;br&gt;hole↔trap 비교 요청" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="890" y="500" width="230" height="145" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v14" value="&lt;b&gt;AWAIT_TRAP&lt;/b&gt;&lt;br&gt;trap_installed / ok / bad&lt;br&gt;전역 event 대기" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="610" y="500" width="200" height="145" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v15" value="&lt;b&gt;FINISH&lt;/b&gt;&lt;br&gt;hold=False&lt;br&gt;상태 reset → SEARCHING" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="320" y="520" width="220" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v16" value="&lt;b&gt;SQLite holes&lt;/b&gt;&lt;br&gt;x · y · trap_installed&lt;br&gt;match ≤ 0.30m" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;fillColor=#f3e8ff;strokeColor=#7e22ce;strokeWidth=2;fontSize=13;align=center;verticalAlign=middle;spacing=8;" vertex="1" parent="03-1">
+          <mxGeometry x="1260" y="240" width="220" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v17" value="&lt;b&gt;TrapCheckNode&lt;/b&gt;&lt;br&gt;install: beep + 0.20m 접근 + 0.60m 이탈&lt;br&gt;inspect: 거리 ≤ 0.15m" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="1260" y="500" width="300" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v18" value="&lt;b&gt;RobotAgent&lt;/b&gt;&lt;br&gt;patrol_hold로 waypoint cancel/restart&lt;br&gt;target_pose는 goToPose" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="1260" y="730" width="300" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e19" value="opening + map XY" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v9" target="03-v10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e20" value="goal 거리 ≤ arrive_tol" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v10" target="03-v11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e21" value="exists=False" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v11" target="03-v12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e22" value="exists=True" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v11" target="03-v13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e23" value="opening_confirmed + install" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v12" target="03-v14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e24" value="flat / verify 실패" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v12" target="03-v15">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e25" value="trap_installed" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v14" target="03-v13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e26" value="inspect job" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v13" target="03-v14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e27" value="trap_ok" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v14" target="03-v15">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e28" value="trap_bad → reinstall ≤ 3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v14" target="03-v14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e29" value="resume" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v15" target="03-v9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e30" value="QueryHole" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v11" target="03-v16">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e31" value="opening_confirmed" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v12" target="03-v16">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e32" value="trap_ok/bad" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v14" target="03-v16">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e33" value="TrapJob" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v14" target="03-v17">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e34" value="/fleet/event" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v17" target="03-v14">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e35" value="hold + goal" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v10" target="03-v18">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e36" value="goal" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v17" target="03-v18">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e37" value="hold=False" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=0;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v15" target="03-v18">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v38" value="&lt;b&gt;교착 A&lt;/b&gt;&lt;br&gt;hold=True 뒤 TF 실패 → SEARCHING인데 순찰은 정지" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="60" y="740" width="270" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v39" value="&lt;b&gt;교착 B&lt;/b&gt;&lt;br&gt;APPROACHING/Nav 실패에 wall timeout 없음" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="350" y="740" width="270" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v40" value="&lt;b&gt;교착 C&lt;/b&gt;&lt;br&gt;DB future 예외·TrapJob 유실 시 QUERYING/AWAIT_TRAP 영구 대기" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="03-1">
+          <mxGeometry x="640" y="740" width="300" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="03-v41" value="&lt;b&gt;개선 설계&lt;/b&gt;&lt;br&gt;TF/goal 검증 후 hold · state_deadline watchdog · abort_opening 공통 정리&lt;br&gt;hold heartbeat/lease · operation_id/attempt_id 기반 TrapResult 상관관계" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="03-1">
+          <mxGeometry x="60" y="900" width="880" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e42" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v38" target="03-v41">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e43" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v39" target="03-v41">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="03-e44" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="03-1" source="03-v40" target="03-v41">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="04_ROS_Interface_Contracts" id="04-page">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="04-0" />
+        <mxCell id="04-1" parent="04-0" />
+        <mxCell id="04-v1" value="ROS 2 인터페이스 계약과 namespace" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#172554;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=26;align=left;verticalAlign=middle;spacing=10;fontStyle=1;dashed=0;fontColor=#ffffff;spacingLeft=20;" vertex="1" parent="04-1">
+          <mxGeometry x="20" y="20" width="1760" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v2" value="코드에서 실제 생성하는 publisher/subscriber/service/action 기준 · 작은 fleet 문자열과 대용량 센서 토픽 구분" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#94a3b8;strokeWidth=2;fontColor=#0f172a;fontSize=12;align=left;verticalAlign=middle;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="20" y="88" width="1760" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v3" value="&lt;b&gt;전역 Fleet 인터페이스&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="30" y="175" width="1740" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v4" value="&lt;b&gt;이름&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="245" width="280" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v5" value="&lt;b&gt;타입·QoS&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="340" y="245" width="250" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v6" value="&lt;b&gt;발행&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="610" y="245" width="270" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v7" value="&lt;b&gt;구독&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="900" y="245" width="290" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v8" value="&lt;b&gt;핵심 필드/역할&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1210" y="245" width="540" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v9" value="/fleet/status" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="305" width="280" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v10" value="std_msgs/String · depth 10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="340" y="305" width="250" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v11" value="RobotAgent ×2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="610" y="305" width="270" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v12" value="CentralNode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="900" y="305" width="290" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v13" value="robot:state:battery · 주기 보고" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1210" y="305" width="540" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v14" value="/fleet/command" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="387" width="280" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v15" value="std_msgs/String · depth 10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="340" y="387" width="250" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v16" value="CentralNode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="610" y="387" width="270" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v17" value="Agent ×2 · Detector ×2 · Herding" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="900" y="387" width="290" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v18" value="robot:cmd · 수신 노드는 robot 필터 필요" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1210" y="387" width="540" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v19" value="/fleet/event" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="469" width="280" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v20" value="std_msgs/String · depth 10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="340" y="469" width="250" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v21" value="Detector/TrapCheck" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="610" y="469" width="270" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v22" value="Central · Db · Detector · Herding" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="900" y="469" width="290" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v23" value="name:x:y · source/job ID 없음" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1210" y="469" width="540" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v24" value="/db/query_hole" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="551" width="280" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v25" value="turtle_interfaces/QueryHole" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="340" y="551" width="250" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v26" value="DbNode service" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="610" y="551" width="270" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v27" value="Detector clients ×2" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="900" y="551" width="290" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v28" value="exists · trap_installed · stored hole XY" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1210" y="551" width="540" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v29" value="&lt;b&gt;로봇별 상대 인터페이스 (__ns:=/robotX)&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="30" y="655" width="1740" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v30" value="&lt;b&gt;토픽&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="720" width="360" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v31" value="&lt;b&gt;발행&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="420" y="720" width="320" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v32" value="&lt;b&gt;구독&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="760" y="720" width="320" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v33" value="&lt;b&gt;계약/주의&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1100" y="720" width="650" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v34" value="oakd/* 3종" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="772" width="360" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v35" value="Camera sensor input" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="420" y="772" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v36" value="CameraNode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="760" y="772" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v37" value="sensor_data QoS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1100" y="772" width="650" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v38" value="synced/rgb · depth · camera_info" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="815" width="360" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v39" value="CameraNode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="420" y="815" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v40" value="DetectorNode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="760" y="815" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v41" value="sensor_data QoS · 원본 stamp 유지" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1100" y="815" width="650" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v42" value="target_pose" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="858" width="360" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v43" value="Detector/Trap/Herding" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="420" y="858" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v44" value="RobotAgent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="760" y="858" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v45" value="PoseStamped map goal · 여러 publisher fan-in" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1100" y="858" width="650" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v46" value="patrol_hold" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="901" width="360" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v47" value="DetectorNode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="420" y="901" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v48" value="RobotAgent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="760" y="901" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v49" value="Bool · opening 동안 waypoint 정지" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1100" y="901" width="650" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v50" value="trap_job" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="944" width="360" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v51" value="DetectorNode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="420" y="944" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v52" value="TrapCheckNode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="760" y="944" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v53" value="TrapJob install/inspect" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1100" y="944" width="650" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v54" value="battery_state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="987" width="360" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v55" value="Create3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="420" y="987" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v56" value="RobotAgent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="760" y="987" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v57" value="BatteryState percentage" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1100" y="987" width="650" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v58" value="cmd_audio" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="40" y="1030" width="360" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v59" value="TrapCheckNode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="420" y="1030" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v60" value="Create3" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="760" y="1030" width="320" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="04-v61" value="AudioNoteVector beep" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="04-1">
+          <mxGeometry x="1100" y="1030" width="650" height="40" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="05_Review_1_to_5_Target_Design" id="05-page">
+    <mxGraphModel dx="1800" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1100" math="0" shadow="0" background="#ffffff">
+      <root>
+        <mxCell id="05-0" />
+        <mxCell id="05-1" parent="05-0" />
+        <mxCell id="05-v1" value="코드 리뷰 1~5번 개선 목표 — TO-BE" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#172554;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=26;align=left;verticalAlign=middle;spacing=10;fontStyle=1;dashed=0;fontColor=#ffffff;spacingLeft=20;" vertex="1" parent="05-1">
+          <mxGeometry x="20" y="20" width="1760" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v2" value="docs/specs/2026-08-06-review-issues-1-5-remediation-design.md 요약 · 아직 코드에는 미적용" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#94a3b8;strokeWidth=2;fontColor=#0f172a;fontSize=12;align=left;verticalAlign=middle;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="20" y="88" width="1760" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v3" value="&lt;b&gt;범례&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="20" y="145" width="90" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v4" value="&lt;b&gt;구현됨&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dcfce7;strokeColor=#15803d;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="120" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v5" value="&lt;b&gt;부분 구현&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#b45309;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="250" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v6" value="&lt;b&gt;TODO/위험&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="380" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v7" value="&lt;b&gt;개선 설계&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="510" y="145" width="120" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v8" value="실선: 현재 데이터 흐름 · 점선: 계획/조건부 흐름" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="650" y="145" width="500" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v9" value="&lt;b&gt;1. B 언도킹 후 HERD&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="30" y="215" width="330" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v10" value="&lt;b&gt;Central pending_after_undock&lt;/b&gt;&lt;br&gt;DOCKED B → UNDOCK&lt;br&gt;후속 명령 HERD 저장" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="45" y="300" width="300" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v11" value="&lt;b&gt;RobotAgent&lt;/b&gt;&lt;br&gt;UNDOCKING → 성공 시 IDLE&lt;br&gt;자동 PATROL 금지" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="45" y="460" width="300" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v12" value="&lt;b&gt;Central&lt;/b&gt;&lt;br&gt;IDLE status 확인 후 HERD" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="45" y="610" width="300" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v13" value="&lt;b&gt;RatHerding&lt;/b&gt;&lt;br&gt;RatObservation + herd_target&lt;br&gt;반대편 standoff B_goal 발행" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="45" y="745" width="300" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e14" value="UNDOCK" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v10" target="05-v11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e15" value="IDLE" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v11" target="05-v12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e16" value="HERD" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v12" target="05-v13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v17" value="&lt;b&gt;2. 로봇 명령 필터&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="390" y="215" width="330" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v18" value="&lt;b&gt;Detector robot_id&lt;/b&gt;&lt;br&gt;namespace 마지막 구성요소 사용&lt;br&gt;robot != self.robot_id → return&lt;br&gt;root/mismatch는 시작 실패" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="405" y="300" width="300" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v19" value="&lt;b&gt;idempotent command&lt;/b&gt;&lt;br&gt;중복 TRACK은 timer reset 금지&lt;br&gt;다른 로봇 PATROL/DOCK도 상태 불변" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="405" y="510" width="300" height="135" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v20" value="&lt;b&gt;3. 진실한 RobotAgent 상태&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="750" y="215" width="480" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v21" value="&lt;b&gt;UNKNOWN&lt;/b&gt;&lt;br&gt;dock status 대기" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="770" y="300" width="140" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v22" value="&lt;b&gt;DOCKED&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="1040" y="300" width="140" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v23" value="&lt;b&gt;UNDOCKING&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="1040" y="440" width="140" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v24" value="&lt;b&gt;IDLE&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="770" y="440" width="140" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v25" value="&lt;b&gt;PATROLLING&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="770" y="580" width="140" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v26" value="&lt;b&gt;RETURNING&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="1040" y="580" width="140" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v27" value="&lt;b&gt;DOCKING&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="1040" y="720" width="140" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v28" value="&lt;b&gt;FAULT&lt;/b&gt;&lt;br&gt;reject/fail/cancel/timeout" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fee2e2;strokeColor=#b91c1c;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="820" y="850" width="310" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e29" value="is_docked=true" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v21" target="05-v22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e30" value="false" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v21" target="05-v24">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e31" value="UNDOCK accepted" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v22" target="05-v23">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e32" value="SUCCEEDED" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v23" target="05-v24">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e33" value="PATROL accepted" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v24" target="05-v25">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e34" value="DOCK/battery" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v25" target="05-v26">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e35" value="approach success" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v26" target="05-v27">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e36" value="SUCCEEDED" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v27" target="05-v22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e37" value="failure" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b91c1c;strokeWidth=2;dashed=1;fontSize=11;fontColor=#b91c1c;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v23" target="05-v28">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e38" value="failure" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b91c1c;strokeWidth=2;dashed=1;fontSize=11;fontColor=#b91c1c;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v26" target="05-v28">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e39" value="failure" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#b91c1c;strokeWidth=2;dashed=1;fontSize=11;fontColor=#b91c1c;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v27" target="05-v28">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v40" value="&lt;b&gt;4. Opening 유한 대기&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#172554;strokeWidth=2;fontColor=#0f172a;fontSize=17;align=center;verticalAlign=top;spacing=10;fontStyle=1;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="1260" y="215" width="500" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v41" value="&lt;b&gt;state_deadline watchdog&lt;/b&gt;&lt;br&gt;APPROACH 60s · DB 5s · VERIFY 10s&lt;br&gt;TRAP install 20s · inspect 5~10s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="1280" y="300" width="460" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v42" value="&lt;b&gt;abort_opening(reason)&lt;/b&gt;&lt;br&gt;hold=False · SEARCHING reset&lt;br&gt;늦은 future/attempt 응답 무시" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="1280" y="470" width="460" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v43" value="&lt;b&gt;hold lease&lt;/b&gt;&lt;br&gt;Detector True heartbeat 1Hz&lt;br&gt;Agent 3s 미수신 시 자동 해제" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="1280" y="630" width="460" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v44" value="&lt;b&gt;Trap correlation&lt;/b&gt;&lt;br&gt;robot + operation_id + attempt_id&lt;br&gt;typed TrapResult만 FSM 전이에 사용" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="1280" y="780" width="460" height="115" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e45" value="timeout/error" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v41" target="05-v42">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e46" value="detector 장애" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v43" target="05-v42">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-e47" value="stale 무시" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#2563eb;strokeWidth=2;dashed=1;fontSize=11;fontColor=#2563eb;labelBackgroundColor=#ffffff;" edge="1" parent="05-1" source="05-v44" target="05-v42">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v48" value="&lt;b&gt;5. TRACK 직후 미재검출&lt;/b&gt;&lt;br&gt;RatTracker.start(now, seed) · loss_reference = last_seen 또는 tracking_started_at&lt;br&gt;추가 관측 0회여도 lost_secs 후 rat_lost 1회 · capture/lost 중복 발행 금지" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#2563eb;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=1;" vertex="1" parent="05-1">
+          <mxGeometry x="390" y="720" width="330" height="190" as="geometry" />
+        </mxCell>
+        <mxCell id="05-v49" value="&lt;b&gt;수용 기준&lt;/b&gt;&lt;br&gt;• 다른 로봇 TRACK에 detector 상태 불변&lt;br&gt;• DOCKED B는 UNDOCKING→IDLE→HERDING&lt;br&gt;• 액션 실패 시 PATROLLING/DOCKED 금지&lt;br&gt;• 모든 비-SEARCHING 상태 timeout 보유&lt;br&gt;• 관측 0회도 rat_lost 정확히 1회" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#475569;strokeWidth=2;fontColor=#0f172a;fontSize=13;align=left;verticalAlign=top;spacing=10;fontStyle=0;dashed=0;" vertex="1" parent="05-1">
+          <mxGeometry x="390" y="945" width="1350" height="120" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

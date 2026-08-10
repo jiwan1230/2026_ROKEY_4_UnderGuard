@@ -1,0 +1,10 @@
+# 우리 패키지만 추적 — 나머지(upstream 클론·백업)는 제외
+/*
+!.gitignore
+!/turtle_project2/
+!/turtle_interfaces2/
+!/turtlebot4_beep/
+
+# 파이썬/빌드 산출물
+__pycache__/
+*.pyc

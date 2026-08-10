@@ -1,0 +1,1192 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="Claude Opus 5" compressed="false">
+  <diagram id="R0DHDsfpTBEIguMkzVYP" name="Under-Guard 시스템 설계도">
+    <mxGraphModel dx="7030" dy="3164" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ================= 제목 · 범례 ================= -->
+        <mxCell id="cl-title" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#17365d;strokeColor=#17365d;fontColor=#ffffff;fontSize=48;fontStyle=1;align=center;verticalAlign=middle;" value="Under-Guard — 2로봇 방역 감시 시스템&lt;br&gt;&lt;font style=&quot;font-size: 24px;&quot;&gt;turtle_project 실제 소스 기준 (2026-08-07) · 코드에 없는 요소는 도면에서 제거함&lt;/font&gt;">
+          <mxGeometry height="150" width="2853" x="-1241" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-legend" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#17365d;strokeWidth=2;fontSize=18;align=left;verticalAlign=top;spacing=10;" value="&lt;b style=&quot;font-size:22px&quot;&gt;범례&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#22863a&quot;&gt;■&lt;/font&gt; 초록 — 구현 완료 (self-check 통과, 실제 동작)&lt;br&gt;&lt;font color=&quot;#c53030&quot;&gt;■&lt;/font&gt; 빨강 — 미구현 스텁 (코드가 pass / 로그만)&lt;br&gt;&lt;font color=&quot;#b7791f&quot;&gt;■&lt;/font&gt; 노랑 — 알려진 한계·주의 (동작하지만 취약)&lt;br&gt;&lt;font color=&quot;#2563eb&quot;&gt;■&lt;/font&gt; 파랑 굵은 테두리 — 상태기계의 state&lt;br&gt;&lt;br&gt;&lt;b&gt;미구현은 2개뿐:&lt;/b&gt; webcam_node.tick, rat_herding 몰이 goal 계산">
+          <mxGeometry height="290" width="1300" x="-1241" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-topics" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7fbff;strokeColor=#4a86e8;strokeWidth=2;fontSize=17;align=left;verticalAlign=top;spacing=10;" value="&lt;b style=&quot;font-size:22px&quot;&gt;배선 규칙 (fleet_msg.py 포맷)&lt;/b&gt;&lt;br&gt;노드 간 통신은 String 토픽 3개로만: &lt;b&gt;/fleet/status&lt;/b&gt; &quot;robot4:PATROLLING:85&quot; · &lt;b&gt;/fleet/command&lt;/b&gt; &quot;robot6:UNDOCK&quot; · &lt;b&gt;/fleet/event&lt;/b&gt; &quot;rat_detected:1.20:3.40&quot;&lt;br&gt;&lt;b&gt;target_pose&lt;/b&gt;(PoseStamped)는 로봇당 하나 — detector·trap_check·rat_herding이 발행하고 &lt;b&gt;robot_agent만 구독&lt;/b&gt; = 로봇당 Nav2 주인 1개&lt;br&gt;로봇별 토픽은 상대경로 — 실행 때 &lt;b&gt;__ns:=/robot4&lt;/b&gt; 를 걸면 /robot4/... 로 맞춰진다 (네임스페이스 없이 띄우면 robot_id가 빈 문자열이라 모든 명령을 무시)">
+          <mxGeometry height="290" width="1490" x="79" y="270" as="geometry" />
+        </mxCell>
+
+        <!-- ================= PC / 로봇 컨테이너 ================= -->
+        <mxCell id="ZesqVsjJ1KR3q78cPR1M-2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7fbff;strokeColor=#4a86e8;strokeWidth=2;fontSize=13;fontStyle=1;align=center;verticalAlign=top;spacingLeft=8;spacingTop=6;" value="&lt;span style=&quot;font-size: 72px;&quot;&gt;PC1 — 중앙 조율 + robot4 제어&lt;/span&gt;">
+          <mxGeometry height="6480" width="2853" x="-1241" y="670" as="geometry" />
+        </mxCell>
+        <mxCell id="J7vmnKwVl9piq1jNm-W3-1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7fbff;strokeColor=#4a86e8;strokeWidth=2;fontSize=13;fontStyle=1;align=center;verticalAlign=top;spacingLeft=8;spacingTop=6;" value="&lt;span style=&quot;font-size: 48px;&quot;&gt;PC2 — robot6 제어 전용&lt;/span&gt;">
+          <mxGeometry height="5970" width="2660" x="5950" y="630" as="geometry" />
+        </mxCell>
+        <mxCell id="QZnxUqLfaSuBzwW-utDb-1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7fbff;strokeColor=#4a86e8;strokeWidth=2;fontSize=13;fontStyle=1;align=center;verticalAlign=top;spacingLeft=8;spacingTop=6;" value="&lt;font style=&quot;font-size: 72px;&quot;&gt;Robot 4 / TurtleBot 4&lt;/font&gt;">
+          <mxGeometry height="2116" width="1654" x="1900" y="520" as="geometry" />
+        </mxCell>
+        <mxCell id="Axxf3i6UiLeMtmhwf-ec-2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7fbff;strokeColor=#4a86e8;strokeWidth=2;fontSize=36;fontStyle=1;align=center;verticalAlign=top;spacingLeft=8;spacingTop=6;" value="Robot 6 / TurtleBot 4">
+          <mxGeometry height="1520" width="1030" x="4630" y="670" as="geometry" />
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-17" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7fbff;strokeColor=#4a86e8;strokeWidth=2;fontSize=13;fontStyle=1;align=center;verticalAlign=top;spacingLeft=8;spacingTop=6;" value="&lt;b&gt;&lt;font style=&quot;font-size: 36px;&quot;&gt;PC3 Discovery + ROS2 Network Bus&lt;/font&gt;&lt;/b&gt;">
+          <mxGeometry height="370" width="2160" x="3308" y="110" as="geometry" />
+        </mxCell>
+        <mxCell id="aUV0PX06zL4ate00sDwk-1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7fbff;strokeColor=#4a86e8;strokeWidth=2;fontSize=13;fontStyle=1;align=center;verticalAlign=top;spacingLeft=8;spacingTop=6;movable=0;resizable=0;rotatable=0;deletable=0;editable=0;locked=1;connectable=0;" value="&lt;span style=&quot;font-size: 72px;&quot;&gt;Nav2 Architecture&lt;/span&gt;">
+          <mxGeometry height="1200" width="2750" x="2410" y="2970" as="geometry" />
+        </mxCell>
+
+        <!-- ================= PC3 Discovery ================= -->
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-23" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6b7280;fontSize=10;align=center;verticalAlign=middle;" value="&lt;font style=&quot;font-size: 18px;&quot;&gt;&lt;b&gt;Shared Network / Fast DDS Domain 4&lt;/b&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;Wi-Fi 5 GHz / Ethernet&amp;nbsp;&amp;nbsp;&amp;nbsp;192.168.108.0/24&lt;/font&gt;">
+          <mxGeometry height="52" width="2160" x="3308" y="428" as="geometry" />
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-18" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf5e5;strokeColor=#6aa84f;fontSize=10;align=left;verticalAlign=top;spacingLeft=6;spacingTop=5;" value="&lt;b&gt;PC3 — Fast DDS Discovery Server&lt;/b&gt;&lt;br/&gt;IP: &lt;b&gt;192.168.108.42&lt;/b&gt;&lt;br/&gt;ROS_DOMAIN_ID=&lt;b&gt;4&lt;/b&gt;&lt;br/&gt;ROS_DISCOVERY_SERVER=&lt;b&gt;192.168.108.42:11811&lt;/b&gt;&lt;br/&gt;&lt;br/&gt;&lt;font color=&quot;#b91c1c&quot;&gt;Discovery 메타트래픽만 중계함&lt;br/&gt;영상/Depth payload 프록시가 아님&lt;/font&gt;">
+          <mxGeometry height="115" width="260" x="4298" y="188" as="geometry" />
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-19" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf2ff;strokeColor=#4a86e8;fontSize=10;align=left;verticalAlign=top;spacingLeft=6;spacingTop=5;" value="&lt;b&gt;PC1 — Supervisor&lt;/b&gt;&lt;br/&gt;robot4 앱 4노드 + central·db·herding·webcam&lt;br/&gt;ROS_DOMAIN_ID=4">
+          <mxGeometry height="58" width="210" x="3758" y="348" as="geometry" />
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-20" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf2ff;strokeColor=#4a86e8;fontSize=10;align=left;verticalAlign=top;spacingLeft=6;spacingTop=5;" value="&lt;b&gt;PC2 — Controller&lt;/b&gt;&lt;br/&gt;robot6 앱 4노드만&lt;br/&gt;ROS_DOMAIN_ID=4">
+          <mxGeometry height="58" width="160" x="4918" y="348" as="geometry" />
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-21" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf5e5;strokeColor=#6aa84f;fontSize=10;align=left;verticalAlign=top;spacingLeft=6;spacingTop=5;" value="&lt;b&gt;TurtleBot4 / robot4&lt;/b&gt;&lt;br/&gt;OAK-D Pro · LiDAR · Create3&lt;br/&gt;AMCL/TF/Nav2/Dock/Battery">
+          <mxGeometry height="58" width="170" x="3998" y="258" as="geometry" />
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-22" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf5e5;strokeColor=#6aa84f;fontSize=10;align=left;verticalAlign=top;spacingLeft=6;spacingTop=5;" value="&lt;b&gt;TurtleBot4 / robot6&lt;/b&gt;&lt;br/&gt;OAK-D Pro · LiDAR · Create3&lt;br/&gt;AMCL/TF/Nav2/Dock/Battery">
+          <mxGeometry height="72" width="150" x="4708" y="258" as="geometry" />
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-24" edge="1" parent="1" source="uQTW0ZnMJClOxpSCUEKw-19" target="uQTW0ZnMJClOxpSCUEKw-18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;dashed=1;strokeColor=#2563eb;fontColor=#2563eb;fontSize=8;labelBackgroundColor=#ffffff;" value="participant discovery">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="4408" y="388" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-25" edge="1" parent="1" source="uQTW0ZnMJClOxpSCUEKw-20" target="uQTW0ZnMJClOxpSCUEKw-18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;dashed=1;strokeColor=#2563eb;fontColor=#2563eb;fontSize=8;labelBackgroundColor=#ffffff;" value="participant discovery">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="4438" y="388" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-26" edge="1" parent="1" source="uQTW0ZnMJClOxpSCUEKw-21" target="uQTW0ZnMJClOxpSCUEKw-18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;dashed=1;strokeColor=#2563eb;fontColor=#2563eb;fontSize=8;labelBackgroundColor=#ffffff;" value="participant discovery">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="4083" y="248" /><mxPoint x="4233" y="248" /><mxPoint x="4233" y="245.5" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-27" edge="1" parent="1" source="uQTW0ZnMJClOxpSCUEKw-22" target="uQTW0ZnMJClOxpSCUEKw-18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;dashed=1;strokeColor=#2563eb;fontColor=#2563eb;fontSize=8;labelBackgroundColor=#ffffff;" value="participant discovery">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="4798" y="245.5" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-28" edge="1" parent="1" source="uQTW0ZnMJClOxpSCUEKw-21" target="uQTW0ZnMJClOxpSCUEKw-19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#2563eb;fontColor=#2563eb;fontSize=8;labelBackgroundColor=#ffffff;" value="robot4 sensor + state payload">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-29" edge="1" parent="1" source="uQTW0ZnMJClOxpSCUEKw-22" target="uQTW0ZnMJClOxpSCUEKw-20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#2563eb;fontColor=#2563eb;fontSize=8;labelBackgroundColor=#ffffff;" value="robot6 sensor + state payload">
+          <mxGeometry relative="1" x="-0.2268" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-30" edge="1" parent="1" source="uQTW0ZnMJClOxpSCUEKw-19" target="uQTW0ZnMJClOxpSCUEKw-21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#2563eb;fontColor=#2563eb;fontSize=8;labelBackgroundColor=#ffffff;" value="Nav2 / dock / mission cmd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="uQTW0ZnMJClOxpSCUEKw-31" edge="1" parent="1" source="uQTW0ZnMJClOxpSCUEKw-20" target="uQTW0ZnMJClOxpSCUEKw-22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#2563eb;fontColor=#2563eb;fontSize=8;labelBackgroundColor=#ffffff;" value="Nav2 / dock / mission cmd">
+          <mxGeometry relative="1" x="-0.2857" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+
+        <!-- ================= 로봇 센서 퍼블리셔 ================= -->
+        <mxCell id="QZnxUqLfaSuBzwW-utDb-2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf3ff;strokeColor=#5b9bd5;strokeWidth=2;fontSize=11;align=left;verticalAlign=top;spacing=6;" value="&lt;b style=&quot;font-size:medium&quot;&gt;Robot4 OAK-D Pro Sensor Publisher&lt;/b&gt;&lt;br&gt;&lt;font size=&quot;3&quot; color=&quot;#1c4587&quot;&gt;Namespace: /robot4&lt;/font&gt;">
+          <mxGeometry height="60" width="410" x="1990" y="770" as="geometry" />
+        </mxCell>
+        <mxCell id="Axxf3i6UiLeMtmhwf-ec-1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf3ff;strokeColor=#5b9bd5;strokeWidth=2;fontSize=11;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;Robot6 OAK-D Pro Sensor Publisher&lt;/b&gt;&lt;br/&gt;&lt;font color=&quot;#1c4587&quot;&gt;Namespace: /robot6&lt;/font&gt;&lt;br/&gt;&lt;br/&gt;&lt;b&gt;RGB&lt;/b&gt; /robot6/oakd/rgb/image_raw/compressed&lt;br/&gt;&lt;i&gt;sensor_msgs/CompressedImage · BestEffort&lt;/i&gt;&lt;br/&gt;&lt;b&gt;Aligned Depth&lt;/b&gt; /robot6/oakd/stereo/image_raw/compressedDepth&lt;br/&gt;&lt;i&gt;sensor_msgs/CompressedImage · BestEffort&lt;/i&gt;&lt;br/&gt;&lt;b&gt;Intrinsic&lt;/b&gt; /robot6/oakd/stereo/camera_info&lt;br/&gt;&lt;i&gt;sensor_msgs/CameraInfo · BestEffort&lt;/i&gt;&lt;br/&gt;&lt;br/&gt;&lt;font color=&quot;#b7791f&quot;&gt;🟡 robot6 실측 캘리브 corrected_m=(raw_m+0.1255)/1.1651&lt;br/&gt;— 현재 코드에 미반영 (depth_math에 보정 없음)&lt;/font&gt;">
+          <mxGeometry height="290" width="330" x="4680" y="730" as="geometry" />
+        </mxCell>
+
+        <!-- ================= camera_node (robot4, PC1 상단) ================= -->
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--10" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf3ff;strokeColor=#5b9bd5;strokeWidth=2;fontSize=11;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;camera_node /robot4&lt;/b&gt;&lt;br&gt;원본 3종 구독 (절대 토픽)&lt;br&gt;QoS: sensor_data / BestEffort">
+          <mxGeometry height="70" width="240" x="820" y="820" as="geometry" />
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--11" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;ApproximateTimeSynchronizer&lt;/b&gt; 🟢&lt;br/&gt;queue_size=10 · slop=0.10 s&lt;br/&gt;RGB / aligned Depth / CameraInfo 의 Header.stamp 차이를 검사해 동일 관측 시점 bundle 을 만든다.&lt;br/&gt;&lt;br/&gt;cb 는 변환 없이 그대로 재발행만 한다 — 노드마다 같은 짝맞추기를 반복하지 않게 여기서 한 번만.">
+          <mxGeometry height="150" width="345" x="110" y="790" as="geometry" />
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--12" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;strokeWidth=2;fontSize=10;align=center;verticalAlign=middle;" value="max(stamp) − min(stamp) ≤ 0.10 s&lt;br/&gt;AND 3개 입력이 모두 존재하는가?">
+          <mxGeometry height="180" width="240" x="-370" y="737.5" as="geometry" />
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--13" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f3f3;strokeColor=#999999;strokeWidth=1;fontSize=10;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;NO → tuple 폐기&lt;/b&gt;&lt;br/&gt;message_filters 가 큐에서 버린다&lt;br/&gt;(별도 진단 토픽 없음 — 조용히 드롭)&lt;br/&gt;다음 입력 대기">
+          <mxGeometry height="95" width="190" x="-650" y="780" as="geometry" />
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--14" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;YES → 동기화 3종 재발행&lt;/b&gt;&lt;br&gt;&lt;i&gt;stamp 그대로, 변환 없음&lt;/i&gt;">
+          <mxGeometry height="70" width="345" x="-1030" y="700" as="geometry" />
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--24" edge="1" parent="1" source="v4Ri3YPVRutm3d3QiX_--10" target="v4Ri3YPVRutm3d3QiX_--11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#2563eb;fontColor=#2563eb;fontSize=8;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" value="robot4 triple stream&lt;div style=&quot;font-size:11px;color:#000&quot;&gt;• oakd/rgb/image_raw/compressed&lt;br&gt;• oakd/stereo/image_raw/compressedDepth&lt;br&gt;• oakd/stereo/camera_info&lt;/div&gt;">
+          <mxGeometry relative="1" x="-0.1781" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--15" edge="1" parent="1" source="v4Ri3YPVRutm3d3QiX_--11" target="v4Ri3YPVRutm3d3QiX_--12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4b5563;fontSize=8;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" value="sync candidate bundle">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="-99.94" y="855" /><mxPoint x="-99.94" y="827.47" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--16" edge="1" parent="1" source="v4Ri3YPVRutm3d3QiX_--12" target="v4Ri3YPVRutm3d3QiX_--14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#38761d;fontColor=#38761d;fontSize=8;labelBackgroundColor=#ffffff;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="&lt;b&gt;yes&lt;/b&gt;&lt;div style=&quot;font-size:11px;color:#000&quot;&gt;/robot4/synced/rgb · CompressedImage&lt;br&gt;/robot4/synced/depth · CompressedImage&lt;br&gt;/robot4/synced/camera_info · CameraInfo&lt;/div&gt;">
+          <mxGeometry relative="1" x="-0.427" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="-270" y="950" /><mxPoint x="-670" y="950" /><mxPoint x="-670" y="790" /><mxPoint x="-857.5" y="790" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--25" edge="1" parent="1" source="v4Ri3YPVRutm3d3QiX_--12" target="v4Ri3YPVRutm3d3QiX_--13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#cc0000;fontColor=#cc0000;fontSize=8;labelBackgroundColor=#ffffff;entryX=1;entryY=0.5;entryDx=0;entryDy=0;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" value="NO">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--17" edge="1" parent="1" source="v4Ri3YPVRutm3d3QiX_--13" target="v4Ri3YPVRutm3d3QiX_--11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;dashed=1;strokeColor=#6b7280;fontColor=#6b7280;fontSize=8;labelBackgroundColor=#ffffff;" value="next input">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="-555" y="690" /><mxPoint x="282.5" y="690" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="QpyxGBAFvDB_q9pLpngH-10" edge="1" parent="1" source="QZnxUqLfaSuBzwW-utDb-2" target="v4Ri3YPVRutm3d3QiX_--10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#2563eb;fontColor=#2563eb;fontSize=14;labelBackgroundColor=#ffffff;entryX=1;entryY=0.5;entryDx=0;entryDy=0;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" value="RGB · compressedDepth · camera_info&lt;br&gt;(BestEffort)">
+          <mxGeometry relative="1" x="-0.2973" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="1700" y="800" /><mxPoint x="1700" y="855" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ================= camera_node (robot6, PC2) ================= -->
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf3ff;strokeColor=#5b9bd5;strokeWidth=2;fontSize=11;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;camera_node /robot6&lt;/b&gt;&lt;br/&gt;SUB 3 topics:&lt;br/&gt;• oakd/rgb/image_raw/compressed&lt;br/&gt;• oakd/stereo/image_raw/compressedDepth&lt;br/&gt;• oakd/stereo/camera_info&lt;br/&gt;QoS: sensor_data / BestEffort">
+          <mxGeometry height="110" width="270" x="6280" y="832.5" as="geometry" />
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--3" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;ApproximateTimeSynchronizer&lt;/b&gt; 🟢&lt;br/&gt;queue_size=10 · slop=0.10 s&lt;br/&gt;RGB / aligned Depth / CameraInfo 의 Header.stamp 차이를 검사해 동일 관측 시점 bundle 을 만든다.&lt;br/&gt;&lt;br/&gt;PC1 robot4 인스턴스와 코드 동일 (namespace 만 다름)">
+          <mxGeometry height="150" width="345" x="6280" y="1025" as="geometry" />
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--4" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;strokeWidth=2;fontSize=10;align=center;verticalAlign=middle;" value="max(stamp) − min(stamp) ≤ 0.10 s&lt;br/&gt;AND 3개 입력이 모두 존재하는가?">
+          <mxGeometry height="180" width="240" x="6720" y="870" as="geometry" />
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--5" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f3f3;strokeColor=#999999;strokeWidth=1;fontSize=10;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;NO → tuple 폐기&lt;/b&gt;&lt;br/&gt;message_filters 가 큐에서 버린다&lt;br/&gt;(진단 토픽 없음)&lt;br/&gt;다음 입력 대기">
+          <mxGeometry height="95" width="190" x="6745" y="1155" as="geometry" />
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--6" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;YES → 동기화 3종 재발행&lt;/b&gt;&lt;br&gt;/robot6/synced/rgb&lt;br&gt;/robot6/synced/depth&lt;br&gt;/robot6/synced/camera_info">
+          <mxGeometry height="110" width="345" x="6980" y="1060" as="geometry" />
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--2" edge="1" parent="1" source="Axxf3i6UiLeMtmhwf-ec-1" target="v4Ri3YPVRutm3d3QiX_--1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#2563eb;fontColor=#2563eb;fontSize=8;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" value="3 sensor topics · BestEffort">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="6190" y="875" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--8" edge="1" parent="1" source="v4Ri3YPVRutm3d3QiX_--1" target="v4Ri3YPVRutm3d3QiX_--3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#2563eb;fontColor=#2563eb;fontSize=8;labelBackgroundColor=#ffffff;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" value="robot6 triple stream">
+          <mxGeometry relative="1" x="-0.1873" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="6600" y="887.5" /><mxPoint x="6600" y="980" /><mxPoint x="6452.5" y="980" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--7" edge="1" parent="1" source="v4Ri3YPVRutm3d3QiX_--4" target="v4Ri3YPVRutm3d3QiX_--6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#38761d;fontColor=#38761d;fontSize=8;labelBackgroundColor=#ffffff;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="&lt;b&gt;yes&lt;/b&gt;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="7152.52" y="959.97" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ================= PC2 robot6 앱 노드 ================= -->
+        <mxCell id="cl-pc2-apps" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffaf3;strokeColor=#e69138;strokeWidth=2;fontSize=32;fontStyle=1;align=center;verticalAlign=top;spacingTop=10;" value="robot6 앱 노드 — PC1 의 robot4 구성과 코드 동일 (__ns:=/robot6 만 다름)">
+          <mxGeometry height="900" width="2540" x="5990" y="1400" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-pc2-det" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=14;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;detector_node&lt;/b&gt; 🟢&lt;br&gt;synced/rgb·depth·camera_info 구독&lt;br&gt;YOLO(best.pt) opening·rat·trap 감지&lt;br&gt;opening 상태기계 + RatTracker&lt;br&gt;→ target_pose · trap_job · /fleet/event&lt;br&gt;&lt;br&gt;&lt;i&gt;robot_id = 'robot6' (get_namespace 에서)&lt;/i&gt;">
+          <mxGeometry height="260" width="580" x="6640" y="1500" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-pc2-cam" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=14;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;camera_node&lt;/b&gt; 🟢&lt;br&gt;위 sync 파이프 (좌측 상세)&lt;br&gt;원본 3종 → synced/ 3종 재발행">
+          <mxGeometry height="260" width="580" x="6020" y="1500" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-pc2-trap" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=14;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;trap_check_node&lt;/b&gt; 🟢&lt;br&gt;trap_job (TrapJob) 구독&lt;br&gt;install: beep + 접근·후진 주행&lt;br&gt;inspect: 구멍↔trap ≤ 0.15m 판정&lt;br&gt;→ /fleet/event trap_ok·bad·installed">
+          <mxGeometry height="260" width="580" x="7260" y="1500" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-pc2-agent" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=14;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;robot_agent&lt;/b&gt; 🟢&lt;br&gt;namespace:=robot6 파라미터&lt;br&gt;/fleet/command 에서 robot6 명령만&lt;br&gt;FollowWaypoints 순찰 · dock/undock&lt;br&gt;target_pose → goToPose&lt;br&gt;→ /fleet/status robot6:STATE:배터리">
+          <mxGeometry height="260" width="580" x="7880" y="1500" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-pc2-note" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=16;align=left;verticalAlign=top;spacing=10;" value="&lt;b&gt;PC2 에는 중앙 노드가 없다&lt;/b&gt; — central_node · db_node · rat_herding_node · webcam_node 는 PC1 에만 뜬다. 로봇당 Nav2 주인이 1개여야 하듯, 중앙 조율자도 fleet 전체에 1개다.&lt;br&gt;discovery-server 네트워킹이라 /fleet/* 토픽은 PC 위치와 무관하게 오간다 — PC2 의 robot6 detector 가 쏜 rat_detected 도 PC1 의 central 이 그대로 받는다.&lt;br&gt;&lt;br&gt;&lt;b&gt;기동 순서&lt;/b&gt; (docs/run.md): ① robot_bringup.launch.py (localization → active 확인 → navigation) ② RViz 2D Pose Estimate 로 초기 위치 지정 (AMCL 이 기억 못 해 매번 필요) ③ 앱 노드 실행">
+          <mxGeometry height="400" width="2440" x="6020" y="1810" as="geometry" />
+        </mxCell>
+
+        <!-- ================= CentralNode ================= -->
+        <mxCell id="NWHLcj35TzfSmlRE1Hsn-5" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F7F5F6;strokeColor=#8e7cc3;strokeWidth=2;fontSize=11;align=center;verticalAlign=top;spacing=6;" value="&lt;font style=&quot;font-size: 48px;&quot;&gt;central_node — 순찰 교대 · 쥐대응 역할배정 (중앙 PC 1개)&lt;/font&gt;">
+          <mxGeometry height="1240" width="2740" x="-1184.5" y="1040" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-cn-status" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=14;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;status_cb&lt;/b&gt; — /fleet/status 수신 (robot:state:battery) 🟢&lt;br&gt;state == PATROLLING → self.patroller 갱신, waking 해제&lt;br&gt;rat_mode 중이면 여기서 리턴 — 쥐대응 중엔 역할 고정, 조율 개입 안 함">
+          <mxGeometry height="120" width="740" x="-1180" y="1100" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-cn-next" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=14;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;교대 — next_command(state)&lt;/b&gt; 🟢&lt;br&gt;DOCKED → 상대 로봇에게 UNDOCK&lt;br&gt;&lt;br&gt;가드 3개:&lt;br&gt;• prev is None(첫 status)은 전이가 아님 — 둘 다 DOCKED 로 시작할 때 서로를 깨워 둘 다 순찰하는 사고 방지&lt;br&gt;• prev[0] != state 인 실제 전이일 때만&lt;br&gt;• 이미 순찰 중인 로봇이 있으면 안 깨움">
+          <mxGeometry height="200" width="460" x="-1180" y="1240" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-cn-cov" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=14;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;_ensure_coverage / coverage_action&lt;/b&gt; 🟢&lt;br&gt;항상 최소 1대 순찰하도록 보장 (부트스트랩·복구)&lt;br&gt;&lt;br&gt;busy = PATROLLING·TRACKING·HERDING·RETURNING·UNDOCKING&lt;br&gt;waking 없고 아무도 busy 아니면&lt;br&gt;DOCKED/IDLE 중 한 대를 골라 UNDOCK&lt;br&gt;&lt;i&gt;RETURNING 도 busy — 교대 진행 중엔 개입 안 함&lt;/i&gt;">
+          <mxGeometry height="200" width="460" x="-1180" y="1460" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-cn-event" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=14;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;event_cb&lt;/b&gt; — /fleet/event 🟢&lt;br&gt;rat_detected → _on_rat&lt;br&gt;rat_captured → _end_rat(caught=True)&lt;br&gt;rat_lost → _end_rat(caught=False)&lt;br&gt;&lt;br&gt;&lt;i&gt;opening_confirmed · trap_installed · trap_ok · trap_bad 는 로그만 — 방역 세부는 로봇 로컬(detector·db)에서 처리하고 central 은 PATROLLING 으로만 안다&lt;/i&gt;">
+          <mxGeometry height="200" width="490" x="60" y="1240" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-cn-onrat" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=14;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;_on_rat — assign_roles(patroller, robots)&lt;/b&gt; 🟢&lt;br&gt;순찰 중이던 로봇 = &lt;b&gt;A (TRACK, 추적)&lt;/b&gt; / 나머지 = &lt;b&gt;B (HERD, 몰이)&lt;/b&gt;&lt;br&gt;robot4·robot6 어느 쪽이든 무관 — 고정 배정이 아니라 런타임 배정&lt;br&gt;rat_mode 로 첫 트리거만 수용 (쥐는 여러 프레임 연속 감지됨)&lt;br&gt;배정 실패(순찰 로봇 없음 / 로봇 1대) → 경고 후 무시">
+          <mxGeometry height="170" width="880" x="-340" y="1920" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-cn-endrat" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=14;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;_end_rat(caught) — 포획/놓침 공통 종료&lt;/b&gt; 🟢&lt;br&gt;A → PATROL (순찰 복귀) / B → DOCK (도킹 복귀)&lt;br&gt;rat_caught 에 결과 보관 (포획 성공 / 놓침)&lt;br&gt;rat_mode 아니면 무시 — 중복 이벤트 방어&lt;br&gt;→ 다시 &apos;한 대씩 순찰&apos; 상태로">
+          <mxGeometry height="170" width="325" x="1215" y="1920" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-cn-e1" edge="1" parent="1" source="cl-cn-status" target="cl-cn-next" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=2;fontSize=13;labelBackgroundColor=#ffffff;" value="상태 전이">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-cn-e2" edge="1" parent="1" source="cl-cn-next" target="cl-cn-cov" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;strokeWidth=2;fontSize=13;labelBackgroundColor=#ffffff;" value="전이 아니면">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-cn-e3" edge="1" parent="1" source="cl-cn-event" target="cl-cn-onrat" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=2;fontSize=13;labelBackgroundColor=#ffffff;" value="rat_detected">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-cn-e4" edge="1" parent="1" source="cl-cn-event" target="cl-cn-endrat" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=2;fontSize=13;labelBackgroundColor=#ffffff;" value="rat_captured / rat_lost">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1600" y="1340" /><mxPoint x="1600" y="2005" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- 5개 모드 상자 -->
+        <mxCell id="RLcfunM6EJidx0AuIkmK-10" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=top;spacing=6;" value="&lt;b&gt;&lt;font style=&quot;font-size: 36px;&quot;&gt;PATROL&lt;/font&gt;&lt;/b&gt;">
+          <mxGeometry height="310" width="745" x="-700" y="1240" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-m-pat1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#70ad47;fontSize=13;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;명령: robotX:PATROL&lt;/b&gt;&lt;br&gt;robot_agent.start_patrol&lt;br&gt;waypoints YAML (patrol_waypoints.yaml)&lt;br&gt;→ nav.followWaypoints(poses)&lt;br&gt;한 바퀴 끝나면 patrol_tick 이 _send_lap 으로 재시작 = 무한 순찰">
+          <mxGeometry height="180" width="350" x="-680" y="1320" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-m-pat2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#70ad47;fontSize=13;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;보고: PATROLLING&lt;/b&gt;&lt;br&gt;_send_lap 에서만 방송 (goal 발행 성공 후)&lt;br&gt;→ central.patroller 갱신&lt;br&gt;&lt;br&gt;이 동안 detector 는 SEARCHING 으로 opening·rat 을 찾는다">
+          <mxGeometry height="180" width="340" x="-310" y="1320" as="geometry" />
+        </mxCell>
+        <mxCell id="y0fYnWds9ogXdXYXN07V-5" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=top;spacing=6;" value="&lt;font style=&quot;font-size: 36px;&quot;&gt;&lt;b&gt;TRACK (로봇 A)&lt;/b&gt;&lt;/font&gt;">
+          <mxGeometry height="310" width="680" x="570" y="1240" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-m-trk1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#70ad47;fontSize=13;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;명령: robotA:TRACK&lt;/b&gt;&lt;br&gt;detector.tracking = True&lt;br&gt;RatTracker.start(now)&lt;br&gt;robot_agent: stop_patrol, state=TRACKING&lt;br&gt;→ 쥐 위치로 target_pose 1 Hz 재발행">
+          <mxGeometry height="180" width="320" x="590" y="1320" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-m-trk2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#70ad47;fontSize=13;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;종료 조건 (RatTracker)&lt;/b&gt;&lt;br&gt;포획: 0.3 m 반경 안에 10 s 체류&lt;br&gt;놓침: 5 s 미검출 (lost_tick 1 s 폴링)&lt;br&gt;→ rat_captured / rat_lost 발행&lt;br&gt;&lt;i&gt;관측 0회여도 start 기준 5s 뒤 놓침 — 영구 고착 방지&lt;/i&gt;">
+          <mxGeometry height="180" width="300" x="930" y="1320" as="geometry" />
+        </mxCell>
+        <mxCell id="fkapCajKWG6HI9sVUpWm-3" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=top;spacing=6;" value="&lt;font style=&quot;font-size: 36px;&quot;&gt;&lt;b&gt;HERD (로봇 B)&lt;/b&gt;&lt;/font&gt;">
+          <mxGeometry height="310" width="680" x="570" y="1580" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-m-herd1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#70ad47;fontSize=13;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;명령: robotB:HERD&lt;/b&gt;&lt;br&gt;robot_agent: stop_patrol, state=HERDING&lt;br&gt;도크에 붙어 있었으면 &lt;b&gt;먼저 언도킹&lt;/b&gt;&lt;br&gt;(after_undock=None → 완료 후 goal 대기)&lt;br&gt;&lt;i&gt;안 그러면 몸은 도크에 붙은 채 상태만 HERDING&lt;/i&gt;">
+          <mxGeometry height="210" width="320" x="590" y="1660" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-m-herd2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;fontSize=13;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;🔴 rat_herding_node&lt;/b&gt;&lt;br&gt;HERD 대상 로봇을 B 로 인식하고&lt;br&gt;{B}/target_pose 퍼블리셔는 만들지만&lt;br&gt;&lt;b&gt;몰이 goal 계산이 미구현&lt;/b&gt; (로그만)&lt;br&gt;&lt;br&gt;→ 지금은 B 가 실제로 몰지 않는다">
+          <mxGeometry height="210" width="300" x="930" y="1660" as="geometry" />
+        </mxCell>
+        <mxCell id="fkapCajKWG6HI9sVUpWm-2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=top;spacing=6;" value="&lt;span style=&quot;font-size: 36px;&quot;&gt;&lt;b&gt;DOCK&lt;/b&gt;&lt;/span&gt;">
+          <mxGeometry height="310" width="680" x="-150" y="1580" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-m-dock1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#70ad47;fontSize=13;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;진입: robotX:DOCK 또는 배터리 &amp;lt; 40%&lt;/b&gt;&lt;br&gt;state = RETURNING&lt;br&gt;도크 &apos;앞&apos; 좌표 (dock_x, dock_y, dock_yaw_deg) 로 goToPose&lt;br&gt;&lt;i&gt;현장마다 실측 필요 — yaw 는 도크를 바라보는 방향&lt;/i&gt;&lt;br&gt;도착 → dock_send_goal (Create3 IR 정밀 도킹)">
+          <mxGeometry height="210" width="320" x="-130" y="1660" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-m-dock2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#70ad47;fontSize=13;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;완료 판정 (_dock_tick)&lt;/b&gt;&lt;br&gt;isDockComplete 는 &lt;b&gt;실패한 goal 도 &apos;완료&apos;&lt;/b&gt; 로 주므로&lt;br&gt;dock 센서 nav.is_docked 로 재확인&lt;br&gt;성공 → DOCKED ★ central 교대 트리거&lt;br&gt;실패 → IDLE (실패를 DOCKED 로 축약 금지)">
+          <mxGeometry height="210" width="300" x="210" y="1660" as="geometry" />
+        </mxCell>
+        <mxCell id="fkapCajKWG6HI9sVUpWm-1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=top;spacing=6;" value="&lt;font style=&quot;font-size: 36px;&quot;&gt;&lt;b&gt;UNDOCK&lt;/b&gt;&lt;/font&gt;">
+          <mxGeometry height="310" width="680" x="-1030" y="1850" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-m-und1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#70ad47;fontSize=13;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;명령: robotX:UNDOCK&lt;/b&gt;&lt;br&gt;state = UNDOCKING (즉시 PATROLLING 아님)&lt;br&gt;after_undock = &apos;PATROL&apos;&lt;br&gt;nav.undock_send_goal() — 논블로킹">
+          <mxGeometry height="180" width="320" x="-1010" y="1930" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-m-und2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#70ad47;fontSize=13;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;_dock_tick UNDOCK 단계&lt;/b&gt;&lt;br&gt;isUndockComplete → after_undock 분기&lt;br&gt;&apos;PATROL&apos; → 순찰 시작&lt;br&gt;&apos;DOCK&apos; → 바로 복귀 도킹&lt;br&gt;None → target_pose 대기 (추적/몰이)&lt;br&gt;&lt;i&gt;도크에 붙은 채로는 Nav2 goal 이 안 먹혀 반드시 선행&lt;/i&gt;">
+          <mxGeometry height="180" width="300" x="-670" y="1930" as="geometry" />
+        </mxCell>
+        <!-- ================= detector_node ================= -->
+        <mxCell id="v4Ri3YPVRutm3d3QiX_--26" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffaf3;strokeColor=#e69138;strokeWidth=2;fontSize=13;fontStyle=1;align=center;verticalAlign=top;spacingLeft=8;spacingTop=6;" value="&lt;b&gt;&lt;font style=&quot;font-size: 36px;&quot;&gt;detector_node — YOLO 클래스 게이트 · Depth 3D 측위 · 관측 라우팅&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 20px; font-weight: normal;&quot;&gt;로봇 PC에서 __ns:=/robot4 로 실행 · YOLO를 쓰는 유일한 노드 (trap_check는 좌표만 받는다)&lt;/font&gt;&lt;/b&gt;">
+          <mxGeometry height="2030" width="1400" x="-1200" y="2370" as="geometry" />
+        </mxCell>
+        <mxCell id="QpyxGBAFvDB_q9pLpngH-2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;detector 자체 ApproximateTimeSynchronizer&lt;/b&gt; 🟢&lt;br/&gt;queue_size=10 · slop=0.10 s&lt;br/&gt;camera_node 가 재발행한 &lt;b&gt;synced/rgb · synced/depth · synced/camera_info&lt;/b&gt; 3종을 다시 stamp 로 짝맞춘다.&lt;br/&gt;camera_info 도 함께 sync — K(내부 파라미터)를 같은 프레임으로 받기 위해.">
+          <mxGeometry height="130" width="345" x="-670" y="2629.94" as="geometry" />
+        </mxCell>
+        <mxCell id="QpyxGBAFvDB_q9pLpngH-3" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;strokeWidth=2;fontSize=10;align=center;verticalAlign=middle;" value="max(stamp) − min(stamp) ≤ 0.10 s&lt;br/&gt;AND 3개 입력이 모두 존재하는가?">
+          <mxGeometry height="180" width="240" x="-617.5" y="2889.94" as="geometry" />
+        </mxCell>
+        <mxCell id="QpyxGBAFvDB_q9pLpngH-4" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f3f3f3;strokeColor=#999999;strokeWidth=1;fontSize=10;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;NO → tuple 폐기&lt;/b&gt;&lt;br/&gt;불완전/오래된 frame 은 처리하지 않음&lt;br/&gt;message_filters 큐에서 조용히 드롭&lt;br/&gt;다음 입력 대기">
+          <mxGeometry height="95" width="190" x="-950" y="2719.94" as="geometry" />
+        </mxCell>
+        <mxCell id="QpyxGBAFvDB_q9pLpngH-5" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=6;arcSize=13;" value="&lt;div style=&quot;text-align:center&quot;&gt;&lt;b style=&quot;font-size:16px&quot;&gt;synced_cb&lt;/b&gt;&lt;/div&gt;&lt;b&gt;상태 게이트가 먼저&lt;/b&gt; — APPROACHING 이면 _check_arrival 만 하고 리턴, QUERYING·AWAIT_TRAP 이면 그냥 리턴 (지각 불필요)&lt;br&gt;그 외에만 K 저장 → 압축 해제(cv_bridge / decode_depth) → &lt;b&gt;YOLO 1회 추론&lt;/b&gt; → 클래스별 라우팅">
+          <mxGeometry height="112" width="345" x="-670" y="3159.94" as="geometry" />
+        </mxCell>
+        <mxCell id="RLcfunM6EJidx0AuIkmK-1" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="names[cls] == &lt;b&gt;&quot;rat&quot;&lt;/b&gt; ?&lt;br&gt;&lt;i&gt;(상태 무관, 매 프레임)&lt;/i&gt;">
+          <mxGeometry height="160" width="190" x="-1170" y="3283.75" as="geometry" />
+        </mxCell>
+        <mxCell id="RLcfunM6EJidx0AuIkmK-2" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="names[cls] == &lt;b&gt;&quot;opening&quot;&lt;/b&gt; ?&lt;br&gt;&lt;i&gt;SEARCHING · VERIFYING 에서만&lt;/i&gt;">
+          <mxGeometry height="160" width="255" x="-890" y="3283.75" as="geometry" />
+        </mxCell>
+        <mxCell id="RLcfunM6EJidx0AuIkmK-4" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="names[cls] == &lt;b&gt;&quot;trap&quot;&lt;/b&gt; ?&lt;br&gt;&lt;i&gt;INSPECTING 에서만&lt;/i&gt;">
+          <mxGeometry height="160" width="355" x="-580" y="3283.75" as="geometry" />
+        </mxCell>
+        <mxCell id="RLcfunM6EJidx0AuIkmK-3" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;_pick(result, cls_name, img_shape)&lt;/b&gt;&lt;br&gt;신뢰도 문턱은 &lt;b&gt;conf 파라미터 하나(기본 0.6)&lt;/b&gt; — YOLO 호출 시 한 번에 적용, 클래스별 문턱·면적 필터 없음&lt;br&gt;같은 클래스 박스가 여럿이면 &lt;b&gt;화면 중앙(u ≈ w/2)에 가장 가까운 것 1개&lt;/b&gt; 만 고른다&lt;br&gt;&lt;br&gt;&lt;i&gt;모델 클래스는 opening · rat · trap 3개&lt;/i&gt;">
+          <mxGeometry height="160" width="365" x="-200" y="3283.75" as="geometry" />
+        </mxCell>
+        <mxCell id="x4redIiIMa9jU7bzmFlu-1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;_box_to_map — bbox → map 좌표&lt;/b&gt; 🟢&lt;br/&gt;1. bbox 중심 (u,v)&lt;br/&gt;2. to_depth_px — RGB↔depth 해상도 비례 매핑&lt;br/&gt;3. depth_at — 11×11(PATCH=5) 유효값 &lt;b&gt;중앙값&lt;/b&gt; → m&lt;br/&gt;4. deproject(u,v,z,K) → 카메라 광학 XYZ&lt;br/&gt;5. PointStamped(depth frame) → tf.transform(&apos;map&apos;)&lt;br/&gt;6. → (x, y) · 실패 시 None (다음 프레임 재시도)">
+          <mxGeometry height="150" width="310" x="-1190" y="3610" as="geometry" />
+        </mxCell>
+        <mxCell id="Bt-omwzy2xqqBgIjLX3l-1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;_box_to_map (opening 경로)&lt;/b&gt; 🟢&lt;br/&gt;위와 같은 함수 — 구멍 bbox 중심의 map 좌표&lt;br/&gt;z 가 무효(0)면 None → 이 프레임 스킵&lt;br/&gt;TF 실패도 None → 순찰 유지한 채 재시도&lt;br/&gt;&lt;i&gt;stamp 0 = 최신 TF 사용&lt;/i&gt;">
+          <mxGeometry height="132.5" width="310" x="-917.5" y="3790" as="geometry" />
+        </mxCell>
+        <mxCell id="x4redIiIMa9jU7bzmFlu-2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;_start_approach&lt;/b&gt; 🟢&lt;br&gt;robot_xy() 로 로봇 현재 위치 (TF map→base_link)&lt;br&gt;approach_point(dx, dy, &lt;b&gt;approach_dist 0.5m&lt;/b&gt;) → 구멍 앞 지점&lt;br&gt;map 절대좌표로 환산 후 &lt;b&gt;target_pose 발행&lt;/b&gt;&lt;br&gt;goal 확정 &lt;b&gt;후에&lt;/b&gt; patrol_hold=True (TF 실패 시 순찰만 멈추는 사고 방지)&lt;br&gt;&lt;b&gt;state = APPROACHING&lt;/b&gt; (이미 0.5m 안이면 그때만 바로 VERIFYING)">
+          <mxGeometry height="180" width="420" x="-1030" y="3960" as="geometry" />
+        </mxCell>
+        <mxCell id="sDo877fp-fzKSNCjQill-6" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="db.service_is_ready() ?&lt;br&gt;&lt;i&gt;(도착 후 _request_db)&lt;/i&gt;">
+          <mxGeometry height="120" width="230" x="-455" y="3756.25" as="geometry" />
+        </mxCell>
+        <mxCell id="Bt1_jshHilU3t0fcEZmU-2" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="resp.exists ?&lt;br&gt;&lt;i&gt;이미 아는 구멍인가&lt;/i&gt;">
+          <mxGeometry height="120" width="230" x="-325" y="4020" as="geometry" />
+        </mxCell>
+        <mxCell id="QpyxGBAFvDB_q9pLpngH-6" edge="1" parent="1" source="QpyxGBAFvDB_q9pLpngH-2" target="QpyxGBAFvDB_q9pLpngH-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4b5563;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="sync candidate bundle">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="QpyxGBAFvDB_q9pLpngH-9" edge="1" parent="1" source="QpyxGBAFvDB_q9pLpngH-3" target="QpyxGBAFvDB_q9pLpngH-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#cc0000;fontColor=#cc0000;fontSize=10;labelBackgroundColor=#ffffff;entryX=0.5;entryY=1;entryDx=0;entryDy=0;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" value="NO">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="QpyxGBAFvDB_q9pLpngH-8" edge="1" parent="1" source="QpyxGBAFvDB_q9pLpngH-4" target="QpyxGBAFvDB_q9pLpngH-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;dashed=1;strokeColor=#6b7280;fontColor=#6b7280;fontSize=10;labelBackgroundColor=#ffffff;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" value="next input">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="-855" y="2550" /><mxPoint x="-499.94" y="2550" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="QpyxGBAFvDB_q9pLpngH-7" edge="1" parent="1" source="QpyxGBAFvDB_q9pLpngH-3" target="QpyxGBAFvDB_q9pLpngH-5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#38761d;fontColor=#38761d;fontSize=10;labelBackgroundColor=#ffffff;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" value="&lt;b&gt;yes&lt;/b&gt;">
+          <mxGeometry relative="1" x="-0.0014" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="-499.94" y="3070" /><mxPoint x="-499.94" y="3150" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="RLcfunM6EJidx0AuIkmK-5" edge="1" parent="1" source="QpyxGBAFvDB_q9pLpngH-5" target="RLcfunM6EJidx0AuIkmK-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="RLcfunM6EJidx0AuIkmK-6" edge="1" parent="1" source="QpyxGBAFvDB_q9pLpngH-5" target="RLcfunM6EJidx0AuIkmK-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="RLcfunM6EJidx0AuIkmK-7" edge="1" parent="1" source="QpyxGBAFvDB_q9pLpngH-5" target="RLcfunM6EJidx0AuIkmK-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="RLcfunM6EJidx0AuIkmK-8" edge="1" parent="1" source="QpyxGBAFvDB_q9pLpngH-5" target="RLcfunM6EJidx0AuIkmK-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;strokeColor=#6b7280;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;" value="세 게이트 공통 선택 규칙">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="y0fYnWds9ogXdXYXN07V-3" edge="1" parent="1" source="RLcfunM6EJidx0AuIkmK-1" target="x4redIiIMa9jU7bzmFlu-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#FF0000;strokeWidth=2;fontSize=12;labelBackgroundColor=#ffffff;" value="yes">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Bt-omwzy2xqqBgIjLX3l-2" edge="1" parent="1" source="RLcfunM6EJidx0AuIkmK-2" target="Bt-omwzy2xqqBgIjLX3l-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;strokeWidth=2;fontSize=12;labelBackgroundColor=#ffffff;" value="yes">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="x4redIiIMa9jU7bzmFlu-3" edge="1" parent="1" source="Bt-omwzy2xqqBgIjLX3l-1" target="x4redIiIMa9jU7bzmFlu-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=2;fontSize=12;labelBackgroundColor=#ffffff;" value="SEARCHING 이면">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-rat-ev" edge="1" parent="1" source="x4redIiIMa9jU7bzmFlu-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;strokeColor=#FF0000;strokeWidth=3;fontSize=18;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/fleet/event&lt;br&gt;&apos;rat_detected:x:y&apos;&lt;/b&gt;&lt;br&gt;(tracking=False 일 때)">
+          <mxGeometry relative="1" x="0.72" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="-1220" y="3685" /><mxPoint x="-1220" y="1190" /><mxPoint x="320" y="1190" /></Array><mxPoint x="320" y="1240" as="targetPoint" /></mxGeometry>
+        </mxCell>
+        <mxCell id="sDo877fp-fzKSNCjQill-11" edge="1" parent="1" source="sDo877fp-fzKSNCjQill-6" target="Bt1_jshHilU3t0fcEZmU-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeWidth=2;fontSize=12;labelBackgroundColor=#ffffff;" value="no → 처음 본 셈 치고 검증">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ================= detector 상태기계 패널 ================= -->
+        <mxCell id="cl-dsm" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7fbff;strokeColor=#2563eb;strokeWidth=3;fontSize=30;fontStyle=1;align=center;verticalAlign=top;spacingTop=12;" value="detector_node opening 상태기계 — 6 state">
+          <mxGeometry height="1850" width="1040" x="-390" y="4430" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-s-search" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9eaf7;strokeColor=#2563eb;strokeWidth=3;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" value="SEARCHING">
+          <mxGeometry height="60" width="280" x="110" y="4500" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-a-appr" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="opening 감지 → _box_to_map → &lt;b&gt;_start_approach&lt;/b&gt;: 구멍 앞 0.5m 지점을 target_pose 로 발행 + patrol_hold=True (순찰 정지) + self.goal 저장">
+          <mxGeometry height="80" width="800" x="-330" y="4590" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-s-appr" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9eaf7;strokeColor=#2563eb;strokeWidth=3;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" value="APPROACHING">
+          <mxGeometry height="60" width="280" x="110" y="4700" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-d-arr" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;strokeWidth=2;fontSize=13;align=center;verticalAlign=middle;" value="&lt;b&gt;_check_arrival&lt;/b&gt; (매 프레임)&lt;br&gt;hypot(goal − TF base_link) ≤ &lt;b&gt;arrive_tol 0.3m&lt;/b&gt; ?">
+          <mxGeometry height="120" width="480" x="-20" y="4790" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-w-arr" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;🟡 도착 신호가 없다&lt;/b&gt;&lt;br&gt;주행은 robot_agent 가 하고 Nav2 완료 콜백은 여기로 안 온다 — TF 거리로 &lt;b&gt;스스로 폴링&lt;/b&gt;&lt;br&gt;· Nav2 ABORT 를 못 받아 60s watchdog 으로만 탈출&lt;br&gt;· arrive_tol 0.3m 이 Nav2 xy_goal_tolerance 와 암묵 커플링">
+          <mxGeometry height="150" width="310" x="-370" y="4780" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-s-query" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9eaf7;strokeColor=#2563eb;strokeWidth=3;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" value="QUERYING">
+          <mxGeometry height="60" width="280" x="110" y="4940" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-a-query" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;_request_db&lt;/b&gt; — 감지 좌표(self.target)로 &lt;b&gt;/db/query_hole&lt;/b&gt; call_async → _db_done 콜백. 서비스 미기동이면 QUERYING 안 들어가고 즉시 검증으로.">
+          <mxGeometry height="70" width="800" x="-330" y="5030" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-d-exists" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;strokeWidth=2;fontSize=13;align=center;verticalAlign=middle;" value="&lt;b&gt;resp.exists ?&lt;/b&gt;&lt;br&gt;db_node: nearest ≤ hole_match_dist 0.3m">
+          <mxGeometry height="120" width="480" x="-20" y="5130" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-s-verify" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9eaf7;strokeColor=#2563eb;strokeWidth=3;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" value="VERIFYING&lt;br&gt;&lt;font style=&quot;font-size:12px&quot;&gt;처음 본 구멍&lt;/font&gt;">
+          <mxGeometry height="60" width="280" x="-350" y="5290" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-s-inspect" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9eaf7;strokeColor=#2563eb;strokeWidth=3;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" value="INSPECTING&lt;br&gt;&lt;font style=&quot;font-size:12px&quot;&gt;기존 구멍 점검&lt;/font&gt;">
+          <mxGeometry height="60" width="280" x="250" y="5290" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-a-verify" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;_verify — 진짜 구멍인가&lt;/b&gt; 🟢&lt;br&gt;side_px(side_margin 0.05m, z, fx) 만큼 bbox 를 좌우로 넓혀 옆 벽까지 포함&lt;br&gt;&lt;b&gt;depth_spread = p90 − p10 ≥ depth_gap 0.05m ?&lt;/b&gt;&lt;br&gt;구멍이면 안쪽(멀다)+테두리(가깝다)가 섞여 편차 큼&lt;br&gt;미달 → 순찰 재개 / 재검출·유효픽셀 실패 30프레임 → 포기">
+          <mxGeometry height="150" width="340" x="-370" y="5380" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-a-inspect" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;_inspect — trap 이 제대로 놓였나&lt;/b&gt; 🟢&lt;br&gt;trap 박스 → _box_to_map 으로 trap 좌표&lt;br&gt;&lt;b&gt;TrapJob(phase=&apos;inspect&apos;, hole, trap)&lt;/b&gt; 발행&lt;br&gt;→ 판정은 trap_check 가 (거리 ≤ 0.15m)&lt;br&gt;30프레임 미검출 → 아직 안 놓인 것으로 보고 _reinstall">
+          <mxGeometry height="150" width="340" x="230" y="5380" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-a-conf" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;gap ≥ 0.05m → 진짜 opening&lt;/b&gt;&lt;br&gt;/fleet/event &lt;b&gt;opening_confirmed:x:y&lt;/b&gt; (db_node 가 저장)&lt;br&gt;self.hole = target, reinstall_count = 0&lt;br&gt;&lt;b&gt;TrapJob(phase=&apos;install&apos;)&lt;/b&gt; 발행 — 최초 설치는 재설치 카운트에 안 넣음">
+          <mxGeometry height="130" width="340" x="-370" y="5550" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-s-await" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9eaf7;strokeColor=#2563eb;strokeWidth=3;fontSize=18;fontStyle=1;align=center;verticalAlign=middle;" value="AWAIT_TRAP">
+          <mxGeometry height="60" width="280" x="110" y="5700" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-a-await" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;trap_event_cb — /fleet/event 이름으로 분기 (AWAIT_TRAP 일 때만)&lt;/b&gt; 🟢&lt;br&gt;&lt;b&gt;trap_installed&lt;/b&gt; → INSPECTING (설치동작 끝 — 15cm 기준으로 다시 본다)&lt;br&gt;&lt;b&gt;trap_ok&lt;/b&gt; → _finish_opening : patrol_hold=False, 상태 초기화, SEARCHING 복귀&lt;br&gt;&lt;b&gt;trap_bad / 미검출&lt;/b&gt; → _reinstall : install job 재발행, &lt;b&gt;reinstall_max 3&lt;/b&gt; 초과 시 경고 후 순찰 재개">
+          <mxGeometry height="140" width="1000" x="-370" y="5790" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-wd" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;watchdog_tick (1 s) — 영구 대기 방지&lt;/b&gt;&lt;br&gt;상태가 바뀌면 시계 리셋, 한도를 넘기면 탈출한다.&lt;br&gt;&lt;br&gt;APPROACHING 60s · &lt;b&gt;QUERYING 5s&lt;/b&gt; · VERIFYING 30s&lt;br&gt;INSPECTING 30s · AWAIT_TRAP 20s&lt;br&gt;&lt;br&gt;QUERYING timeout → &lt;b&gt;verify&lt;/b&gt; (db 무응답 = 처음 본 셈)&lt;br&gt;나머지 timeout → &lt;b&gt;finish&lt;/b&gt; (opening 포기, 순찰 재개)&lt;br&gt;&lt;br&gt;비-SEARCHING 동안 &lt;b&gt;patrol_hold=True 재발행(heartbeat)&lt;/b&gt;&lt;br&gt;→ detector 가 죽으면 agent 가 lease 만료로 자동 순찰 재개">
+          <mxGeometry height="310" width="480" x="-370" y="5950" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ratp" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;rat 경로 — 위 상태기계와 독립 (매 프레임)&lt;/b&gt; 🟢&lt;br&gt;&lt;br&gt;&lt;b&gt;tracking = False&lt;/b&gt; (순찰 중 우연히 봄)&lt;br&gt;→ /fleet/event &lt;b&gt;rat_detected&lt;/b&gt; 만 발행, central 이 역할배정 시작&lt;br&gt;&lt;br&gt;&lt;b&gt;tracking = True&lt;/b&gt; (central 이 TRACK 배정)&lt;br&gt;→ 쥐 위치로 target_pose 를 &lt;b&gt;rat_goal_period 1 s&lt;/b&gt; 마다 재발행&lt;br&gt;&amp;nbsp;&amp;nbsp;(매 프레임 쏘면 Nav2 goal 폭주)&lt;br&gt;→ RatTracker: 0.3m 반경 &lt;b&gt;10 s 체류 = 포획&lt;/b&gt; → rat_captured&lt;br&gt;→ lost_tick(1s): &lt;b&gt;5 s 미검출 = 놓침&lt;/b&gt; → rat_lost&lt;br&gt;&lt;br&gt;&lt;i&gt;좌표가 떨리므로 &apos;정확히 같음&apos; 이 아니라 반경으로 판정&lt;/i&gt;">
+          <mxGeometry height="310" width="480" x="150" y="5950" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s1" edge="1" parent="1" source="cl-s-search" target="cl-a-appr" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;fontSize=13;labelBackgroundColor=#ffffff;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s2" edge="1" parent="1" source="cl-a-appr" target="cl-s-appr" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s3" edge="1" parent="1" source="cl-s-appr" target="cl-d-arr" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s4" edge="1" parent="1" source="cl-d-arr" target="cl-s-query" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#38761d;fontColor=#38761d;fontSize=14;labelBackgroundColor=#ffffff;" value="YES — 도착">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s5" edge="1" parent="1" source="cl-s-query" target="cl-a-query" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s6" edge="1" parent="1" source="cl-a-query" target="cl-d-exists" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s7" edge="1" parent="1" source="cl-d-exists" target="cl-s-verify" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;fontSize=14;labelBackgroundColor=#ffffff;" value="NO — 처음">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s8" edge="1" parent="1" source="cl-d-exists" target="cl-s-inspect" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;fontSize=14;labelBackgroundColor=#ffffff;" value="YES — 기존">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s9" edge="1" parent="1" source="cl-s-verify" target="cl-a-verify" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s10" edge="1" parent="1" source="cl-s-inspect" target="cl-a-inspect" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s11" edge="1" parent="1" source="cl-a-verify" target="cl-a-conf" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#38761d;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s12" edge="1" parent="1" source="cl-a-conf" target="cl-s-await" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;fontSize=14;labelBackgroundColor=#ffffff;" value="install job">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s13" edge="1" parent="1" source="cl-a-inspect" target="cl-s-await" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;fontSize=14;labelBackgroundColor=#ffffff;" value="inspect job">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s14" edge="1" parent="1" source="cl-s-await" target="cl-a-await" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-e-s15" edge="1" parent="1" source="cl-a-await" target="cl-s-search" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#38761d;fontColor=#38761d;fontSize=14;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" value="trap_ok → _finish_opening (patrol_hold=False)">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="700" y="5860" /><mxPoint x="700" y="4530" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="cl-e-s16" edge="1" parent="1" source="cl-a-await" target="cl-s-inspect" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#bf9000;fontColor=#bf9000;fontSize=14;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="trap_installed → 15cm 재점검">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="-420" y="5860" /><mxPoint x="-420" y="5320" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="cl-e-into-dsm" edge="1" parent="1" source="x4redIiIMa9jU7bzmFlu-2" target="cl-s-appr" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#2563eb;fontColor=#2563eb;fontSize=16;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="state = APPROACHING">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="-450" y="4050" /><mxPoint x="-450" y="4380" /><mxPoint x="20" y="4380" /><mxPoint x="20" y="4730" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ================= robot_agent ================= -->
+        <mxCell id="ZesqVsjJ1KR3q78cPR1M-5" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffaf3;strokeColor=#e69138;strokeWidth=2;fontSize=13;fontStyle=1;align=center;verticalAlign=top;spacingLeft=8;spacingTop=6;" value="&lt;span style=&quot;font-size: 36px;&quot;&gt;robot_agent — 로봇 1대 제어&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size: 18px; font-weight: normal;&quot;&gt;로봇당 Nav2 주인 1개 · 모든 goal 주행이 여기로 모인다&lt;/span&gt;">
+          <mxGeometry height="1570" width="805" x="-1218" y="4570" as="geometry" />
+        </mxCell>
+        <mxCell id="fkapCajKWG6HI9sVUpWm-5" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=3;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;target_cb — target_pose 수신 (★ 단일 진입구)&lt;/b&gt; 🟢&lt;br&gt;detector 접근·추적 / trap_check 설치 / rat_herding 몰이 goal 공용&lt;br&gt;dock_phase ≠ None 이면 &lt;b&gt;무시&lt;/b&gt; (도크 이동과 충돌 방지)&lt;br&gt;nav.goToPose(msg) — 새 goal 이 이전 goal 을 &lt;b&gt;선점(preempt)&lt;/b&gt; 해 목표가 움직여도 계속 따라간다">
+          <mxGeometry height="130" width="760" x="-1195" y="4680" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-cmd" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;command_cb — /fleet/command 에서 자기(ns) 명령만&lt;/b&gt; 🟢&lt;br&gt;&lt;b&gt;UNDOCK&lt;/b&gt; → UNDOCKING · after_undock=&apos;PATROL&apos; · start_undocking&lt;br&gt;&lt;b&gt;PATROL&lt;/b&gt; → start_patrol (이미 필드 위)&lt;br&gt;&lt;b&gt;DOCK&lt;/b&gt; → RETURNING · start_docking (언도킹 중이면 완료 후로 예약)&lt;br&gt;&lt;b&gt;TRACK / HERD&lt;/b&gt; → stop_patrol · 도킹 중이었으면 먼저 언도킹 후 goal 대기&lt;br&gt;&lt;b&gt;STOP&lt;/b&gt; → IDLE · stop_patrol">
+          <mxGeometry height="190" width="760" x="-1195" y="4830" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-tick" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;patrol_tick (1 s 폴링)&lt;/b&gt; 🟢&lt;br&gt;① &lt;b&gt;hold lease&lt;/b&gt; — 마지막 hold=True 로부터 &lt;b&gt;hold_lease_sec 3s&lt;/b&gt; 초과 시 자동 해제 후 순찰 재개 (detector 사망 대비)&lt;br&gt;② dock_phase 있으면 _dock_tick 으로 넘기고 리턴&lt;br&gt;③ isTaskComplete → CANCELED 면 순찰 종료, 그 외엔 _send_lap (다음 바퀴 = 무한 순찰)">
+          <mxGeometry height="160" width="760" x="-1195" y="5040" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-dock" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;_dock_tick — 논블로킹 도킹/언도킹 단계 진행&lt;/b&gt; 🟢&lt;br&gt;dock()/undock() 이 블로킹이라 콜백에서 직접 못 부른다 → 완료 여부만 폴링해 단계를 넘긴다&lt;br&gt;&lt;b&gt;NAV&lt;/b&gt;: 도크앞 goToPose 완료 → dock_send_goal (실패해도 근처면 붙을 수 있어 시도)&lt;br&gt;&lt;b&gt;DOCK&lt;/b&gt;: isDockComplete + &lt;b&gt;nav.is_docked 센서 확인&lt;/b&gt; → DOCKED / 실패면 IDLE&lt;br&gt;&lt;b&gt;UNDOCK&lt;/b&gt;: isUndockComplete → after_undock 이 PATROL·DOCK·None 중 무엇인지로 분기">
+          <mxGeometry height="180" width="760" x="-1195" y="5220" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-hold" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;hold_cb — patrol_hold&lt;/b&gt; 🟢&lt;br&gt;detector 가 opening 처리 시작/끝을 알린다&lt;br&gt;False→True 전이: stop_patrol&lt;br&gt;True→False 전이: 순찰 재개&lt;br&gt;수신할 때마다 hold_at 갱신 (lease 유지)">
+          <mxGeometry height="140" width="370" x="-1195" y="5420" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-batt" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;battery_cb — battery_state&lt;/b&gt; 🟢&lt;br&gt;percentage 가 NaN 이면 무시&lt;br&gt;0~1 스케일이면 ×100 정규화&lt;br&gt;&lt;b&gt;&amp;lt; battery_threshold 40&lt;/b&gt; 이고 PATROLLING 이면&lt;br&gt;→ RETURNING + start_docking">
+          <mxGeometry height="140" width="370" x="-805" y="5420" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-report" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;report (10 s)&lt;/b&gt; 🟢&lt;br&gt;/fleet/status ← &quot;ns:state:battery&quot;&lt;br&gt;central 이 이것만 보고 조율한다">
+          <mxGeometry height="110" width="370" x="-1195" y="5580" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-rule" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;상태 방송 규칙&lt;/b&gt;&lt;br&gt;DOCKED 는 _dock_tick 에서만&lt;br&gt;PATROLLING 은 _send_lap 에서만&lt;br&gt;&lt;i&gt;성공 전에 방송하면 central 이 교대·커버리지를 잘못 판단한다&lt;/i&gt;">
+          <mxGeometry height="110" width="370" x="-805" y="5580" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-warn" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;🟡 target_pose goal 의 결과를 아무도 폴링하지 않는다&lt;/b&gt;&lt;br&gt;patrol_tick 의 isTaskComplete 검사는 self.patrolling 가드에 막혀 target goal 에는 안 돈다 → Nav2 가 ABORT 해도 detector·trap_check 는 통보를 못 받는다.">
+          <mxGeometry height="120" width="760" x="-1195" y="5710" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-io" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddebf7;strokeColor=#5b9bd5;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;입출력 정리&lt;/b&gt;&lt;br&gt;SUB: /fleet/command · battery_state · target_pose · patrol_hold&lt;br&gt;PUB: /fleet/status&lt;br&gt;ACTION(TurtleBot4Navigator, /{ns} 네임스페이스): FollowWaypoints · NavigateToPose · Dock · Undock&lt;br&gt;&lt;i&gt;nav 도 자체 노드라 main 에서 같은 SingleThreadedExecutor 에 add_node — 안 그러면 피드백이 처리되지 않는다&lt;/i&gt;">
+          <mxGeometry height="170" width="760" x="-1195" y="5850" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-e1" edge="1" parent="1" source="fkapCajKWG6HI9sVUpWm-5" target="cl-ra-cmd" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;dashed=1;strokeColor=#e69138;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-e2" edge="1" parent="1" source="cl-ra-cmd" target="cl-ra-tick" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=none;dashed=1;strokeColor=#e69138;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-ra-e3" edge="1" parent="1" source="cl-ra-tick" target="cl-ra-dock" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#e69138;strokeWidth=2;fontSize=12;labelBackgroundColor=#ffffff;" value="dock_phase 있으면">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="sDo877fp-fzKSNCjQill-2" edge="1" parent="1" source="x4redIiIMa9jU7bzmFlu-2" target="fkapCajKWG6HI9sVUpWm-5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#cc0000;strokeWidth=4;fontSize=18;fontColor=#cc0000;labelBackgroundColor=#ffffff;" value="&lt;b&gt;target_pose&lt;/b&gt;&lt;br&gt;PoseStamped (map)">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="-1100" y="4050" /><mxPoint x="-1100" y="4640" /><mxPoint x="-815" y="4640" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="cl-hold-edge" edge="1" parent="1" source="cl-wd" target="cl-ra-hold" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#bf9000;strokeWidth=3;fontSize=14;fontColor=#bf9000;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" value="&lt;b&gt;patrol_hold&lt;/b&gt; (Bool, 1s heartbeat)">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="-400" y="6105" /><mxPoint x="-400" y="5490" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ================= db_node ================= -->
+        <mxCell id="Bt1_jshHilU3t0fcEZmU-1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffaf3;strokeColor=#e69138;strokeWidth=2;fontSize=13;fontStyle=1;align=center;verticalAlign=top;spacingLeft=8;spacingTop=6;" value="&lt;font style=&quot;font-size: 48px; font-weight: normal;&quot;&gt;db_node&lt;/font&gt;&lt;br&gt;&lt;font style=&quot;font-size: 18px;&quot;&gt;중앙 PC · 구멍/trap 좌표 영속 저장&lt;/font&gt;">
+          <mxGeometry height="1570" width="805" x="670" y="2590" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-db-sqlite" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;SQLite (db_path, 기본 holes.db)&lt;/b&gt; 🟢&lt;br&gt;CREATE TABLE IF NOT EXISTS &lt;b&gt;holes(id, x, y, trap_installed)&lt;/b&gt;&lt;br&gt;재시작해도 구멍이 남는다&lt;br&gt;&lt;i&gt;콜백은 단일 스레드지만 sqlite 기본 소유 검사를 꺼서(check_same_thread=False) 쓴다&lt;/i&gt;">
+          <mxGeometry height="150" width="760" x="690" y="2700" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-db-near" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;nearest(holes, x, y) → (idx, 거리)&lt;/b&gt; 🟢&lt;br&gt;&lt;b&gt;hole_match_dist 0.3 m&lt;/b&gt; — &apos;같은 구멍인가&apos; 를 정하는 유일한 기준&lt;br&gt;좌표 추정값이 떨리므로 &apos;정확히 같음&apos; 대신 반경으로 판정&lt;br&gt;저장·조회·갱신 세 경로가 모두 이 함수를 지난다">
+          <mxGeometry height="140" width="760" x="690" y="2880" as="geometry" />
+        </mxCell>
+        <mxCell id="sDo877fp-fzKSNCjQill-3" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=3;fontSize=12;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;query() — /db/query_hole 서비스&lt;/b&gt; 🟢&lt;br&gt;nearest ≤ 0.3m 이면&lt;br&gt;exists=True + trap_installed + &lt;b&gt;저장 좌표(hole_x, hole_y)&lt;/b&gt;&lt;br&gt;아니면 exists=False&lt;br&gt;&lt;i&gt;저장좌표를 돌려줘야 trap_check 가 15cm 점검을 한다&lt;/i&gt;">
+          <mxGeometry height="160" width="500" x="820" y="3060" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-db-store" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;event_cb — /fleet/event 구독&lt;/b&gt; 🟢&lt;br&gt;&lt;b&gt;opening_confirmed&lt;/b&gt; → _store_hole : nearest ≤ 0.3m 면 스킵, 아니면 INSERT&lt;br&gt;&lt;b&gt;trap_ok&lt;/b&gt; → UPDATE trap_installed = 1&lt;br&gt;&lt;b&gt;trap_bad&lt;/b&gt; → UPDATE trap_installed = 0&lt;br&gt;&lt;i&gt;아는 구멍이 아니면 갱신 무시&lt;/i&gt;">
+          <mxGeometry height="180" width="760" x="690" y="3270" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-db-note" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddebf7;strokeColor=#5b9bd5;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="UI(system_monitor)는 이 DB 를 직접 안 보고 /fleet/event 를 자체 구독한다 — db_node 는 UI 용 발행을 하지 않는다.">
+          <mxGeometry height="110" width="760" x="690" y="3480" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-db-warn" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;🟡 db_node 가 없어도 시스템은 돈다&lt;/b&gt;&lt;br&gt;detector 는 서비스 미기동이면 즉시 VERIFYING, 응답이 5s 넘게 없으면 watchdog 이 &apos;처음 본 구멍&apos; 으로 간주하고 검증으로 진행한다 → 기존 구멍을 매번 새로 검증하게 된다.">
+          <mxGeometry height="130" width="760" x="690" y="3620" as="geometry" />
+        </mxCell>
+        <mxCell id="sDo877fp-fzKSNCjQill-4" edge="1" parent="1" source="sDo877fp-fzKSNCjQill-6" target="sDo877fp-fzKSNCjQill-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=3;fontSize=17;labelBackgroundColor=#ffffff;" value="&lt;b&gt;yes&lt;/b&gt; — /db/query_hole (QueryHole srv)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="sDo877fp-fzKSNCjQill-10" edge="1" parent="1" source="sDo877fp-fzKSNCjQill-3" target="Bt1_jshHilU3t0fcEZmU-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeWidth=3;fontSize=17;labelBackgroundColor=#ffffff;" value="응답 (exists, hole_x, hole_y)">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1070" y="4230" /><mxPoint x="120" y="4230" /><mxPoint x="120" y="4080" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="cl-db-in" edge="1" parent="1" source="cl-a-conf" target="cl-db-store" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#38761d;fontColor=#38761d;fontSize=15;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="&lt;b&gt;/fleet/event opening_confirmed&lt;/b&gt;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="600" y="5615" /><mxPoint x="600" y="3360" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ================= rat_herding_node ================= -->
+        <mxCell id="ZesqVsjJ1KR3q78cPR1M-4" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffaf3;strokeColor=#e69138;strokeWidth=2;fontSize=13;fontStyle=1;align=center;verticalAlign=top;spacingLeft=8;spacingTop=6;" value="&lt;span style=&quot;font-size: 48px; font-weight: 400;&quot;&gt;rat_herding_node&lt;/span&gt;&lt;br&gt;&lt;span style=&quot;font-size: 18px;&quot;&gt;중앙 PC · 로봇 B 몰이 goal&lt;/span&gt;">
+          <mxGeometry height="1570" width="805" x="790" y="4800" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-rh-cmd" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;command_cb — /fleet/command&lt;/b&gt; 🟢&lt;br&gt;cmd == &apos;HERD&apos; 인 로봇을 B 로 인식 (고정 배정이 아님)&lt;br&gt;create_publisher(PoseStamped, &lt;b&gt;&apos;{robot}/target_pose&apos;&lt;/b&gt;)&lt;br&gt;&lt;i&gt;중앙 PC 에서 도니 절대경로로 발행한다&lt;/i&gt;">
+          <mxGeometry height="160" width="760" x="810" y="4910" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-rh-todo" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;strokeWidth=3;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;🔴 event_cb — 몰이 goal 계산 미구현&lt;/b&gt;&lt;br&gt;rat_detected 를 받아 로그만 찍는다&lt;br&gt;self.pose_pub.publish(...) 자리가 비어 있음&lt;br&gt;&lt;br&gt;&lt;b&gt;→ 지금은 로봇 B 가 실제로 쥐를 몰지 않는다&lt;/b&gt;">
+          <mxGeometry height="160" width="760" x="810" y="5090" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-rh-warn" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;🟡 구현할 때 걸릴 지점 2개&lt;/b&gt;&lt;br&gt;· B 미배정(HERD 전) 이면 pose_pub 이 None 이라 이벤트를 그냥 버린다&lt;br&gt;· &lt;b&gt;rat_detected 만 구독&lt;/b&gt; 한다 — 추적 중 갱신되는 쥐 위치(detector 의 target_pose)는 안 본다. 몰이는 최초 1회 좌표로만 계산된다.">
+          <mxGeometry height="160" width="760" x="810" y="5270" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-rh-note" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddebf7;strokeColor=#5b9bd5;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="배관은 완성 — 알고리즘만 채우면 루프가 닫힌다.&lt;br&gt;robot_agent.target_cb 가 이미 goToPose 로 주행하므로, 좌표만 계산해 발행하면 로봇 B 가 바로 움직인다.">
+          <mxGeometry height="120" width="760" x="810" y="5450" as="geometry" />
+        </mxCell>
+
+        <!-- ================= trap_check_node ================= -->
+        <mxCell id="cl-tc" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffaf3;strokeColor=#e69138;strokeWidth=2;fontSize=32;fontStyle=1;align=center;verticalAlign=top;spacingTop=10;" value="trap_check_node — 로봇 PC&lt;br&gt;&lt;span style=&quot;font-size: 18px; font-weight: normal;&quot;&gt;detector 가 준 TrapJob 으로만 동작 (지각 안 함) · YOLO 는 detector 만 쓴다&lt;/span&gt;">
+          <mxGeometry height="700" width="1400" x="-1210" y="6420" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-tc-job" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=3;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;job_cb — trap_job (TrapJob)&lt;/b&gt; 🟢&lt;br&gt;phase == &apos;install&apos; → _install&lt;br&gt;phase == &apos;inspect&apos; → _inspect&lt;br&gt;그 외 → 경고 로그&lt;br&gt;&lt;br&gt;&lt;i&gt;TrapJob: phase, hole_x, hole_y, trap_x, trap_y&lt;/i&gt;">
+          <mxGeometry height="180" width="430" x="-1190" y="6510" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-tc-insp" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;_inspect — 순수 판정 (주행 없음)&lt;/b&gt; 🟢&lt;br&gt;hypot(hole − trap) ≤ &lt;b&gt;trap_ok_dist 0.15 m&lt;/b&gt; ?&lt;br&gt;→ /fleet/event &lt;b&gt;trap_ok&lt;/b&gt; / &lt;b&gt;trap_bad&lt;/b&gt;&lt;br&gt;&lt;i&gt;detector 가 받아 순찰재개 / 재설치를 정한다&lt;br&gt;db_node 도 같은 이벤트로 trap_installed 를 갱신&lt;/i&gt;">
+          <mxGeometry height="180" width="450" x="-740" y="6510" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-tc-inst" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;_install — 사람 호출 + 설치 주행&lt;/b&gt; 🟢&lt;br&gt;beep (cmd_audio AudioNote 1000Hz 1s + speaker-test 폴백)&lt;br&gt;구멍 &lt;b&gt;0.20 m 앞&lt;/b&gt; 으로 이동 → &lt;b&gt;4 s 대기&lt;/b&gt; (사람이 trap 설치)&lt;br&gt;&lt;b&gt;0.6 m 후진&lt;/b&gt; → 2 s → /fleet/event &lt;b&gt;trap_installed&lt;/b&gt;">
+          <mxGeometry height="180" width="440" x="-270" y="6510" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-tc-warn" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;🟡 Nav2 도착 피드백이 여기로 안 온다&lt;/b&gt; — install_wait 4s / retreat_wait 2s 고정시간으로 근사한다. 주행이 느리면 실제 도착 전에 다음 단계로 넘어간다. 게다가 time.sleep 이라 그 동안 이 노드의 콜백이 전부 멈춘다.">
+          <mxGeometry height="120" width="890" x="-1190" y="6710" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-tc-drive" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf4e5;strokeColor=#70ad47;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;_drive_to(hx, hy, dist)&lt;/b&gt;&lt;br&gt;구멍↔로봇 직선 위에서 구멍으로부터 dist 떨어진 점&lt;br&gt;dist 가 현재 거리보다 크면 로봇 뒤쪽 = 후진&lt;br&gt;→ 접근·후진을 한 함수로 처리, target_pose 로 발행">
+          <mxGeometry height="120" width="440" x="-270" y="6710" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-tc-e1" edge="1" parent="1" source="cl-tc-job" target="cl-tc-insp" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=2;fontSize=13;labelBackgroundColor=#ffffff;" value="inspect">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-tc-e2" edge="1" parent="1" source="cl-tc-insp" target="cl-tc-inst" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=2;fontSize=13;labelBackgroundColor=#ffffff;" value="install">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-tc-e3" edge="1" parent="1" source="cl-tc-inst" target="cl-tc-drive" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;strokeWidth=2;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-tc-in" edge="1" parent="1" source="cl-s-await" target="cl-tc-job" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#e69138;fontColor=#b45309;fontSize=15;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="&lt;b&gt;trap_job (TrapJob)&lt;/b&gt;&lt;br&gt;install / inspect">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="-975" y="5730" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="cl-tc-out" edge="1" parent="1" source="cl-tc-insp" target="cl-a-await" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#e69138;fontColor=#b45309;fontSize=15;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" value="&lt;b&gt;/fleet/event&lt;/b&gt; trap_ok · trap_bad · trap_installed">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="130" y="6600" /><mxPoint x="130" y="5930" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ================= webcam_node ================= -->
+        <mxCell id="cl-wc" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffaf3;strokeColor=#e69138;strokeWidth=2;fontSize=30;fontStyle=1;align=center;verticalAlign=top;spacingTop=10;" value="webcam_node — 중앙 PC&lt;br&gt;&lt;span style=&quot;font-size: 17px; font-weight: normal;&quot;&gt;고정 웹캠 쥐 감시&lt;/span&gt;">
+          <mxGeometry height="700" width="700" x="240" y="6420" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-wc-todo" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;strokeWidth=3;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;🔴 tick (0.1 s) 이 pass — 전부 미구현&lt;/b&gt;&lt;br&gt;계획: cv2.VideoCapture(camera_index) 로 프레임 읽기&lt;br&gt;→ YOLO 로 rat 감지&lt;br&gt;→ homography 로 화면 좌표 → map 좌표&lt;br&gt;파라미터만 선언됨: camera_index · model_path · homography_file">
+          <mxGeometry height="170" width="660" x="260" y="6520" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-wc-pub" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ddebf7;strokeColor=#5b9bd5;strokeWidth=2;fontSize=13;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;발행 예정&lt;/b&gt;&lt;br&gt;/fleet/event ← &lt;b&gt;&quot;rat_detected:x:y&quot;&lt;/b&gt;&lt;br&gt;→ central 이 역할 배정(TRACK/HERD)으로 쥐대응 진입&lt;br&gt;&lt;i&gt;퍼블리셔는 이미 만들어져 있다&lt;/i&gt;">
+          <mxGeometry height="140" width="660" x="260" y="6710" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-wc-warn" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=12;align=left;verticalAlign=top;spacing=8;" value="&lt;b&gt;🟡 이게 비어 있으면&lt;/b&gt; 쥐 최초 트리거는 순찰 중인 로봇 detector 가 &lt;b&gt;우연히&lt;/b&gt; 쥐를 보는 경우뿐이다. 고정 웹캠이 &apos;항상 보는 눈&apos; 역할이므로 쥐대응 시작이 늦어진다.">
+          <mxGeometry height="130" width="660" x="260" y="6870" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-wc-e1" edge="1" parent="1" source="cl-wc-todo" target="cl-wc-pub" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;dashed=1;strokeWidth=2;strokeColor=#cc0000;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="cl-wc-out" edge="1" parent="1" source="cl-wc-pub" target="cl-cn-event" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=3;strokeColor=#cc0000;fontColor=#cc0000;fontSize=15;labelBackgroundColor=#ffffff;dashed=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" value="&lt;b&gt;rat_detected&lt;/b&gt; (구현 시)">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1660" y="6780" /><mxPoint x="1660" y="1340" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ================= fleet 버스 (status / command) ================= -->
+        <mxCell id="cl-bus-status" edge="1" parent="1" source="cl-ra-report" target="cl-cn-status" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=4;strokeColor=#8e7cc3;fontColor=#6b21a8;fontSize=18;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="&lt;b&gt;/fleet/status&lt;/b&gt;&lt;br&gt;robot4:PATROLLING:85">
+          <mxGeometry relative="1" x="0.6" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="-1235" y="5635" /><mxPoint x="-1235" y="1160" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="cl-bus-cmd" edge="1" parent="1" source="cl-cn-cov" target="cl-ra-cmd" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeWidth=4;strokeColor=#8e7cc3;fontColor=#6b21a8;fontSize=18;labelBackgroundColor=#ffffff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="&lt;b&gt;/fleet/command&lt;/b&gt;&lt;br&gt;robot6:UNDOCK">
+          <mxGeometry relative="1" x="0.55" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="-1215" y="1560" /><mxPoint x="-1215" y="4925" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ================= Nav2 Architecture ================= -->
+        <mxCell id="pFHugUVajYb5YrPoVoYy-68" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#b3b3b3;" value="">
+          <mxGeometry height="680.06" width="875" x="2465" y="3229.94" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-70" parent="1" vertex="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#b3b3b3;" value="">
+          <mxGeometry height="840.03" width="1710" x="3410" y="3229.97" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-1" parent="1" vertex="1" style="swimlane;html=1;rounded=1;startSize=48;horizontal=1;fillColor=#f7fbff;swimlaneFillColor=#d9eaf7;strokeColor=#4a86e8;strokeWidth=2;fontSize=16;fontStyle=1;fontColor=#17365d;" value="PC — Localization + Nav2 Planning / Control">
+          <mxGeometry height="50.06" width="2670" x="2450" y="3159.94" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-3" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eef7ea;strokeColor=#70ad47;strokeWidth=2;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;spacingLeft=12;" value="A. Localization / Static Map">
+          <mxGeometry height="42" width="875" x="15" y="70.06" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-5" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="shape=cylinder;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#eef7ea;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;" value="&lt;b&gt;room_map.yaml&lt;/b&gt;&lt;br&gt;resource/ 에 두고 소스 경로로 참조&lt;br&gt;map:= 로 오버라이드">
+          <mxGeometry height="90" width="190" x="25" y="160" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-6" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;map_server&lt;/b&gt;&lt;br&gt;Static map loader / publisher">
+          <mxGeometry height="100" width="210" x="335" y="155" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-7" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;RViz2&lt;/b&gt;&lt;br&gt;2D Pose Estimate 로 초기 위치 지정&lt;br&gt;&lt;font color=&quot;#b7791f&quot;&gt;매번 필요 — AMCL 이 기억 못 함&lt;/font&gt;">
+          <mxGeometry height="120" width="200" x="675" y="250.06" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-8" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;amcl&lt;/b&gt;&lt;br&gt;Particle-filter localization&lt;br&gt;map 프레임에서 로봇 pose 추정&lt;br&gt;&lt;b&gt;TF map→odom 발행&lt;/b&gt;">
+          <mxGeometry height="120" width="260" x="335" y="355" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-9" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e4dfec;strokeColor=#8064a2;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Localization Lifecycle Manager&lt;/b&gt;&lt;br&gt;configure / activate / health monitoring&lt;br&gt;&lt;i&gt;nav2_activate.sh 로 단계별로 민다&lt;/i&gt;">
+          <mxGeometry height="105" width="200" x="25" y="290.06" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-10" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Localization Ready&lt;/b&gt;&lt;br&gt;static map + pose estimate + TF chain 유효&lt;br&gt;&lt;i&gt;이게 되어야 navigation 을 띄운다&lt;/i&gt;">
+          <mxGeometry height="95" width="260" x="335" y="560.06" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-13" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;bt_navigator&lt;/b&gt;&lt;br&gt;Behavior-tree navigation orchestration">
+          <mxGeometry height="100" width="250" x="1310" y="195" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-14" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;planner_server&lt;/b&gt;&lt;br&gt;Global path planning&lt;br&gt;NavFn / GridBased">
+          <mxGeometry height="110" width="230" x="1610" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-16" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;controller_server&lt;/b&gt;&lt;br&gt;Local trajectory control&lt;br&gt;DWB">
+          <mxGeometry height="110" width="220" x="2000" y="500.06" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-17" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;behavior_server&lt;/b&gt;&lt;br&gt;Recovery behaviors&lt;br&gt;Spin · BackUp · Wait">
+          <mxGeometry height="110" width="230" x="1540" y="510.06" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-20" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;velocity_smoother&lt;/b&gt;&lt;br&gt;Velocity / acceleration limiting">
+          <mxGeometry height="100" width="220" x="2000" y="760.06" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-21" parent="pFHugUVajYb5YrPoVoYy-1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e4dfec;strokeColor=#8064a2;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Navigation Lifecycle Manager&lt;/b&gt;&lt;br&gt;configure / activate / bond health">
+          <mxGeometry height="120" width="210" x="2410" y="175" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-28" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-5" target="pFHugUVajYb5YrPoVoYy-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="map:=room_map.yaml">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="56" y="140.06" /><mxPoint x="346" y="140.06" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-29" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-6" target="pFHugUVajYb5YrPoVoYy-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/map&lt;/b&gt;&lt;br&gt;OccupancyGrid">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="681" y="204.94" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-30" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-6" target="pFHugUVajYb5YrPoVoYy-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/map&lt;/b&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-31" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-7" target="pFHugUVajYb5YrPoVoYy-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/initialpose&lt;/b&gt;">
+          <mxGeometry relative="1" x="-0.4577" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="681" y="430.12" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-32" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-8" target="pFHugUVajYb5YrPoVoYy-10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/amcl_pose&lt;/b&gt; + TF map→odom">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-33" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-9" target="pFHugUVajYb5YrPoVoYy-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;strokeColor=#8064a2;strokeWidth=1.5;fontSize=10;labelBackgroundColor=#ffffff;" value="configure → activate">
+          <mxGeometry relative="1" x="0.0022" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="31" y="270.06" /><mxPoint x="281" y="270.06" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-34" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-9" target="pFHugUVajYb5YrPoVoYy-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;strokeColor=#8064a2;strokeWidth=1.5;fontSize=10;labelBackgroundColor=#ffffff;" value="lifecycle management">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="211" y="332.54" /><mxPoint x="211" y="390.06" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-38" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-13" target="pFHugUVajYb5YrPoVoYy-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="ComputePathToPose">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1490" y="160.06" /><mxPoint x="1690" y="160.06" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-41" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-13" target="pFHugUVajYb5YrPoVoYy-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="FollowPath orchestration">
+          <mxGeometry relative="1" x="0.315" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="1520" y="320.06" /><mxPoint x="2110" y="320.06" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-42" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-13" target="pFHugUVajYb5YrPoVoYy-17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="Recovery 요청">
+          <mxGeometry relative="1" x="0.2661" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="1500" y="360.06" /><mxPoint x="1830" y="360.06" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-46" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-16" target="pFHugUVajYb5YrPoVoYy-20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/cmd_vel_nav&lt;/b&gt;">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-49" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-21" target="pFHugUVajYb5YrPoVoYy-13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;strokeColor=#8064a2;strokeWidth=1.5;fontSize=10;labelBackgroundColor=#ffffff;" value="configure → activate">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2520" y="140.06" /><mxPoint x="1470" y="140.06" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-50" edge="1" parent="pFHugUVajYb5YrPoVoYy-1" source="pFHugUVajYb5YrPoVoYy-21" target="pFHugUVajYb5YrPoVoYy-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;strokeColor=#8064a2;strokeWidth=1.5;fontSize=10;labelBackgroundColor=#ffffff;" value="lifecycle management">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2500" y="160.06" /><mxPoint x="1780" y="160.06" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-4" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eaf2ff;strokeColor=#4a86e8;strokeWidth=2;fontSize=13;fontStyle=1;align=left;verticalAlign=middle;spacingLeft=12;" value="B. Nav2 Goal → Planning → Control">
+          <mxGeometry height="42" width="1710" x="3410" y="3229.94" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-11" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;strokeWidth=3;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;robot_agent / TurtleBot4Navigator&lt;/b&gt;&lt;br&gt;★ 이 시스템의 유일한 goal 발행자&lt;br&gt;&lt;i&gt;순찰·접근·추적·설치·도킹 전부&lt;/i&gt;">
+          <mxGeometry height="90" width="240" x="3410" y="3314.94" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-12" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;waypoint_follower&lt;/b&gt;&lt;br&gt;Sequential waypoint executor">
+          <mxGeometry height="90" width="240" x="3450" y="3454.94" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-15" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;smoother_server&lt;/b&gt;&lt;br&gt;Global path smoothing">
+          <mxGeometry height="100" width="220" x="4560" y="3344.94" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-18" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;global_costmap&lt;/b&gt;&lt;br&gt;Static + obstacle + inflation layers">
+          <mxGeometry height="105" width="250" x="3450" y="3565" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-19" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;local_costmap&lt;/b&gt;&lt;br&gt;Rolling local obstacle map">
+          <mxGeometry height="105" width="230" x="3460" y="3715" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-22" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Navigation Execution Gate&lt;/b&gt;&lt;br&gt;Localization ready + Nav2 active + fresh sensor/TF">
+          <mxGeometry height="125" width="210" x="4880" y="3645" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-23" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;LiDAR Driver&lt;/b&gt;&lt;br&gt;2D obstacle scanning">
+          <mxGeometry height="105" width="250" x="2050" y="2338" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-24" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Robot TF Publisher&lt;/b&gt;&lt;br&gt;base_link → sensor transforms&lt;br&gt;&lt;i&gt;detector 의 TF 조회가 여기에 의존&lt;/i&gt;">
+          <mxGeometry height="105" width="260" x="2370" y="2338" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-25" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Create3 Mobile Base&lt;/b&gt;&lt;br&gt;Wheel actuation · odometry · safety&lt;br&gt;dock_status · battery_state">
+          <mxGeometry height="115" width="320" x="2760" y="2338" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-26" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;strokeWidth=2;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;Drive Motors&lt;/b&gt;&lt;br&gt;Linear / angular motion">
+          <mxGeometry height="105" width="240" x="3170" y="2343" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-35" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-11" target="pFHugUVajYb5YrPoVoYy-13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;NavigateToPose&lt;/b&gt;&lt;br&gt;PoseStamped (map)">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="3900" y="3335" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-36" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-11" target="pFHugUVajYb5YrPoVoYy-12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;FollowWaypoints&lt;/b&gt;&lt;br&gt;PoseStamped[] 순찰 경로">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="3550" y="3440" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-37" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-12" target="pFHugUVajYb5YrPoVoYy-13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="waypoint 마다 NavigateToPose">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="3910.03" y="3499.89" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-39" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-14" target="pFHugUVajYb5YrPoVoYy-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="Global path">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-40" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-15" target="pFHugUVajYb5YrPoVoYy-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="Smoothed path">
+          <mxGeometry relative="1" x="-0.023" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="4620" y="3560" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-43" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-19" target="pFHugUVajYb5YrPoVoYy-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="Collision cost grid">
+          <mxGeometry relative="1" x="0.1033" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="3730" y="3750" /><mxPoint x="3730" y="3560" /><mxPoint x="4160" y="3560" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-44" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-19" target="pFHugUVajYb5YrPoVoYy-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="Rolling obstacle cost grid">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="3790" y="3800" /><mxPoint x="4510" y="3800" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-45" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-19" target="pFHugUVajYb5YrPoVoYy-17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="Local obstacle / footprint">
+          <mxGeometry relative="1" x="0.4074" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="3800" y="3767.5" /><mxPoint x="3800" y="3730" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-47" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-10" target="pFHugUVajYb5YrPoVoYy-22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="Localization-ready state">
+          <mxGeometry relative="1" x="0.1127" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="2910" y="3880" /><mxPoint x="4990" y="3880" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-48" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-22" target="pFHugUVajYb5YrPoVoYy-13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;strokeColor=#bf9000;strokeWidth=1.5;fontSize=10;labelBackgroundColor=#ffffff;" value="실행 허가 / cancel 조건">
+          <mxGeometry relative="1" x="-0.1469" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="3930.03" y="3597.43" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-51" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-15" target="pFHugUVajYb5YrPoVoYy-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;strokeColor=#8064a2;strokeWidth=1.5;fontSize=10;labelBackgroundColor=#ffffff;" value="lifecycle management">
+          <mxGeometry relative="1" x="-0.488" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="4730" y="3690" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-52" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-23" target="pFHugUVajYb5YrPoVoYy-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/scan&lt;/b&gt;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2150.14" y="3600" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-53" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-23" target="pFHugUVajYb5YrPoVoYy-18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/scan&lt;/b&gt;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2220" y="3850" /><mxPoint x="3380" y="3850" /><mxPoint x="3380" y="3617.5" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-54" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-23" target="pFHugUVajYb5YrPoVoYy-19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/scan&lt;/b&gt;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1870" y="2390.5" /><mxPoint x="1870" y="4050" /><mxPoint x="3650" y="4050" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-55" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-24" target="pFHugUVajYb5YrPoVoYy-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/tf · /tf_static&lt;/b&gt;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2330" y="2390.57" /><mxPoint x="2330" y="3564.86" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-56" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-24" target="pFHugUVajYb5YrPoVoYy-19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/tf · /tf_static&lt;/b&gt;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2500" y="2700" /><mxPoint x="1910" y="2700" /><mxPoint x="1910" y="4010" /><mxPoint x="3590" y="4010" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-57" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-25" target="pFHugUVajYb5YrPoVoYy-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/odom&lt;/b&gt; + TF odom→base_link">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2920" y="2790" /><mxPoint x="2430" y="2790" /><mxPoint x="2430" y="3640" /><mxPoint x="2960.14" y="3640" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-58" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-25" target="pFHugUVajYb5YrPoVoYy-19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/odom&lt;/b&gt; + TF">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2860.17" y="2750" /><mxPoint x="2030.17" y="2750" /><mxPoint x="2030.17" y="3970" /><mxPoint x="3530" y="3970" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-59" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-25" target="pFHugUVajYb5YrPoVoYy-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/odom&lt;/b&gt; velocity feedback">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="3050.14" y="2590" /><mxPoint x="4830.14" y="2590" /><mxPoint x="4830.14" y="3714.86" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-60" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-20" target="pFHugUVajYb5YrPoVoYy-25" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#cc0000;strokeWidth=4;fontSize=12;fontStyle=1;labelBackgroundColor=#ffffff;" value="&lt;b&gt;/cmd_vel&lt;/b&gt;&lt;br&gt;Twist (linear.x + angular.z)">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="5230" y="3970" /><mxPoint x="5230" y="2750" /><mxPoint x="2980" y="2750" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-61" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-25" target="pFHugUVajYb5YrPoVoYy-26" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#ed7d31;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="wheel velocity">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2920.14" y="2280" /><mxPoint x="3290.14" y="2280" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-62" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-18" target="pFHugUVajYb5YrPoVoYy-19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-63" edge="1" parent="1" source="pFHugUVajYb5YrPoVoYy-21" target="pFHugUVajYb5YrPoVoYy-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=open;dashed=1;strokeColor=#8064a2;strokeWidth=1.5;fontSize=10;labelBackgroundColor=#ffffff;" value="">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="4820" y="3400" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="pFHugUVajYb5YrPoVoYy-67" edge="1" parent="1" source="ZesqVsjJ1KR3q78cPR1M-5" target="pFHugUVajYb5YrPoVoYy-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=18;startSize=8;endSize=8;strokeWidth=4;strokeColor=#FF2343;fontColor=#cc0000;labelBackgroundColor=#ffffff;" value="&lt;b&gt;robot_agent 가 Nav2 액션 클라이언트&lt;/b&gt;">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="80" y="4962.5" /><mxPoint x="80" y="4470" /><mxPoint x="1750" y="4470" /><mxPoint x="1750" y="2900" /><mxPoint x="3370" y="2900" /><mxPoint x="3370" y="3360" /></Array></mxGeometry>
+        </mxCell>
+
+        <!-- ================= APPENDIX A ================= -->
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-2" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#17365d;strokeColor=#17365d;fontColor=#ffffff;fontSize=20;fontStyle=1;align=center;verticalAlign=middle;" value="&lt;font style=&quot;font-size: 36px;&quot;&gt;&lt;b&gt;APPENDIX A — TurtleBot4 Nav2 Runtime Architecture + Create3 Dock / Undock Internal Flow&lt;/b&gt;&lt;br&gt;&lt;font&gt;robot_agent 의 순찰·복귀·도킹 동작을 실제 Humble launch 노드 구조로 확장&lt;/font&gt;&lt;/font&gt;">
+          <mxGeometry height="160" width="7900" x="290" y="7270" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-1" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7f9fc;strokeColor=#1f4e79;strokeWidth=2;shadow=0;" value="">
+          <mxGeometry height="1628" width="7900" x="290" y="7361" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-3" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f8ed;strokeColor=#70ad47;strokeWidth=1.5;" value="">
+          <mxGeometry height="1020" width="2180" x="430" y="7461" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-4" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontColor=#375623;fontSize=24;fontStyle=1;align=center;verticalAlign=middle;" value="localization — Static Map + AMCL + TF">
+          <mxGeometry height="36" width="2150" x="430" y="7461" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-5" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e4dfec;strokeColor=#8064a2;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;lifecycle_manager_localization&lt;/b&gt;&lt;br/&gt;Managed nodes in order:&lt;br/&gt;1) map_server&lt;br/&gt;2) amcl&lt;br/&gt;configure → activate&lt;br/&gt;Bond 감시 / 장애 시 stack transition">
+          <mxGeometry height="115" width="590" x="1205" y="7511" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-6" parent="1" vertex="1" style="shape=cylinder;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontSize=11;align=center;verticalAlign=middle;" value="&lt;b&gt;room_map.yaml&lt;/b&gt;&lt;br/&gt;image path&lt;br/&gt;resolution&lt;br/&gt;origin&lt;br/&gt;occupied/free threshold">
+          <mxGeometry height="105" width="330" x="465" y="7681" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-7" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;map_server&lt;/b&gt;&lt;br/&gt;YAML / image load&lt;br/&gt;Publisher QoS: TRANSIENT_LOCAL&lt;br/&gt;Output: /robotX/map&lt;br/&gt;nav_msgs/OccupancyGrid">
+          <mxGeometry height="125" width="230" x="1000" y="7671" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-8" parent="1" vertex="1" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ddebf7;strokeColor=#5b9bd5;fontSize=10;align=center;verticalAlign=middle;spacing=4;" value="&lt;b&gt;/robotX/map&lt;/b&gt;&lt;br/&gt;OccupancyGrid&lt;br/&gt;Static global environment">
+          <mxGeometry height="95" width="310" x="1520" y="7686" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-9" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;RViz2&lt;/b&gt;&lt;br/&gt;2D Pose Estimate&lt;br/&gt;→ /robotX/initialpose&lt;br/&gt;Map / TF / AMCL particle display">
+          <mxGeometry height="120" width="360" x="465" y="7841" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-10" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;Robot Localization Inputs&lt;/b&gt;&lt;br/&gt;/robotX/scan · LaserScan&lt;br/&gt;/robotX/odom · Odometry&lt;br/&gt;TF: odom → base_link&lt;br/&gt;/robotX/initialpose">
+          <mxGeometry height="140" width="360" x="465" y="8011" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-11" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;amcl&lt;/b&gt;&lt;br/&gt;Adaptive Monte-Carlo Localization&lt;br/&gt;Inputs: /map, /scan, odom TF, initialpose&lt;br/&gt;Particle filter 로 map 상 robot pose 추정">
+          <mxGeometry height="150" width="470" x="940" y="7941" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-12" parent="1" vertex="1" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fillColor=#ddebf7;strokeColor=#5b9bd5;fontSize=10;align=center;verticalAlign=middle;spacing=4;" value="&lt;b&gt;Localization Outputs&lt;/b&gt;&lt;br/&gt;/robotX/amcl_pose&lt;br/&gt;PoseWithCovarianceStamped&lt;br/&gt;TF: map → odom&lt;br/&gt;particle cloud / diagnostics">
+          <mxGeometry height="150" width="420" x="1490" y="7941" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-13" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;TF Chain Required by Nav2&lt;/b&gt;&lt;br/&gt;&lt;font face=&quot;monospace&quot;&gt;map → odom → base_link → sensors&lt;/font&gt;&lt;br/&gt;AMCL: map→odom&lt;br/&gt;Create3/robot driver: odom→base_link&lt;br/&gt;robot_state_publisher: base_link→sensor links&lt;br/&gt;&lt;font color=&quot;#b7791f&quot;&gt;🟡 detector 의 robot_xy() / _box_to_map 이 이 체인에 그대로 의존&lt;/font&gt;">
+          <mxGeometry height="110" width="230" x="1950" y="7841" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-14" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;fontSize=10;align=center;verticalAlign=middle;" value="&lt;b&gt;Localization Ready Gate&lt;/b&gt;&lt;br/&gt;map_server state=ACTIVE&lt;br/&gt;amcl state=ACTIVE&lt;br/&gt;/map 수신&lt;br/&gt;map→odom TF 최신&lt;br/&gt;초기 pose 설정 완료">
+          <mxGeometry height="135" width="470" x="940" y="8146" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-15" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;YES&lt;/b&gt;&lt;br/&gt;Nav2 stack 이 map frame goal 처리 가능">
+          <mxGeometry height="70" width="420" x="1930" y="8181" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-16" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;NO&lt;/b&gt;&lt;br/&gt;NavigateToPose 전송 금지&lt;br/&gt;initial pose / TF / lifecycle 복구">
+          <mxGeometry height="135" width="210" x="1070" y="8321" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-17" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-6" target="iK9PqJTXz0f2TpD-Etnz-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="map:=room_map.yaml">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-18" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-7" target="iK9PqJTXz0f2TpD-Etnz-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="publish · latched">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-19" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-8" target="iK9PqJTXz0f2TpD-Etnz-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="/map">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1675.03" y="7841" /><mxPoint x="1340" y="7841" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-20" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-9" target="iK9PqJTXz0f2TpD-Etnz-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="/initialpose">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-21" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-10" target="iK9PqJTXz0f2TpD-Etnz-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="/scan + odom TF">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-22" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-11" target="iK9PqJTXz0f2TpD-Etnz-12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="pose + map→odom TF">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-23" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-12" target="iK9PqJTXz0f2TpD-Etnz-13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="TF / pose">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1860" y="7886" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-24" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-8" target="iK9PqJTXz0f2TpD-Etnz-13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="map frame">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2065" y="7751" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-25" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-5" target="iK9PqJTXz0f2TpD-Etnz-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;dashed=1;dashPattern=2 2;strokeColor=#a64d79;fontSize=8;fontColor=#a64d79;labelBackgroundColor=#ffffff;" value="lifecycle configure/activate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-26" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-5" target="iK9PqJTXz0f2TpD-Etnz-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;dashed=1;dashPattern=2 2;strokeColor=#a64d79;fontSize=8;fontColor=#a64d79;labelBackgroundColor=#ffffff;" value="lifecycle configure/activate">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1500" y="7783.48" /><mxPoint x="1260" y="7783.48" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-27" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-7" target="iK9PqJTXz0f2TpD-Etnz-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;dashed=1;dashPattern=6 4;strokeColor=#7f7f7f;fontSize=9;labelBackgroundColor=#ffffff;entryX=0;entryY=0;entryDx=0;entryDy=0;" value="state / map">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="930" y="7771" /><mxPoint x="930" y="8179.75" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-28" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-12" target="iK9PqJTXz0f2TpD-Etnz-14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;dashed=1;dashPattern=6 4;strokeColor=#7f7f7f;fontSize=9;labelBackgroundColor=#ffffff;" value="pose / TF health">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1700" y="8121" /><mxPoint x="1175" y="8121" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-29" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-14" target="iK9PqJTXz0f2TpD-Etnz-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="YES">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-30" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-14" target="iK9PqJTXz0f2TpD-Etnz-16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#c00000;strokeWidth=1.5;fontSize=9;fontColor=#c00000;labelBackgroundColor=#ffffff;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="NO">
+          <mxGeometry relative="1" x="-0.5" as="geometry"><mxPoint as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-31" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4f0fa;strokeColor=#8064a2;strokeWidth=1.5;" value="">
+          <mxGeometry height="1500" width="3420" x="2630" y="7461" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-33" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e4dfec;strokeColor=#8064a2;fontColor=#4c276d;fontSize=24;fontStyle=1;align=center;verticalAlign=middle;" value="BT Navigation · Planning · Control · Costmaps · Velocity Smoothing">
+          <mxGeometry height="36" width="3390" x="2645" y="7461" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-34" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e4dfec;strokeColor=#8064a2;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;lifecycle_manager_navigation&lt;/b&gt;&lt;br/&gt;controller_server → smoother_server → planner_server → behavior_server → bt_navigator → waypoint_follower → velocity_smoother&lt;br/&gt;autostart=true · Bond health monitoring&lt;br/&gt;&lt;font color=&quot;#b7791f&quot;&gt;🟡 WiFi 에서 autostart 가 자주 타임아웃 → nav2_activate.sh 로 단계별로 민다&lt;/font&gt;">
+          <mxGeometry height="90" width="2720" x="2970" y="7511" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-35" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;strokeWidth=3;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;robot_agent / TurtleBot4Navigator&lt;/b&gt;&lt;br/&gt;Mission goal executor&lt;br/&gt;followWaypoints(순찰) · goToPose(target_pose·도크앞)&lt;br/&gt;cancelTask() / isTaskComplete() / getResult()&lt;br/&gt;&lt;br/&gt;&lt;b&gt;goal 출처 4가지&lt;/b&gt;: 순찰 waypoint YAML · detector 접근/추적 · trap_check 설치 주행 · 도크 앞 좌표&lt;br&gt;&lt;font color=&quot;#b7791f&quot;&gt;🟡 target_pose 로 온 goal 은 결과를 폴링하지 않는다&lt;/font&gt;">
+          <mxGeometry height="190" width="515" x="2665" y="7661" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-36" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e4dfec;strokeColor=#8064a2;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;bt_navigator&lt;/b&gt;&lt;br/&gt;Action Server:&lt;br/&gt;/robotX/navigate_to_pose&lt;br/&gt;/robotX/navigate_through_poses&lt;br/&gt;Behavior Tree 가 planning → smoothing → following → recovery 순서를 오케스트레이션">
+          <mxGeometry height="190" width="480" x="3490" y="7661" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-37" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e4dfec;strokeColor=#8064a2;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;waypoint_follower&lt;/b&gt;&lt;br/&gt;Action Server:&lt;br/&gt;/robotX/follow_waypoints&lt;br/&gt;waypoint 를 순차 처리&lt;br/&gt;각 pose 마다 NavigateToPose task 실행&lt;br/&gt;wait_at_waypoint plugin">
+          <mxGeometry height="190" width="320" x="4330" y="7661" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-38" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;RViz Nav2 Panel&lt;/b&gt;&lt;br/&gt;Manual goal / cancel&lt;br/&gt;2D Goal Pose → NavigateToPose Action&lt;br/&gt;Displays global path, local trajectory, footprint, costmaps, recoveries">
+          <mxGeometry height="190" width="560" x="4770" y="7661" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-39" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;planner_server&lt;/b&gt;&lt;br/&gt;Plugin: NavFnPlanner (GridBased)&lt;br/&gt;ComputePathToPose / ThroughPoses&lt;br/&gt;Input: start, goal, global_costmap&lt;br/&gt;Output: nav_msgs/Path">
+          <mxGeometry height="165" width="500" x="2670" y="7941" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-40" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;smoother_server&lt;/b&gt;&lt;br/&gt;Plugin: SimpleSmoother&lt;br/&gt;SmoothPath Action&lt;br/&gt;Global path 의 급격한 굴곡 완화&lt;br/&gt;&lt;i&gt;경로(path) smoother&lt;/i&gt;">
+          <mxGeometry height="165" width="500" x="3280" y="7941" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-41" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;controller_server&lt;/b&gt;&lt;br/&gt;Plugin: DWBLocalPlanner&lt;br/&gt;FollowPath Action · 20 Hz&lt;br/&gt;Goal / progress checker&lt;br/&gt;local_costmap 기반 local trajectory 선택&lt;br/&gt;Output remap: cmd_vel → cmd_vel_nav">
+          <mxGeometry height="185" width="350" x="4000" y="7931" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-42" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;behavior_server&lt;/b&gt;&lt;br/&gt;Recovery / behavior plugins&lt;br/&gt;Spin · BackUp · DriveOnHeading&lt;br/&gt;Wait · AssistedTeleop&lt;br/&gt;BT recovery subtree 에서 호출">
+          <mxGeometry height="185" width="500" x="4570" y="7941" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-43" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;global_costmap&lt;/b&gt;&lt;br/&gt;global_frame=map&lt;br/&gt;static_layer + obstacle_layer + inflation_layer&lt;br/&gt;/map + /scan + TF&lt;br/&gt;update 1 Hz · publish 1 Hz&lt;br/&gt;Global planner 의 장애물 지도">
+          <mxGeometry height="185" width="340" x="2750" y="8211" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-44" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;local_costmap&lt;/b&gt;&lt;br/&gt;global_frame=odom · rolling 3×3 m&lt;br/&gt;static_layer + voxel_layer + inflation_layer&lt;br/&gt;/scan + TF/odom&lt;br/&gt;update 5 Hz · publish 2 Hz&lt;br/&gt;Controller / behavior 의 근거리 회피 지도">
+          <mxGeometry height="205" width="390" x="3980" y="8211" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-46" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;velocity_smoother&lt;/b&gt;&lt;br/&gt;Input: /robotX/cmd_vel_nav&lt;br/&gt;20 Hz · OPEN_LOOP&lt;br/&gt;속도/가속도/deadband 제한 적용&lt;br/&gt;Output: /robotX/cmd_vel&lt;br/&gt;&lt;i&gt;속도(command) smoother&lt;/i&gt;">
+          <mxGeometry height="190" width="330" x="4655" y="8208.5" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-47" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;Create3 Mobile Base&lt;/b&gt;&lt;br/&gt;SUB: /robotX/cmd_vel&lt;br/&gt;Wheel velocity control / safety&lt;br/&gt;PUB: /robotX/odom · TF odom→base_link · dock_status&lt;br/&gt;LiDAR driver publishes /robotX/scan">
+          <mxGeometry height="190" width="420" x="5350" y="8211" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-48" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;fontSize=10;align=center;verticalAlign=middle;" value="&lt;b&gt;Navigation Execution Gate&lt;/b&gt;&lt;br/&gt;Localization ready&lt;br/&gt;Nav lifecycle nodes ACTIVE&lt;br/&gt;goal frame_id=map&lt;br/&gt;TF / scan / odom fresh&lt;br/&gt;현재 Dock behavior 와 제어권 충돌 없음?">
+          <mxGeometry height="170" width="600" x="3150" y="8501" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-49" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;YES → Goal Accepted&lt;/b&gt;&lt;br/&gt;BT tick → global plan → smooth path → local control → cmd_vel&lt;br/&gt;Action feedback: distance_remaining · navigation_time · recovery_count">
+          <mxGeometry height="110" width="650" x="3880" y="8531" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-50" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;NO → Reject / Hold / Recover&lt;/b&gt;&lt;br/&gt;robot_agent 가 goal 전송 보류 또는 cancel&lt;br/&gt;lifecycle / TF / localization / dock ownership 복구 후 재시도&lt;br&gt;&lt;font color=&quot;#b7791f&quot;&gt;🟡 이 거절이 detector 로는 통보되지 않는다&lt;/font&gt;">
+          <mxGeometry height="110" width="650" x="4670" y="8531" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-51" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;Data Flow Summary&lt;/b&gt;&lt;br/&gt;1. robot_agent 또는 RViz 가 goal 발행&lt;br/&gt;2. bt_navigator 가 BT 실행&lt;br/&gt;3. planner_server 가 global path 계산&lt;br/&gt;4. smoother_server 가 path 보정&lt;br/&gt;5. controller_server 가 local trajectory / cmd_vel_nav 생성&lt;br/&gt;6. velocity_smoother 가 cmd_vel 로 제한·평탄화&lt;br/&gt;7. Create3 가 wheel motion 수행&lt;br/&gt;8. odom / TF / scan feedback 으로 costmap 과 controller 가 폐루프 갱신">
+          <mxGeometry height="150" width="330" x="2680" y="8731" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-52" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;TurtleBot4 Humble nav2.yaml 핵심&lt;/b&gt;&lt;br/&gt;Planner: NavFnPlanner · tolerance 0.5 m&lt;br/&gt;Controller: DWB · max_vel_x 0.26 m/s · max_vel_theta 1.0 rad/s&lt;br/&gt;Robot radius 0.175 m · inflation radius 0.45 m&lt;br/&gt;Behavior cycle 10 Hz · waypoint loop 20 Hz · velocity smoother 20 Hz&lt;br/&gt;&lt;font color=&quot;#b7791f&quot;&gt;🟡 detector 의 arrive_tol 0.3 m 를 이 goal tolerance 와 함께 실측 조정할 것&lt;/font&gt;">
+          <mxGeometry height="120" width="430" x="3060" y="8776" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-53" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-35" target="iK9PqJTXz0f2TpD-Etnz-48" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7030a0;strokeWidth=1.7;fontSize=9;fontColor=#7030a0;labelBackgroundColor=#ffffff;" value="goal request / control ownership">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2650" y="7756" /><mxPoint x="2650" y="8181" /><mxPoint x="3450" y="8181" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-54" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-38" target="iK9PqJTXz0f2TpD-Etnz-36" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7030a0;strokeWidth=1.7;fontSize=9;fontColor=#7030a0;labelBackgroundColor=#ffffff;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" value="manual NavigateToPose">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="5050" y="7639.06" /><mxPoint x="3845.06" y="7639.06" /><mxPoint x="3845.06" y="7661.06" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-55" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-35" target="iK9PqJTXz0f2TpD-Etnz-36" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7030a0;strokeWidth=1.7;fontSize=9;fontColor=#7030a0;labelBackgroundColor=#ffffff;" value="NavigateToPose Action">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-56" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-35" target="iK9PqJTXz0f2TpD-Etnz-37" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7030a0;strokeWidth=1.7;fontSize=9;fontColor=#7030a0;labelBackgroundColor=#ffffff;" value="FollowWaypoints Action">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2922.5" y="7631" /><mxPoint x="4375" y="7631" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-57" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-37" target="iK9PqJTXz0f2TpD-Etnz-36" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7030a0;strokeWidth=1.7;fontSize=9;fontColor=#7030a0;labelBackgroundColor=#ffffff;" value="per-waypoint navigation task">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="4155" y="7756" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-58" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-36" target="iK9PqJTXz0f2TpD-Etnz-39" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7030a0;strokeWidth=1.7;fontSize=9;fontColor=#7030a0;labelBackgroundColor=#ffffff;" value="ComputePathToPose">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="3420" y="7791" /><mxPoint x="3420" y="7901" /><mxPoint x="3080" y="7901" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-59" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-39" target="iK9PqJTXz0f2TpD-Etnz-40" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="raw global path">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-60" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-40" target="iK9PqJTXz0f2TpD-Etnz-41" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="smoothed path / FollowPath">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-61" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-36" target="iK9PqJTXz0f2TpD-Etnz-41" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7030a0;strokeWidth=1.7;fontSize=9;fontColor=#7030a0;labelBackgroundColor=#ffffff;" value="FollowPath orchestration">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="4175" y="7819" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-62" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-36" target="iK9PqJTXz0f2TpD-Etnz-42" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7030a0;strokeWidth=1.7;fontSize=9;fontColor=#7030a0;labelBackgroundColor=#ffffff;" value="recovery actions">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="3840" y="7871" /><mxPoint x="4630" y="7871" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-63" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-43" target="iK9PqJTXz0f2TpD-Etnz-39" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="global_costmap">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-64" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-44" target="iK9PqJTXz0f2TpD-Etnz-41" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="local_costmap">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-65" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-44" target="iK9PqJTXz0f2TpD-Etnz-42" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="costmap / footprint">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="4540" y="8361" /><mxPoint x="4540" y="8033.43" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-45" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-46" target="iK9PqJTXz0f2TpD-Etnz-42" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-66" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-41" target="iK9PqJTXz0f2TpD-Etnz-46" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="/cmd_vel_nav">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="4480" y="8033.43" /><mxPoint x="4480" y="8306" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-67" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-46" target="iK9PqJTXz0f2TpD-Etnz-47" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="/cmd_vel">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-68" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-47" target="iK9PqJTXz0f2TpD-Etnz-43" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="/scan + TF/odom">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="5585" y="8461" /><mxPoint x="2920" y="8461" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-69" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-47" target="iK9PqJTXz0f2TpD-Etnz-44" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="/scan + TF/odom">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="5550" y="8441" /><mxPoint x="4175" y="8441" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-70" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-8" target="iK9PqJTXz0f2TpD-Etnz-43" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="/map · TRANSIENT_LOCAL">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2580" y="7731" /><mxPoint x="2580" y="8191" /><mxPoint x="2870" y="8191" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-71" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-12" target="iK9PqJTXz0f2TpD-Etnz-43" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="map→odom TF">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2600" y="8061" /><mxPoint x="2600" y="8261" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-72" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-12" target="iK9PqJTXz0f2TpD-Etnz-44" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="pose / TF chain">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2620" y="8016" /><mxPoint x="2620" y="8141" /><mxPoint x="4070" y="8141" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-73" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-34" target="iK9PqJTXz0f2TpD-Etnz-39" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;dashed=1;dashPattern=2 2;strokeColor=#a64d79;fontSize=8;fontColor=#a64d79;labelBackgroundColor=#ffffff;" value="lifecycle">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="3360" y="7881" /><mxPoint x="2960" y="7881" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-74" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-34" target="iK9PqJTXz0f2TpD-Etnz-40" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;dashed=1;dashPattern=2 2;strokeColor=#a64d79;fontSize=8;fontColor=#a64d79;labelBackgroundColor=#ffffff;" value="lifecycle">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="3400.06" y="7871" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-75" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-34" target="iK9PqJTXz0f2TpD-Etnz-41" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;dashed=1;dashPattern=2 2;strokeColor=#a64d79;fontSize=8;fontColor=#a64d79;labelBackgroundColor=#ffffff;" value="lifecycle">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="4230.06" y="7861" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-76" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-34" target="iK9PqJTXz0f2TpD-Etnz-42" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;dashed=1;dashPattern=2 2;strokeColor=#a64d79;fontSize=8;fontColor=#a64d79;labelBackgroundColor=#ffffff;" value="lifecycle">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="4710" y="7881" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-77" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-34" target="iK9PqJTXz0f2TpD-Etnz-36" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;dashed=1;dashPattern=2 2;strokeColor=#a64d79;fontSize=8;fontColor=#a64d79;labelBackgroundColor=#ffffff;" value="lifecycle">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="3910" y="7641" /><mxPoint x="3735.03" y="7641" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-78" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-34" target="iK9PqJTXz0f2TpD-Etnz-37" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;dashed=1;dashPattern=2 2;strokeColor=#a64d79;fontSize=8;fontColor=#a64d79;labelBackgroundColor=#ffffff;" value="lifecycle">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-79" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-34" target="iK9PqJTXz0f2TpD-Etnz-46" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=open;dashed=1;dashPattern=2 2;strokeColor=#a64d79;fontSize=8;fontColor=#a64d79;labelBackgroundColor=#ffffff;" value="lifecycle">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="5420" y="7913.6" /><mxPoint x="5120" y="7913.6" /><mxPoint x="5120" y="8261" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-80" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-15" target="iK9PqJTXz0f2TpD-Etnz-48" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="Localization ready">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="2580" y="8221" /><mxPoint x="2580" y="8571" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-81" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-48" target="iK9PqJTXz0f2TpD-Etnz-49" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="YES">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-82" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-48" target="iK9PqJTXz0f2TpD-Etnz-50" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#c00000;strokeWidth=1.5;fontSize=9;fontColor=#c00000;labelBackgroundColor=#ffffff;" value="NO">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="3450" y="8681" /><mxPoint x="4995" y="8681" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-83" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#ed7d31;strokeWidth=1.5;" value="">
+          <mxGeometry height="1500" width="1890" x="6060" y="7461" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-84" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;fontColor=#843c0c;fontSize=24;fontStyle=1;align=center;verticalAlign=middle;" value="Create3 Dock / Undock — IR · Action · Internal Motion Control">
+          <mxGeometry height="36" width="1860" x="6085" y="7461" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-85" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;Create3 Status / Sensors&lt;/b&gt;&lt;br/&gt;/robotX/dock_status&lt;br/&gt;{is_docked, dock_visible}&lt;br/&gt;/robotX/ir_opcode&lt;br/&gt;battery / charging state&lt;br/&gt;&lt;i&gt;robot_agent 는 nav.is_docked 로 읽는다&lt;/i&gt;">
+          <mxGeometry height="145" width="270" x="6380" y="7527" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-86" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;Powered Home Base&lt;/b&gt;&lt;br/&gt;Dock station IR opcode 송신&lt;br/&gt;Create3 전면 IR sensors 가 신호 수신">
+          <mxGeometry height="110" width="300" x="6940" y="7541" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-87" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;Control Ownership Rule&lt;/b&gt;&lt;br/&gt;Nav2 goal / cmd_vel 과 Dock behavior 를 동시에 실행하지 않는다.&lt;br/&gt;→ robot_agent 의 target_cb 가 dock_phase 중 goal 을 무시하는 이유.">
+          <mxGeometry height="80" width="400" x="7540" y="7541" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-88" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9eaf7;strokeColor=#5b9bd5;fontColor=#17365d;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" value="D-1. Undock Action — 현재 dock 에서 안전하게 이탈">
+          <mxGeometry height="32" width="1810" x="6110" y="7701" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-89" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;/robotX/undock Action Goal&lt;/b&gt;&lt;br/&gt;Caller: robot_agent.start_undocking()&lt;br/&gt;Goal accepted when:&lt;br/&gt;• no other dock behavior running&lt;br/&gt;• is_docked == true">
+          <mxGeometry height="150" width="240" x="6260" y="7751" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-90" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;BehaviorsScheduler&lt;/b&gt;&lt;br/&gt;set_behavior(execute_undock)&lt;br/&gt;stop_on_new_behavior=false&lt;br/&gt;동작 완료 전 다른 dock behavior 거부">
+          <mxGeometry height="150" width="260" x="6710" y="7781" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-91" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;SimpleGoalController CmdPath&lt;/b&gt;&lt;br/&gt;① 현재 pose 기준 −0.40 m 후진&lt;br/&gt;drive_backwards=true · radius=0.05 m&lt;br/&gt;② 같은 위치에서 180° 회전&lt;br/&gt;max_translation=0.15 m/s&lt;br/&gt;max_rotation=π/4 rad/s">
+          <mxGeometry height="180" width="290" x="7160" y="7741" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-92" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;Internal Motion Loop&lt;/b&gt;&lt;br/&gt;Odometry pose feedback&lt;br/&gt;ANGLE_TO_GOAL&lt;br/&gt;→ GO_TO_GOAL_POSITION&lt;br/&gt;→ GOAL_ANGLE&lt;br/&gt;geometry_msgs/Twist → wheel command">
+          <mxGeometry height="180" width="280" x="7620" y="7741" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-93" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;fontSize=10;align=center;verticalAlign=middle;" value="Undock complete?&lt;br/&gt;is_docked == false&lt;br/&gt;AND runtime ≤ 30 s">
+          <mxGeometry height="120" width="250" x="6690" y="7986" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-94" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;SUCCEEDED&lt;/b&gt;&lt;br/&gt;isUndockComplete() == true&lt;br/&gt;robot_agent._dock_tick 이 after_undock 분기&lt;br/&gt;PATROL / DOCK / target_pose 대기">
+          <mxGeometry height="95" width="360" x="7000" y="8041" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-95" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;ABORT / CANCEL&lt;/b&gt;&lt;br/&gt;30 s timeout / goal cancel / path 완료 후 is_docked=true&lt;br/&gt;goal_controller.reset()&lt;br&gt;&lt;font color=&quot;#b7791f&quot;&gt;🟡 robot_agent 는 isUndockComplete 만 보므로 실패해도 다음 단계로 넘어간다&lt;/font&gt;">
+          <mxGeometry height="130" width="340" x="7510" y="7981" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-96" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-89" target="iK9PqJTXz0f2TpD-Etnz-90" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7030a0;strokeWidth=1.7;fontSize=9;fontColor=#7030a0;labelBackgroundColor=#ffffff;" value="accepted goal">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-97" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-90" target="iK9PqJTXz0f2TpD-Etnz-91" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#595959;strokeWidth=1.3;fontSize=9;labelBackgroundColor=#ffffff;" value="execute_undock">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-98" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-91" target="iK9PqJTXz0f2TpD-Etnz-92" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#595959;strokeWidth=1.3;fontSize=9;labelBackgroundColor=#ffffff;" value="CmdPath segments">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-99" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-92" target="iK9PqJTXz0f2TpD-Etnz-93" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#595959;strokeWidth=1.3;fontSize=9;labelBackgroundColor=#ffffff;" value="dock_status feedback">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="7760" y="7961" /><mxPoint x="6815" y="7961" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-100" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-85" target="iK9PqJTXz0f2TpD-Etnz-93" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="is_docked">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="6670" y="7599.5" /><mxPoint x="6670" y="8046" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-101" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-93" target="iK9PqJTXz0f2TpD-Etnz-94" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="YES">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-102" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-93" target="iK9PqJTXz0f2TpD-Etnz-95" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#c00000;strokeWidth=1.5;fontSize=9;fontColor=#c00000;labelBackgroundColor=#ffffff;" value="NO / timeout">
+          <mxGeometry relative="1" x="-0.0683" y="-2" as="geometry"><mxPoint y="1" as="offset" /><Array as="points"><mxPoint x="7220" y="8021" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-103" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d9eaf7;strokeColor=#5b9bd5;fontColor=#17365d;fontSize=14;fontStyle=1;align=center;verticalAlign=middle;" value="D-2. Return-to-Dock — Nav2 Pre-Dock Pose + Create3 IR Autonomous Docking">
+          <mxGeometry height="32" width="1810" x="6110" y="8151" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-104" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#5b9bd5;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;Step 1 — Pre-Dock NavigateToPose&lt;/b&gt;&lt;br/&gt;robot_agent 파라미터 dock_x / dock_y / dock_yaw_deg&lt;br/&gt;goal frame=map&lt;br/&gt;Nav2 가 global/local planning · obstacle avoidance 수행&lt;br/&gt;dock_phase = &apos;NAV&apos;">
+          <mxGeometry height="165" width="340" x="6200" y="8201" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-105" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;fontSize=10;align=center;verticalAlign=middle;" value="Pre-dock goal&lt;br/&gt;SUCCEEDED?">
+          <mxGeometry height="105" width="210" x="6720" y="8265" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-106" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e4dfec;strokeColor=#8064a2;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;Step 2 — Nav2 Cancel / Hold&lt;/b&gt;&lt;br/&gt;stop_patrol() → cancelTask()&lt;br/&gt;cmd_vel_nav stop 확인&lt;br/&gt;Dock behavior 에 exclusive control 이관">
+          <mxGeometry height="105" width="250" x="7000" y="8265" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-107" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;fontSize=10;align=center;verticalAlign=middle;" value="is_docked == false&lt;br/&gt;AND dock_visible == true&lt;br/&gt;AND no dock behavior active?">
+          <mxGeometry height="145" width="250" x="7320" y="8211" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-108" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;Step 3 — /robotX/dock Action&lt;/b&gt;&lt;br/&gt;robot_agent: nav.dock_send_goal()&lt;br/&gt;Create3 autonomous Dock Action Server&lt;br/&gt;IR 기반 search / alignment / approach&lt;br/&gt;dock_phase = &apos;DOCK&apos;">
+          <mxGeometry height="165" width="300" x="7610" y="8201" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-109" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-104" target="iK9PqJTXz0f2TpD-Etnz-105" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7030a0;strokeWidth=1.7;fontSize=9;fontColor=#7030a0;labelBackgroundColor=#ffffff;" value="Nav2 result">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-110" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-105" target="iK9PqJTXz0f2TpD-Etnz-106" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="YES">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-111" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-105" target="iK9PqJTXz0f2TpD-Etnz-104" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#c00000;strokeWidth=1.5;fontSize=9;fontColor=#c00000;labelBackgroundColor=#ffffff;" value="NO: dock 액션 그대로 시도">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-112" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-106" target="iK9PqJTXz0f2TpD-Etnz-107" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#7030a0;strokeWidth=1.7;fontSize=9;fontColor=#7030a0;labelBackgroundColor=#ffffff;" value="exclusive control">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-113" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-85" target="iK9PqJTXz0f2TpD-Etnz-107" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="dock_visible / is_docked">
+          <mxGeometry relative="1" x="0.0023" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="6155" y="7668.86" /><mxPoint x="6155" y="8391.14" /><mxPoint x="7445" y="8391.14" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-114" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-107" target="iK9PqJTXz0f2TpD-Etnz-108" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="YES">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-115" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-107" target="iK9PqJTXz0f2TpD-Etnz-104" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#c00000;strokeWidth=1.5;fontSize=9;fontColor=#c00000;labelBackgroundColor=#ffffff;" value="NO: reposition / scan">
+          <mxGeometry relative="1" x="-0.0769" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="6930" y="8241" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-116" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-86" target="iK9PqJTXz0f2TpD-Etnz-85" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="IR opcode">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="6790" y="7571" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-117" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;Create3 Firmware Dock Sequence&lt;/b&gt;&lt;br/&gt;1) IR opcode 탐색&lt;br/&gt;2) dock 방향 yaw 정렬&lt;br/&gt;3) 접점 접근&lt;br/&gt;4) 전류 / charging 확인&lt;br/&gt;Firmware 내부 경계에서 odom·IR·wheel control 폐루프 수행">
+          <mxGeometry height="190" width="330" x="6300" y="8421" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-118" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fce4d6;strokeColor=#ed7d31;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;Base Motion / Safety&lt;/b&gt;&lt;br/&gt;Create3 autonomous velocity command&lt;br/&gt;Wheel drive · cliff / bump / wheel-drop safety&lt;br/&gt;DockStatus 지속 갱신">
+          <mxGeometry height="150" width="290" x="6790" y="8451" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-119" parent="1" vertex="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#bf9000;fontSize=10;align=center;verticalAlign=middle;" value="Dock complete?&lt;br/&gt;&lt;b&gt;isDockComplete()&lt;/b&gt; 는 실패도 &apos;완료&apos; 로 준다&lt;br/&gt;→ &lt;b&gt;is_docked 센서로 재확인&lt;/b&gt;">
+          <mxGeometry height="180" width="300" x="7140" y="8436" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-120" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e2f0d9;strokeColor=#70ad47;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;SUCCEEDED&lt;/b&gt;&lt;br/&gt;robot_agent.state = &lt;b&gt;DOCKED&lt;/b&gt;&lt;br/&gt;/fleet/status 로 방송&lt;br/&gt;→ ★ central_node 가 상대 로봇에게 UNDOCK (순찰 교대 시작)">
+          <mxGeometry height="190" width="290" x="7610" y="8426" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-121" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f4cccc;strokeColor=#cc0000;fontSize=11;align=center;verticalAlign=middle;spacing=5;" value="&lt;b&gt;FAIL&lt;/b&gt;&lt;br/&gt;dock_visible loss / timeout / alignment failure&lt;br/&gt;robot_agent.state = &lt;b&gt;IDLE&lt;/b&gt; (DOCKED 로 축약 금지)&lt;br/&gt;재시도는 central 의 DOCK 명령으로">
+          <mxGeometry height="155" width="350" x="7095" y="8661" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-122" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-108" target="iK9PqJTXz0f2TpD-Etnz-117" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#595959;strokeWidth=1.3;fontSize=9;labelBackgroundColor=#ffffff;" value="accepted action">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="7760" y="8401" /><mxPoint x="6560" y="8401" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-123" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-117" target="iK9PqJTXz0f2TpD-Etnz-118" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#595959;strokeWidth=1.3;fontSize=9;labelBackgroundColor=#ffffff;" value="autonomous motion command">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-124" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-118" target="iK9PqJTXz0f2TpD-Etnz-119" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#595959;strokeWidth=1.3;fontSize=9;labelBackgroundColor=#ffffff;" value="feedback">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-125" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-85" target="iK9PqJTXz0f2TpD-Etnz-119" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="is_docked / charging">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="6090" y="7599.5" /><mxPoint x="6090" y="8631" /><mxPoint x="7200" y="8631" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-126" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-119" target="iK9PqJTXz0f2TpD-Etnz-120" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#70ad47;strokeWidth=1.4;fontSize=9;fontColor=#548235;labelBackgroundColor=#ffffff;" value="YES">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-127" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-119" target="iK9PqJTXz0f2TpD-Etnz-121" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#c00000;strokeWidth=1.5;fontSize=9;fontColor=#c00000;labelBackgroundColor=#ffffff;" value="NO / timeout">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-128" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-121" target="iK9PqJTXz0f2TpD-Etnz-104" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#c00000;strokeWidth=1.5;fontSize=10;fontColor=#c00000;labelBackgroundColor=#ffffff;" value="retry (DOCK 명령)">
+          <mxGeometry relative="1" x="-0.3101" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="6220" y="8781" /></Array></mxGeometry>
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-129" parent="1" vertex="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;align=left;verticalAlign=top;spacing=6;" value="&lt;b&gt;Dock / Undock Integration Contract&lt;/b&gt;&lt;br/&gt;• Undock 은 Create3 Action 이 직접 −0.40 m 후진 + 180° 회전 수행&lt;br/&gt;• Dock 은 Nav2 가 pre-dock pose 까지만 담당하고, 최종 IR 정렬·진입은 Create3 Dock Action 담당&lt;br/&gt;• robot_agent 가 두 제어기의 경계에서 cancel/ownership 을 관리 (dock_phase 상태변수)&lt;br/&gt;• central_node 는 명령과 상태 전이만 관리하며 직접 cmd_vel 을 발행하지 않음">
+          <mxGeometry height="100" width="460" x="7540" y="8841" as="geometry" />
+        </mxCell>
+        <mxCell id="iK9PqJTXz0f2TpD-Etnz-130" edge="1" parent="1" source="iK9PqJTXz0f2TpD-Etnz-85" target="iK9PqJTXz0f2TpD-Etnz-117" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeColor=#4472c4;strokeWidth=1.5;fontSize=9;fontColor=#1f4e79;labelBackgroundColor=#ffffff;" value="IR / dock status">
+          <mxGeometry relative="1" x="0.0023" as="geometry"><mxPoint as="offset" /><Array as="points"><mxPoint x="6115" y="7638.86" /><mxPoint x="6115" y="8516" /></Array></mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

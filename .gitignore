@@ -1,0 +1,6 @@
+build/
+install/
+log/
+__pycache__/
+*.pyc
+src/turtle_project2.bak-0810/
