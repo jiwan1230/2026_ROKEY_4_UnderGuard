@@ -155,6 +155,9 @@ class DetectorNode(Node):
         # 이 낮은 문턱을 쓴다. 순찰 중 최초 발견은 오탐 방지로 conf(0.6) 유지.
         self.opening_verify_conf = self.declare_parameter(
             'opening_verify_conf', 0.4).value
+        # trap 점검도 구멍 코앞(0.8m)에서 하므로 close-up 스케일로 확신도가 낮다.
+        # 모델 바닥값(0.4) 이상은 화면에 그려지는데 conf(0.6)로 거르면 조용히 미검출.
+        self.trap_conf = self.declare_parameter('trap_conf', 0.4).value
         self.approach_dist = self.declare_parameter('approach_dist', 0.8).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.27).value
         # 방금 처리 끝낸 구멍을 그 자리에서 곧바로 재감지해 무한 재점검하는 걸 막는다.
@@ -287,8 +290,9 @@ class DetectorNode(Node):
         depth_frame = depth_msg.header.frame_id
         # 바닥값은 클래스별 문턱 중 가장 낮은 값 — 여기서 걸러버리면 _pick이
         # 클래스별로 다시 못 살린다. 클래스별 최종 문턱은 _pick의 min_conf.
-        result = self.model(img, conf=min(self.conf, self.opening_verify_conf),
-                            verbose=False)[0]
+        result = self.model(img, verbose=False,
+                            conf=min(self.conf, self.opening_verify_conf,
+                                     self.trap_conf))[0]
         if self.show:
             self._show(result.plot())       # ultralytics가 박스·라벨까지 그려준다
         self._publish_markers(result, img.shape, depth, depth_frame)
@@ -773,7 +777,7 @@ class DetectorNode(Node):
         trap이 verify_timeout 프레임까지 안 보이면 사람이 아직 안 놓은 것으로 보고
         재설치(_reinstall)로 넘긴다.
         """
-        box = self._pick(result, 'trap', img_shape)
+        box = self._pick(result, 'trap', img_shape, self.trap_conf)
         if box is None:
             self._inspect_miss('trap 미검출')
             return
