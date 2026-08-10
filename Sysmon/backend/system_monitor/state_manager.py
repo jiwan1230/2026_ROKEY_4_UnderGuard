@@ -10,6 +10,7 @@ from typing import Any
 
 from .risk_signals import is_live_rodent
 
+# 로봇이 가질 수 있는 상태들
 VALID_STATES = {
     "IDLE",
     "SEARCHING",
@@ -25,13 +26,11 @@ VALID_STATES = {
     "OFFLINE",
 }
 
+# 로봇이 가질 수 있는 역할을 제한
 VALID_ROLES = {"SCOUT", "RAT_TRACKER", "SURVEY_TRAP", "UNASSIGNED"}
 
-# 전체 임무 상태는 개별 로봇 state 중 가장 우선순위가 높은 것을 그대로 반영한다.
-# ERROR > TARGET_LOST > TRACKING > (확인 중 이동) > RETURNING 순이며, 해당하는
-# 로봇이 하나도 없으면 IDLE(대기 중)로 떨어진다. BRD상 Under-Guard는 설치류를
-# 직접 포획·트랩 설치하지 않으므로 라벨은 화면(dashboard.js)에서 "확인/대응"
-# 중심 문구로 옮긴다.
+# 여러 로봇 상태 중에서 UI에 어떤 상태를 대표로 보여줄지 결정하는 우선순위표
+# 예를 들어 한 로봇이 TRACKING 중이어도 다른 로봇에서 ERROR가 발생하면 ERROR를 우선 표시
 _MISSION_STATUS_PRIORITY = (
     ("ERROR", {"ERROR"}),
     ("TARGET_LOST", {"TARGET_LOST"}),
@@ -40,32 +39,28 @@ _MISSION_STATUS_PRIORITY = (
     ("RETURNING", {"RETURNING"}),
 )
 
-
+# states는 현재 여러 로봇의 상태들을 모아놓은 리스트
 def _derive_mission_status(states: list[str]) -> str:
-    """개별 로봇 state 중 가장 우선순위가 높은 것을 전체 임무 상태로 반환한다.
-
-    입력: 현재 스냅샷에 포함된 로봇들의 state 목록이다.
-    출력: 화면에 표시할 전체 임무 상태 코드다. 해당하는 활성 상태가 없으면
-    ``IDLE``이다(모든 로봇이 대기·오프라인·임무 완료 상태인 경우 포함).
-    사용: ``StateManager.snapshot()``에서 매 호출마다 다시 계산해, 로봇 카드와
-    전체 임무 배너가 서로 다른 이야기를 하지 않게 한다.
-    """
 
     for status, member_states in _MISSION_STATUS_PRIORITY:
+        # 리스트의 여러 로봇 중에서 한 대라도 해당 상태인지 확인
         if any(state in member_states for state in states):
             return status
     return "IDLE"
 
+# YOLO 등에서 전달받은 객체 종류가 쥐 관련 객체인지 확인해서, 
+# 결과를 bool 값으로 반환하는 함수
 def is_rat_object(object_type: str | None) -> bool:
-    """객체 라벨이 현재 데모에서 쥐로 취급되는지 반환한다."""
-
+    # True False 반환
     return is_live_rodent(object_type)
 
 
+# 로봇의 위치를 저장
 @dataclass
 class Position:
     x: float = 0.0
     y: float = 0.0
+    # 로봇이 바라보는 방향
     yaw: float = 0.0
 
 
@@ -76,9 +71,12 @@ class Target:
     distance: float | None = None
     map_x: float | None = None
     map_y: float | None = None
+    # source가 필요한 가장 큰 이유는 데이터의 출처를 추적하기 위해서
+    # 실제 카메라·ROS 데이터인지, 테스트용 Mock 데이터인지 등을 구분
     source: str | None = None
 
 
+# 굉장히 중요
 @dataclass
 class RobotState:
     robot_id: str
@@ -87,111 +85,141 @@ class RobotState:
     state: str = "OFFLINE"
     battery: float | None = None
     speed: float = 0.0
+    # 화면에 보여줄 현재 작업 설명
     current_task: str = "대기"
+    # 그 로봇만의 Position 객체를 새로 하나 만들어서 넣어줌
     position: Position = field(default_factory=Position)
     position_frame: str = "unknown"
     target: Target = field(default_factory=Target)
     nav_status: str = "UNKNOWN"
     camera_status: str = "UNKNOWN"
     slam_status: str = "UNKNOWN"
+    # 중요
+    # 이 로봇으로부터 마지막 데이터를 받은 시각.
+    # Offline 판단에 핵심적으로 사용
     last_update: float = 0.0
 
 
+# 웹의 최근 이벤트 타임라인 하나를 표현
 @dataclass
 class Event:
     id: int
     timestamp: float
     robot_id: str | None
+    # 이벤트의 심각도
     severity: str
     event_type: str
+    # 이벤트 내용을 사람이 읽을 수 있게 설명한 문장
     message: str
 
 
+# 중요
+# ROS/Mock 데이터를 하나의 웹 상태로 집계
+# ROS callback·Mock thread·Flask 요청의 동시 접근을 Lock으로 보호
 class StateManager:
-    """ROS/Mock 데이터를 웹용 단일 상태로 집계한다.
-
-    모든 공개 변경/조회는 재진입 잠금으로 보호되어 ROS 콜백, Mock 스레드,
-    Flask 요청이 같은 상태를 동시에 다뤄도 중간 상태가 노출되지 않는다.
-    """
 
     def __init__(
         self,
         robots: list[tuple[str, str]],
+        # 중요
+        # 로봇 데이터가 몇 초 동안 안 들어왔을 때 Offline으로 볼지
         offline_timeout_sec: float = 3.0,
     ):
+        # 중요 (가장 메인 코드에서 다시 나옴)
+        # 공유 상태 접근용 Lock 생성
+        # threading → 여러 작업(스레드)을 다루는 파이썬 기본 모듈
+        # RLock()   → 공유 데이터를 안전하게 수정하기 위한 잠금장치
         self._lock = threading.RLock()
         self._offline_timeout_sec = offline_timeout_sec
         self._initial_robots = tuple(robots)
+        # 실제 로봇/이벤트/탐지 데이터들을 초기 상태로 만듦
         self._reset_unlocked()
 
+    # StateManager 내부에서 사용하는 함수
+    # 전체 임무 상태를 별도로 저장하면 로봇 상태와 Mission 상태가 서로 달라지는 문제가 생길 수 있기 때문에,
+    # snapshot을 생성할 때 현재 로봇 상태를 기준으로 다시 계산하도록
     def _reset_unlocked(self) -> None:
         self._robots = {
             robot_id: RobotState(robot_id=robot_id, role=role)
             for robot_id, role in self._initial_robots
         }
+        # 이벤트 목록 초기화
         self._events: list[Event] = []
+        # 탐지 목록 초기화
         self._detections: list[dict[str, Any]] = []
         self._traps: list[dict[str, Any]] = []
         self._next_event_id = 1
         self._next_detection_id = 1
         self._next_trap_id = 1
-        # "status"는 저장하지 않는다 — snapshot()이 매번 로봇 state로부터
-        # 다시 계산해 덮어쓰므로, 여기 시드 값을 두면 절대 관측되지 않는
-        # 죽은 값만 남는다(_derive_mission_status 참고).
+        # 전체 임무 정보를 저장
         self._mission = {
             "role_assignment_status": "WAITING",
             "tracker_robot_id": None,
             "support_robot_ids": [],
         }
 
+    # 가장 중요
     def update_robot(self, robot_id: str, **changes: Any) -> None:
-        """로봇 상태 일부를 갱신하고 통신 시각을 기록한다.
 
-        입력: 로봇 ID와 상태 변경값이다. 위치/대상은 딕셔너리다.
-        출력: 없음. 잘못된 상태·역할·필드는 예외로 거부한다.
-        사용: Mock 갱신 및 ROS 콜백에서 수신한 최신 값만 전달한다.
-        """
-
+        # 지금부터 StateManager 데이터를 수정하므로 Lock을 획득
+        # 두 작업이 있을 때, 동시에 StateManager의 같은 값을 바꾸면 데이터가 꼬일 수 있음
         with self._lock:
+            # 전달받은 ID의 로봇이 실제 등록된 로봇인지 확인
             robot = self._require_robot(robot_id)
             now = time.time()
+            # pap -> position, target은 단순 문자열이나 숫자가 아니라
+            # 객체이고, 그 안에 여러 속성이 있으므로 별도로 꺼내서 처리
             position = changes.pop("position", None)
             target = changes.pop("target", None)
             state = changes.get("state")
             if state is not None and state not in VALID_STATES:
+                # ROS나 Mock에서 예상하지 않은 state 값이 들어와 UI 상태가 깨지는 것을 방지
                 raise ValueError(f"지원하지 않는 state: {state}")
             role = changes.get("role")
             if role is not None and role not in VALID_ROLES:
                 raise ValueError(f"지원하지 않는 role: {role}")
+            # Position 값은 dictionary 형태로 들어오고, x·y·yaw 필드가 존재하는지 확인한 뒤 float으로 변환
             if position:
                 for key, value in position.items():
+                    # 전달받은 위치 항목이 Position 객체에 실제로 존재하는지 확인
                     if hasattr(robot.position, key):
+                        # 존재한다면 값을 float으로 변환해서 해당 위치값에 저장
                         setattr(robot.position, key, float(value))
             if target:
                 for key, value in target.items():
                     if hasattr(robot.target, key):
                         setattr(robot.target, key, value)
+            # position과 target을 제외한 값들을 처리          
             for key, value in changes.items():
                 if not hasattr(robot, key):
                     raise KeyError(f"RobotState에 없는 필드: {key}")
+                # 정상적인 필드는 실제 RobotState에 저장
                 setattr(robot, key, value)
+            # 중요
+            # Offline 처리와 직접 연결되는 중요 코드
+            # 마지막으로 통신된 시간 = 현재 시간으로 변경함
             robot.last_update = now
             robot.connection = "ONLINE"
+            # 통신이 다시 들어왔는데 기존 상태가 아직 OFFLINE이면 -> IDLE 로 복구
             if robot.state == "OFFLINE":
                 robot.state = "IDLE"
 
+    # 특정 로봇으로부터 통신이 들어왔다는 것을 기록하는 함수
+    # 로봇의 온라인·오프라인 상태를 판단하는 데 사용
     def mark_heartbeat(self, robot_id: str) -> None:
         self.update_robot(robot_id)
 
+    # 웹의 이벤트 타임라인에 새로운 이벤트를 추가
     def add_event(
         self,
         message: str,
         *,
         robot_id: str | None = None,
+        # severity는 “얼마나 중요한 문제인가?”를 나타냄
         severity: str = "INFO",
+        # 무슨 종류의 이벤트인지를 나타냄
         event_type: str = "SYSTEM",
     ) -> dict[str, Any]:
-        """타임라인 사건을 추가하고 직렬화 가능한 복사본을 반환한다."""
 
         with self._lock:
             event = Event(
@@ -243,15 +271,7 @@ class StateManager:
             return asdict(self._require_robot(robot_id))
 
     def assign_roles_from_rat_detection(self, detector_robot_id: str) -> dict[str, Any] | None:
-        """최초 탐지 로봇은 추적, 나머지는 지원 역할로 배정한다.
 
-        동시 탐지에서도 첫 호출만 역할을 확정하며, 이후 호출은 기존
-        배정을 유지하기 위해 ``None``을 반환한다.
-
-        입력: 최초로 쥐를 탐지한 등록 로봇 ID다.
-        출력: 추적/지원 로봇 배정 결과이며, 이미 배정됐으면 ``None``이다.
-        사용: 쥐 계열 탐지를 처리하는 ``process_detection``에서 호출한다.
-        """
         with self._lock:
             self._require_robot(detector_robot_id)
             if self._mission["role_assignment_status"] == "ASSIGNED":
@@ -289,12 +309,6 @@ class StateManager:
             }
 
     def snapshot(self) -> dict[str, Any]:
-        """현재 시스템 전체 상태를 대시보드 응답 형태로 반환한다.
-
-        입력: 없음. 조회 시 마지막 갱신 시각으로 Offline 여부를 재계산한다.
-        출력: 요약, 임무, 로봇, 사건, 최근 탐지를 포함한 독립 복사본이다.
-        사용: ``GET /api/snapshot`` 폴링 응답으로 전달한다.
-        """
 
         with self._lock:
             self._refresh_connections()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .camera_service import CameraFrameStore
 from .config import RobotConfig, RosInterfaceConfig
@@ -18,47 +18,60 @@ from .detection_service import (
 from .risk_signals import ENTRY_POINT, LIVE_RODENT, is_live_rodent, normalize_risk_signal
 from .state_manager import StateManager
 
-try:
+# ROS 2 패키지는 일반 PC의 Mock 모드에는 없어도 실행 가능해야 해서 전부
+# 선택적으로 가져온다. TYPE_CHECKING 분기는 실행되지 않고 타입 체커(Pylance)만
+# 읽는다 — 그래서 정적 분석에서는 "항상 성공하는 import"로 보여 이후 코드에서
+# rclpy.ok() 같은 호출에 "None일 수도 있다"는 오탐이 안 뜨고, 실제 실행
+# 시점에는 아래 else 블록의 try/except가 그대로 동작해 없으면 None으로
+# 안전하게 빠진다.
+if TYPE_CHECKING:
     import rclpy
-    from std_msgs.msg import String
-except ImportError:  # 일반 PC의 Mock 모드에서는 ROS 패키지가 없어도 실행 가능
-    rclpy = None
-    String = None
-
-try:  # Fleet 계약 외 센서 토픽은 설치된 메시지 타입만 선택적으로 구독한다.
     from nav_msgs.msg import Odometry
-except ImportError:
-    Odometry = None
-
-try:
-    from sensor_msgs.msg import BatteryState, CompressedImage
-except ImportError:
-    BatteryState = None
-    CompressedImage = None
-
-try:
     from rclpy.qos import qos_profile_sensor_data
-except ImportError:
-    qos_profile_sensor_data = None
-
-try:
+    from sensor_msgs.msg import BatteryState, CompressedImage
+    from std_msgs.msg import String
     from vision_msgs.msg import Detection3DArray
-except ImportError:
-    Detection3DArray = None
 
-try:  # colcon 설치 환경과 저장소에서 직접 실행하는 환경을 모두 지원한다.
-    from turtle_project import fleet_msg
-except ImportError:
-    import sys
-    from pathlib import Path
-
-    # colcon build/source 없이 저장소에서 바로 실행하는 경우, turtle_project는
-    # <repo_root>/src/turtle_project에 있다. Sysmon/backend가 실행 CWD와
-    # 무관하게 항상 찾도록 그 src/를 sys.path에 추가한다.
-    _TURTLE_SRC_DIR = Path(__file__).resolve().parents[3] / "src"
-    if str(_TURTLE_SRC_DIR) not in sys.path:
-        sys.path.insert(0, str(_TURTLE_SRC_DIR))
     from turtle_project.turtle_project import fleet_msg
+else:
+    try:
+        import rclpy
+        from std_msgs.msg import String
+    except ImportError:  # 일반 PC의 Mock 모드에서는 ROS 패키지가 없어도 실행 가능
+        rclpy = None
+        String = None
+
+    try:  # Fleet 계약 외 센서 토픽은 설치된 메시지 타입만 선택적으로 구독한다.
+        from nav_msgs.msg import Odometry
+    except ImportError:
+        Odometry = None
+
+    try:
+        from sensor_msgs.msg import BatteryState, CompressedImage
+    except ImportError:
+        BatteryState = None
+        CompressedImage = None
+
+    try:
+        from rclpy.qos import qos_profile_sensor_data
+    except ImportError:
+        qos_profile_sensor_data = None
+
+    try:
+        from vision_msgs.msg import Detection3DArray
+    except ImportError:
+        Detection3DArray = None
+
+    try:  # colcon 설치 환경과 저장소에서 직접 실행하는 환경을 모두 지원한다.
+        from turtle_project import fleet_msg
+    except ImportError:
+        import sys
+        from pathlib import Path
+
+        _TURTLE_SRC_DIR = Path(__file__).resolve().parents[3] / "src"
+        if str(_TURTLE_SRC_DIR) not in sys.path:
+            sys.path.insert(0, str(_TURTLE_SRC_DIR))
+        from turtle_project.turtle_project import fleet_msg
 
 
 FLEET_STATE_MAP = {
@@ -71,18 +84,6 @@ FLEET_STATE_MAP = {
 }
 
 class RosBridge:
-    """main Fleet 인터페이스와 보조 센서 토픽을 웹 상태로 변환한다.
-
-    main 기준 1순위 인터페이스:
-      - /fleet/status  : ``robot:state:battery``
-      - /fleet/event   : ``event_name:x:y``
-
-    선택적 보조 입력:
-      - /<namespace>/webcam/detections : vision_msgs/Detection3DArray
-      - /<namespace>/oakd/detections   : vision_msgs/Detection3DArray
-      - /<namespace>/odom, battery_state
-      - /<namespace>/synced/rgb        : sensor_msgs/CompressedImage (카메라 프레임)
-    """
 
     def __init__(
         self,
@@ -129,12 +130,6 @@ class RosBridge:
         }
 
     def start(self) -> None:
-        """ROS 노드와 spin 스레드를 시작한다.
-
-        입력: 없음. 생성자에서 전달된 로봇별 토픽 설정을 사용한다.
-        출력: 없음. ROS 패키지가 없으면 ``RuntimeError``를 발생시킨다.
-        사용: ``MONITOR_MODE=ros``일 때 앱 시작 과정에서 한 번 호출한다.
-        """
 
         if not self.available:
             raise RuntimeError("ROS 모드에는 ROS 2 Humble의 rclpy가 필요합니다.")
@@ -153,12 +148,6 @@ class RosBridge:
         self._thread = None
 
     def _spin(self) -> None:
-        """로봇별 ROS 구독을 생성하고 종료 요청까지 콜백을 처리한다.
-
-        입력: 생성자에 등록된 로봇 namespace와 역할 설정이다.
-        출력: 없음. ROS 노드를 생성·spin하고 종료 시 자원을 정리한다.
-        사용: ``start()``가 만든 전용 스레드의 진입점이다.
-        """
 
         rclpy.init(args=None)
         from rclpy.node import Node
@@ -236,11 +225,6 @@ class RosBridge:
                 rclpy.shutdown()
 
     def _on_fleet_status(self, msg: Any) -> None:
-        """main의 ``robot:state:battery`` 상태를 관제 상태로 변환한다.
-
-        입력: ``std_msgs/String`` Fleet status다. 출력은 없다.
-        사용: `/fleet/status` 콜백이며 알 수 없는 로봇·잘못된 포맷은 무시한다.
-        """
 
         try:
             robot_id, fleet_state, battery = fleet_msg.parse_status(msg.data)
@@ -277,12 +261,6 @@ class RosBridge:
                 self._last_active_robot_id = robot_id
 
     def _on_fleet_event(self, msg: Any) -> None:
-        """main의 ``event_name:x:y`` 사건을 탐지·트랩 기록으로 변환한다.
-
-        입력: map 좌표를 담은 ``std_msgs/String`` Fleet event다. 출력은 없다.
-        사용: `/fleet/event` 콜백이다. 현재 계약에 robot_id가 없어 최근 활동
-        로봇을 사용하고, 상태가 없으면 설정된 첫 로봇을 사용한다.
-        """
 
         try:
             name, map_x, map_y = fleet_msg.parse_event(msg.data)
@@ -330,12 +308,6 @@ class RosBridge:
         return self.robots[0].robot_id
 
     def _on_detection(self, robot_id: str, source: str, msg: Any) -> None:
-        """Detection3DArray의 유효 항목을 공통 탐지 서비스로 전달한다.
-
-        입력: 구독 토픽의 로봇 ID, 센서 이름, ``Detection3DArray`` 메시지다.
-        출력: 없음. 상태 heartbeat와 현재 세션의 탐지·타임라인을 갱신한다.
-        사용: webcam/oakd detection 구독 콜백으로 등록한다.
-        """
 
         with self._data_lock:
             self.state.mark_heartbeat(robot_id)
@@ -366,12 +338,6 @@ class RosBridge:
         array_msg: Any,
         detection_msg: Any,
     ) -> dict[str, Any] | None:
-        """ROS Detection3D 한 건을 모니터의 공통 탐지 형식으로 변환한다.
-
-        입력: 로봇/센서 식별자, 배열 메시지 header, 개별 Detection3D다.
-        출력: 첫 hypothesis 기반 탐지 딕셔너리이며 결과가 없으면 ``None``이다.
-        사용: ``_on_detection``에서 각 detection 항목마다 호출한다.
-        """
 
         if not detection_msg.results:
             return None
@@ -401,12 +367,6 @@ class RosBridge:
         }
 
     def _on_odom(self, robot_id: str, msg: Any) -> None:
-        """Odometry를 화면용 x/y/yaw/speed로 변환한다.
-
-        입력: 구독 토픽의 로봇 ID와 ``nav_msgs/Odometry`` 메시지다.
-        출력: 없음. 해당 로봇의 위치, 속도, 이동 상태를 갱신한다.
-        사용: 로봇별 ``/<namespace>/odom`` 구독 콜백으로 등록한다.
-        """
 
         # 현재 위치는 Odometry header 좌표계 기준이다. 실제 지도 표시는 후속 TF
         # 연동에서 map -> base_link 위치로 교체해야 한다.
@@ -427,12 +387,6 @@ class RosBridge:
         )
 
     def _on_battery(self, robot_id: str, msg: Any) -> None:
-        """BatteryState 값을 화면용 백분율로 정규화한다.
-
-        입력: 구독 토픽의 로봇 ID와 ``sensor_msgs/BatteryState`` 메시지다.
-        출력: 없음. 유효한 배터리 값을 0~100 범위로 상태에 반영한다.
-        사용: 로봇별 ``/<namespace>/battery_state`` 구독 콜백으로 등록한다.
-        """
 
         percentage = msg.percentage
         if percentage is None or math.isnan(percentage):
@@ -453,12 +407,6 @@ class RosBridge:
                 self._low_battery_reported.discard(robot_id)
 
     def _on_camera_frame(self, robot_id: str, msg: Any) -> None:
-        """압축 카메라 프레임을 재인코딩 없이 그대로 캐시에 저장한다.
-
-        입력: 구독 토픽의 로봇 ID와 ``sensor_msgs/CompressedImage`` 메시지다.
-        출력: 없음. 최신 프레임만 유지하며 StateManager와는 분리 보관한다.
-        사용: 로봇별 ``/<namespace>/synced/rgb`` 구독 콜백으로 등록한다.
-        """
 
         self.camera_frame_store.update(
             robot_id, bytes(msg.data), msg.format or "jpeg"
