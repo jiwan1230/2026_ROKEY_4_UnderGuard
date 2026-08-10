@@ -11,8 +11,10 @@ from flask import Flask, jsonify, render_template, request, send_file
 
 from .camera_service import CameraFrameStore
 from .config import Settings, load_settings
+from .history_store import HistoryStore
 from .map_service import MapService
 from .mock_manager import MockManager
+from .replay_manager import DEFAULT_FRAMES_PATH, ReplayManager
 from .ros_bridge import RosBridge
 from .runtime_service import RuntimeService
 from .state_manager import StateManager
@@ -31,8 +33,8 @@ StateManager, MapService, RosBridge 같은 시스템 구성 요소들을 생성�
 def create_app(settings: Settings | None = None) -> Flask:
 
     settings = settings or load_settings()
-    if settings.mode not in {"mock", "ros"}:
-        raise ValueError("MONITOR_MODE는 mock 또는 ros여야 합니다.")
+    if settings.mode not in {"mock", "ros", "replay"}:
+        raise ValueError("MONITOR_MODE는 mock, ros 또는 replay여야 합니다.")
 
     # 핵심 포인트 #
     # Flask 애플리케이션 객체를 만드는 코드
@@ -86,8 +88,19 @@ def create_app(settings: Settings | None = None) -> Flask:
     # 로봇별 최신 카메라 이미지를 잠깐 저장해둘 공간을 만듦
     camera_frame_store = CameraFrameStore()
 
-    # 핵심 포인트 #
-    # StateManager와 로봇 설정, 탐지 유실 시간, 배터리 임계값, ROS 인터페이스, 카메라 저장소를 전달해서
+    # 기록 조회 탭 전용 영구 저장소 — 실시간 뷰(StateManager)와 분리된다.
+    # 상대경로는 map_yaml_path와 같은 규칙(Path.cwd() 기준)으로 푼다.
+    history_db_path = settings.history_db_path
+    if not history_db_path.is_absolute():
+        history_db_path = Path.cwd() / history_db_path
+    history_image_dir = settings.history_image_dir
+    if not history_image_dir.is_absolute():
+        history_image_dir = Path.cwd() / history_image_dir
+    history_store = HistoryStore(history_db_path, history_image_dir)
+
+    # 핵심 포인트 5 — ROS 데이터를 공통 상태로 변환
+    # StateManager, 로봇 설정, 탐지 유실 시간, 배터리 임계값,
+    # ROS 인터페이스와 카메라 저장소를 연결한다.
     # 실제 ROS 2 메시지를 받을 RosBridge 객체를 생성
     ros = RosBridge(
         state,
@@ -97,24 +110,41 @@ def create_app(settings: Settings | None = None) -> Flask:
         interface=settings.ros_interface,
         camera_frame_store=camera_frame_store,
     )
+    # replay 모드 — herding_controller_dual 검증 시뮬레이션이 남긴 궤적을
+    # 재생한다. Mock/ROS와 마찬가지로 항상 만들어 두되(app.extensions로
+    # 공유), 실제로 도는 건 mode == "replay"일 때뿐이다.
+    replay = ReplayManager(
+        state,
+        [robot.robot_id for robot in settings.robots],
+        frames_path=settings.replay_frames_path or DEFAULT_FRAMES_PATH,
+        trial_index=settings.replay_trial_index,
+        speed=settings.replay_speed,
+        map_frame=settings.ros_interface.map_frame,
+    )
 
-    # 핵심 포인트 #
-    # 실행 모드에 따라 실제 사용할 서비스를 선택'''
-    # runtime이 MockManager든 RosBridge든 RuntimeService의 공통 규칙을 따름
-    # runtime은 실시간 데이터 자체가 아니라,
-    # 현재 설정된 모드에 따라 선택된 Mock 또는 ROS 실행 서비스 객체
-    runtime: RuntimeService = mock if settings.mode == "mock" else ros
+    # 핵심 포인트 6 — Mock/ROS/Replay를 같은 방식으로 사용
+    # 실행 모드에 따라 실제 사용할 서비스를 선택
+    # runtime이 MockManager든 RosBridge든 ReplayManager든 RuntimeService의
+    # 공통 규칙을 따른다. runtime은 실시간 데이터 자체가 아니라 현재 모드에
+    # 따라 선택된 실행 서비스 객체다.
+    runtime: RuntimeService = {
+        "mock": mock,
+        "replay": replay,
+    }.get(settings.mode, ros)
 
-    # 핵심 포인트 #
-    # 앞에서 만들어 둔 여러 서비스 객체들을 Flask 앱 안에 공용으로 저장해둠
+    # 핵심 포인트 7 — 생성한 객체를 app.extensions에서 공유
+    # app.extensions["settings"] = settings는
+    # 생성된 설정 객체를 Flask 앱의 공용 저장 공간에 "settings"라는 이름으로 보관해,
     # 다른 코드에서도 다시 사용할 수 있게 하는 코드
     app.extensions["settings"] = settings
     app.extensions["state_manager"] = state
     app.extensions["mock_manager"] = mock
     app.extensions["ros_bridge"] = ros
+    app.extensions["replay_manager"] = replay
     app.extensions["runtime_service"] = runtime     # 현재 실행 모드에 따라 선택된 서비스를 저장
     app.extensions["map_service"] = map_service
     app.extensions["camera_frame_store"] = camera_frame_store
+    app.extensions["history_store"] = history_store
 
 
     # 두 주소로 들어오는 GET 요청을 같은 함수가 처리하도록 연결하는 장식자(데코레이터)
@@ -205,6 +235,57 @@ def create_app(settings: Settings | None = None) -> Flask:
             # 카메라 이미지는 계속 바뀌는 실시간 데이터이기 때문에,
             # 캐시하지 않고 항상 최신 프레임을 받아오도록 max_age=0으로 설정
             max_age=0,
+        )
+
+    # 기록 조회 탭 전용 — 전부 조회(GET)만 있고 쓰기/삭제 라우트는 없다.
+    # "기록을 남기고 볼 수는 있지만 지우거나 고칠 수는 없다"는 read-only
+    # 원칙을 이 저장소에도 그대로 유지한다.
+    @app.get("/api/history/summary")
+    def history_summary():
+        return jsonify(history_store.summary())
+
+    @app.get("/api/history/detections")
+    def history_detections():
+        args = request.args
+        try:
+            limit = min(int(args.get("limit", 200)), 1000)
+            since = float(args["since"]) if "since" in args else None
+            until = float(args["until"]) if "until" in args else None
+        except (TypeError, ValueError):
+            return jsonify({"error": "limit/since/until은 숫자여야 합니다."}), 400
+        return jsonify(
+            history_store.list_detections(
+                limit=limit,
+                since=since,
+                until=until,
+                object_type=args.get("object_type") or None,
+                robot_id=args.get("robot_id") or None,
+            )
+        )
+
+    @app.get("/api/history/detections/<int:detection_id>/image")
+    def history_detection_image(detection_id: int):
+        path = history_store.image_path_for(detection_id)
+        if path is None:
+            return jsonify({"error": "no_image_available"}), 404
+        return send_file(path, max_age=3600)
+
+    @app.get("/api/history/trail")
+    def history_trail():
+        args = request.args
+        try:
+            limit = min(int(args.get("limit", 5000)), 20000)
+            since = float(args["since"]) if "since" in args else None
+            until = float(args["until"]) if "until" in args else None
+        except (TypeError, ValueError):
+            return jsonify({"error": "limit/since/until은 숫자여야 합니다."}), 400
+        return jsonify(
+            history_store.get_trail(
+                robot_id=args.get("robot_id") or None,
+                since=since,
+                until=until,
+                limit=limit,
+            )
         )
 
     @app.post("/api/mock/events")

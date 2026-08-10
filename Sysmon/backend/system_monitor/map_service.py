@@ -69,7 +69,11 @@ class MapService:
 
     # 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 # 
     def world_to_pixel(self, x: float, y: float) -> tuple[float, float]:
-        '''ROS의 실제 좌표 (x, y)를 웹 맵 이미지의 픽셀 좌표 (pixel_x, pixel_y)로 바꿈'''
+        """ROS의 실제 좌표 (x, y)를 웹 맵 이미지의 픽셀 좌표 (pixel_x, pixel_y)로 바꾼다.
+
+        화면에 표시되는 이미지는 90도 반시계방향으로 회전되어 있으므로
+        (ROTATE_90), 그 회전을 반영해 좌표를 변환한다.
+        """
 
         self._load() #####
         assert self._metadata is not None
@@ -90,16 +94,14 @@ class MapService:
 
         # 중요 #
         # 3) m 단위를 픽셀로 바꾼다. 원래는 "pixel_x=local_x, pixel_y=height-local_y"
-        #    (y축만 뒤집음)였는데, _load()에서 PNG 자체를 90도 시계방향으로
-        #    돌려서 내려주므로 좌표 변환도 그 회전을 반영해야 한다. 90도 CW
-        #    회전 + 기존 y-뒤집기를 합성하면 "height - (height - local_y)" =
-        #    "local_y"로 상쇄되어, 결국 local_x/local_y가 그대로 자리를
-        #    바꾸는 것과 같아진다(추가 높이 보정 불필요).
-
-        # resolution은 1픽셀이 실제로 몇 m인지를 뜻함
-        pixel_x = local_y / self._metadata["resolution"]
-        pixel_y = local_x / self._metadata["resolution"]
-
+        #    (y축만 뒤집음)였는데, _load()에서 PNG 자체를 90도 반시계방향으로
+        #    돌려서 내려주므로(ROTATE_90) 좌표 변환도 그 회전을 반영해야 한다.
+        #    x/y가 자리를 바꾸는 건 CW 회전과 같지만, CCW는 CW의 거울상이라
+        #    두 축 모두 원점 반대편(가로/세로 끝)에서부터 잰다 — 그래서 CW
+        #    버전과 달리 width/height를 빼는 보정이 남는다. (row,col) 인덱스로
+        #    직접 검증된 공식: new_col=old_row, new_row=(W-1)-old_col.
+        pixel_x = self._metadata["width"] - local_y / self._metadata["resolution"]
+        pixel_y = self._metadata["height"] - local_x / self._metadata["resolution"]
         return pixel_x, pixel_y
 
     # 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 ## 핵심 #
@@ -150,8 +152,12 @@ class MapService:
         if bool(config.get("negate", 0)):
             # 필요하면 이미지의 흑백을 반전
             image = ImageOps.invert(image)
-        # 이미지를 270도 반시계 방향으로 회전
-        image = image.transpose(Image.Transpose.ROTATE_270) #####
+        # 원본 ROS 맵은 보통 세로로 길게 나온다. 화면에는 가로(landscape)로
+        # 보는 게 더 보기 편해서 90도 반시계방향으로 돌려서 내려준다 — 이
+        # 회전은 world_to_pixel()의 좌표 변환, dashboard.js의
+        # createMapProjection과 항상 함께 맞춰야 한다. (실제 room_map.pgm으로
+        # numpy.rot90(arr, k=1)과 픽셀 단위로 비교 검증된 방향이다.)
+        image = image.transpose(Image.Transpose.ROTATE_90)
         width, height = image.size
         resolution = float(config["resolution"]) #####
         origin = [float(value) for value in config["origin"]] #####

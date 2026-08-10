@@ -33,7 +33,7 @@ class MapServiceTest(unittest.TestCase):
         metadata = service.describe("/api/map/image")
 
         self.assertTrue(metadata["available"])
-        # PNG는 화면 표시용으로 90도 시계방향 회전되어 나가므로, 원본
+        # PNG는 화면 표시용으로 90도 반시계방향 회전되어 나가므로, 원본
         # 3x2(width x height) 픽셀이 2x3으로 뒤바뀐다.
         self.assertEqual((metadata["width"], metadata["height"]), (2, 3))
         self.assertEqual(metadata["resolution"], 0.5)
@@ -43,13 +43,14 @@ class MapServiceTest(unittest.TestCase):
     def test_world_coordinates_are_converted_with_90_degree_rotation(self):
         service = MapService(self.yaml_path)
 
-        # origin과 정확히 겹치는 점 — 회전 전이었다면 (0, height)였겠지만,
-        # 회전 후에는 회전된 이미지의 좌상단 (0, 0)이 된다.
-        self.assertEqual(service.world_to_pixel(-1.0, -2.0), (0.0, 0.0))
+        # origin과 정확히 겹치는 점 — 회전된 이미지(2x3)에서 반시계 90도
+        # 회전은 원점을 우하단 모서리 (width, height)로 보낸다(시계방향의
+        # 거울상이라 좌상단이 아니라 반대쪽 모서리로 감).
+        self.assertEqual(service.world_to_pixel(-1.0, -2.0), (2.0, 3.0))
         # local_x != local_y인 비대칭 케이스로 "회전 때문에 x/y가 실제로
         # 자리를 바꿨는지"를 확인한다(대칭 케이스는 우연히 통과할 수 있음).
-        self.assertEqual(service.world_to_pixel(-1.0, -1.5), (1.0, 0.0))
-        self.assertEqual(service.world_to_pixel(-0.5, -2.0), (0.0, 1.0))
+        self.assertEqual(service.world_to_pixel(-1.0, -1.5), (1.0, 3.0))
+        self.assertEqual(service.world_to_pixel(-0.5, -2.0), (2.0, 2.0))
 
     def test_missing_map_returns_fallback_description(self):
         service = MapService(Path(self.temp.name) / "missing.yaml")
