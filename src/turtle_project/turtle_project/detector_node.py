@@ -43,8 +43,8 @@ INFO_IN = 'oakd/stereo/camera_info'
 # 상태별 wall timeout(초) — 어떤 상태에서도 영구 대기하지 않도록 한다.
 # VERIFYING/INSPECTING은 프레임 카운트 timeout이 따로 있지만, 카메라가 죽어
 # 프레임 자체가 끊기면 그것도 안 돌므로 wall 백스톱을 함께 둔다.
-DEADLINES = {'APPROACHING': 60.0, 'QUERYING': 5.0, 'VERIFYING': 30.0,
-             'INSPECTING': 30.0, 'AWAIT_TRAP': 35.0, 'SWEEP_NAV': 60.0,
+DEADLINES = {'APPROACHING': 60.0, 'PRECHECK': 5.0, 'VERIFYING': 15.0,
+             'INSPECTING': 15.0, 'AWAIT_TRAP': 35.0, 'SWEEP_NAV': 60.0,
              'SWEEP_WAIT': 10.0}
 
 
@@ -81,21 +81,43 @@ def lost_action(lost, spin_until, now):
 
 
 def watchdog_action(state, elapsed):
-    """상태·경과시간 -> timeout 처리 ('verify'|'finish'|None). 순수함수.
+    """상태·경과시간 -> timeout 처리 ('approach'|'finish'|None). 순수함수.
 
-    QUERYING timeout은 db가 응답 없는 것 — 처음 본 셈 치고 검증으로 진행.
-    나머지는 opening 작업을 포기하고 순찰 재개(finish).
+    PRECHECK timeout은 db가 응답 없는 것 — 접근 여부를 판단 못 했으니
+    안전하게 다가가서 직접 검증(approach)한다. 나머지는 opening 작업을
+    포기하고 순찰 재개(finish).
     """
     limit = DEADLINES.get(state)
     if limit is None or elapsed <= limit:
         return None
-    return 'verify' if state == 'QUERYING' else 'finish'
+    return 'approach' if state == 'PRECHECK' else 'finish'
 
 
 def already_done(xy, done_holes, dist):
     """이번 순찰에 이미 확인 끝낸 구멍(done_holes) 중 dist 안에 있으면 True. 순수함수.
     같은 구멍을 계속 재점검하러 가느라 순찰이 진행 못 하는 걸 막는다."""
     return any(math.hypot(xy[0] - h[0], xy[1] - h[1]) <= dist for h in done_holes)
+
+
+def bbox_iou(a, b):
+    """xyxy 박스 두 개의 IoU(교집합/합집합, 0~1). 순수함수.
+
+    trap이 opening과 같은 물건을 가리키는지(=설치 위치가 맞는지) 판정하는 데
+    쓴다 — 단순히 "화면에 trap이 보이냐"만 보면 이 opening과 무관한 trap도
+    같이 잡혀서 잘못 스킵되므로, 두 박스가 실제로 겹치는 비율을 본다.
+    """
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0.0:
+        return 0.0
+    area_a = (ax2 - ax1) * (ay2 - ay1)
+    area_b = (bx2 - bx1) * (by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union > 0.0 else 0.0
 
 
 class RatTracker:
@@ -154,8 +176,15 @@ class DetectorNode(Node):
         self.opening_verify_conf = self.declare_parameter(
             'opening_verify_conf', 0.4).value
         # trap 점검도 구멍 코앞(0.8m)에서 하므로 close-up 스케일로 확신도가 낮다.
-        # 모델 바닥값(0.4) 이상은 화면에 그려지는데 conf(0.6)로 거르면 조용히 미검출.
-        self.trap_conf = self.declare_parameter('trap_conf', 0.4).value
+        # 실측상 trap이 잘 안 잡혀서 모델 바닥값에 더 가깝게 낮췄다(0.4→0.3) —
+        # 이보다 낮추면 synced_cb의 YOLO 호출 자체가 이 값을 바닥(conf=min(...))
+        # 으로 쓰므로 오탐이 늘 수 있다. 계속 안 잡히면 더 낮추되 오탐 여부를 같이 봐야 한다.
+        self.trap_conf = self.declare_parameter('trap_conf', 0.3).value
+        # 순찰 중 먼 거리에서 "이 opening에 trap이 이미 설치돼 있는가"를 볼 때,
+        # 화면에 trap이 보이기만 하면(위치 무관) 설치된 걸로 오판하지 않도록
+        # opening bbox와 trap bbox가 이 비율(IoU) 이상 겹쳐야 인정한다.
+        self.trap_overlap_ratio = self.declare_parameter(
+            'trap_overlap_ratio', 0.6).value
         self.approach_dist = self.declare_parameter('approach_dist', 0.8).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.27).value
         # 이번 순찰에 이미 확인한 구멍을 또 점검하러 가지 않게 한다(순찰 진행).
@@ -163,7 +192,15 @@ class DetectorNode(Node):
         self.done_hole_dist = self.declare_parameter('done_hole_dist', 0.5).value
         self.depth_gap = self.declare_parameter('depth_gap', 0.05).value
         self.side_margin = self.declare_parameter('side_margin', 0.05).value
-        self.verify_timeout = self.declare_parameter('verify_timeout', 30).value
+        # opening 재검출이 애매하게(박스는 안 잡히거나 depth가 안 튐) 실패할 때
+        # 몇 프레임까지 봐주고 포기할지. 예전엔 30(=카메라 fps에 따라 수 초~십수 초)
+        # 이라 멈춰있는 시간이 너무 길었다 — 절반 이하로 줄임. 실기에서 정상
+        # opening도 자주 놓치면 다시 올려야 한다.
+        self.verify_timeout = self.declare_parameter('verify_timeout', 12).value
+        # trap 재검출(INSPECTING) 실패 허용 프레임 — 예전엔 verify_timeout과
+        # 값을 공유해서 opening 검증과 같이 튜닝됐는데, trap 점검은 별도로
+        # 빨리 포기하고 재설치/다음 구멍으로 넘어가고 싶다는 요구가 있어 분리했다.
+        self.inspect_timeout = self.declare_parameter('inspect_timeout', 12).value
         cap_r = self.declare_parameter('capture_radius', 0.3).value
         cap_s = self.declare_parameter('capture_secs', 10.0).value
         lost_s = self.declare_parameter('lost_secs', 5.0).value
@@ -192,6 +229,10 @@ class DetectorNode(Node):
         self.state = 'SEARCHING'
         self.target = None      # 검증 대상 opening의 map 좌표
         self.goal = None        # 발행한 접근 goal (TF 도착 판정용)
+        self._precheck_xy = None          # PRECHECK 중인 구멍 좌표 (db 응답/timeout 후 사용)
+        self._precheck_depth_frame = None
+        self._precheck_trap_ok = False    # precheck 시점에 본 trap-opening bbox 겹침 결과
+        self._approach_reason = 'new'     # 도착 후 분기 ('new'=검증부터, 'recheck'=검증 생략, 실측 재확인)
         self.verify_count = 0
         self.hole = None        # 점검 대상 구멍의 map 좌표 (INSPECTING/재설치용)
         self.reinstall_count = 0  # trap_bad/미검출로 인한 재설치 횟수
@@ -274,7 +315,7 @@ class DetectorNode(Node):
             if self.show:
                 self._show(self.bridge.compressed_imgmsg_to_cv2(rgb_msg, 'bgr8'))
             return
-        if self.state in ('QUERYING', 'AWAIT_TRAP'):
+        if self.state in ('PRECHECK', 'AWAIT_TRAP'):
             return                          # db 응답/trap_check 응답 대기 — 지각 불필요
         self.K = np.array(info_msg.k).reshape(3, 3)
         img = self.bridge.compressed_imgmsg_to_cv2(rgb_msg, 'bgr8')
@@ -307,7 +348,7 @@ class DetectorNode(Node):
         if self.state == 'SEARCHING' and not (self.tracking or self.sweeping):
             box = self._pick(result, 'opening', img.shape)
             if box is not None:
-                self._on_opening(box, img.shape, depth, depth_frame)
+                self._on_opening(box, img.shape, depth, depth_frame, result)
         elif self.state == 'VERIFYING':
             self._verify(self._pick(result, 'opening', img.shape,
                                     self.opening_verify_conf), img.shape, depth)
@@ -408,51 +449,105 @@ class DetectorNode(Node):
                 best_d, best = d, b.xyxy[0].tolist()
         return best
 
-    def _on_opening(self, box, img_shape, depth, depth_frame):
-        """opening 감지 → 접근 goal 계산 성공 후에만 순찰 정지(hold).
+    def _on_opening(self, box, img_shape, depth, depth_frame, result):
+        """opening 감지 → 접근하기 전에 그 자리에서 먼저 db/trap을 확인한다.
 
-        hold를 먼저 걸면 TF 실패 시 순찰만 멈추고 접근은 안 하는 채로 남는다
-        — hold는 _start_approach 안에서 goal이 확정된 뒤 건다.
+        예전엔 감지하면 바로 다가갔다가, 도착해서야 db에 이미 있는 구멍인
+        걸 알았다. 그러면 순찰 랩마다(done_holes는 PATROL 명령마다 비워짐)
+        이미 처리 끝난 구멍을 매번 다시 approach→inspect→복귀하느라 순찰이
+        같은 자리만 맴도는 무한 루프가 된다.
+
+        그래서 접근 전에: (1) trap이 이 opening bbox와 실제로 겹치는지
+        (bbox_iou, 무관한 다른 trap에 속지 않게)를 지금 프레임에서 미리
+        계산해두고, (2) db 조회(_precheck_hole)로 신구를 나눈다 — db에
+        없는 새 구멍이면 trap 겹침 여부와 무관하게(당연히 아직 없을 테니)
+        예전처럼 접근→검증→설치로, db에 있는 기존 구멍이면 db 기록 또는
+        bbox 겹침 중 하나라도 trap이 있다고 하면 접근 없이 순찰 계속,
+        둘 다 아니면(각도 때문에 bbox만 안 겹쳐 보이는 경우가 있어) 검증
+        없이 다가가서 trap 좌표를 실측해 다시 확인한다.
         """
         xy = self._box_to_map(box, img_shape, depth, depth_frame, wall=True)
         if xy is None:
             return
         if already_done(xy, self.done_holes, self.done_hole_dist):
             return          # 이번 순찰에 이미 확인한 구멍 — 무시 (순찰 진행)
-        self._start_approach(xy, depth_frame)
+        trap_box = self._pick(result, 'trap', img_shape, self.trap_conf)
+        trap_ok_now = (trap_box is not None
+                       and bbox_iou(box, trap_box) >= self.trap_overlap_ratio)
+        self._precheck_hole(xy, depth_frame, trap_ok_now)
 
-    def _request_db(self, x, y):
-        """/db/query_hole 비동기 호출 → 응답으로 신구 분기 (QUERYING 진입)."""
+    def _precheck_hole(self, xy, depth_frame, trap_ok_now):
+        """접근 전 db 조회 — 신구를 나누고, 기존 구멍은 trap 겹침 여부로 더 나눈다.
+
+        순찰 중엔 hold를 걸지 않는다(로봇은 계속 움직임) — 접근이 실제로
+        필요하다고 확정된 뒤에야(_start_approach) 순찰을 멈춘다. db
+        서비스가 아직 없으면 판단 불가이니 안전하게 접근해서 직접
+        검증한다(기존 폴백과 같은 철학, 새 구멍 취급).
+        """
         if not self.db.service_is_ready():
-            self.get_logger().warn('db 서비스 아직 없음 — 검증으로 진행',
+            self.get_logger().warn('db 서비스 아직 없음 — 접근해서 직접 검증',
                                    throttle_duration_sec=5.0)
-            self._enter_verify()            # db 없으면 처음 본 셈 치고 검증
+            self._start_approach(xy, depth_frame, reason='new')
             return
-        self.state = 'QUERYING'
+        self.state = 'PRECHECK'
+        self._precheck_xy = xy
+        self._precheck_depth_frame = depth_frame
+        self._precheck_trap_ok = trap_ok_now
         req = QueryHole.Request()
-        req.x, req.y = float(x), float(y)
-        self.db.call_async(req).add_done_callback(self._db_done)
+        req.x, req.y = float(xy[0]), float(xy[1])
+        self.db.call_async(req).add_done_callback(self._precheck_done)
 
-    def _db_done(self, fut):
-        """db 응답 처리 — 처음이면 검증, 기존이면 점검(저장좌표 보관)."""
-        if self.state != 'QUERYING':
+    def _precheck_done(self, fut):
+        """precheck db 응답 처리.
+
+        db에 없으면(새 구멍) trap 겹침 여부는 상관없이 예전처럼 접근→검증.
+        db에 있으면(기존 구멍) 두 근거 중 하나라도 trap이 있다고 하면(db에
+        기록된 trap_installed, 또는 지금 프레임의 bbox 겹침) 접근 없이 순찰
+        계속. 각도 때문에 bbox가 안 겹쳐 보일 수 있어서(실제로는 잘 설치돼
+        있어도) 곧바로 "미설치"로 단정하지 않는다 — 둘 다 아니면 다가가서
+        trap 좌표를 실측해 opening과의 거리로 다시 확인한다(reason='recheck',
+        depth_spread 검증은 생략 — 이미 진짜 opening인 걸 아니까).
+        """
+        if self.state != 'PRECHECK':
             return          # watchdog timeout으로 이미 넘어감 — 늦은 응답 무시
+        xy, depth_frame = self._precheck_xy, self._precheck_depth_frame
+        trap_ok_now = self._precheck_trap_ok
         try:
             resp = fut.result()
         except Exception as e:
-            self.get_logger().warn(f'db 응답 실패 ({e}) — 처음 본 셈 치고 검증')
-            self._enter_verify()
+            self.get_logger().warn(f'db 응답 실패 ({e}) — 접근해서 직접 검증')
+            self._start_approach(xy, depth_frame, reason='new')
             return
-        if resp.exists:
-            self.hole = (resp.hole_x, resp.hole_y)   # 15cm 비교 기준
-            self.state = 'INSPECTING'
-            self.get_logger().info('기존 구멍 — trap 점검 시작')
+        if not resp.exists:
+            self._start_approach(xy, depth_frame, reason='new')
+        elif resp.trap_installed or trap_ok_now:
+            self.get_logger().info('기존 구멍 — trap 정상(db 기록 또는 화면 확인), 접근 없이 순찰 계속')
+            self.done_holes.append(xy)
+            self.state = 'SEARCHING'
         else:
-            self._enter_verify()
+            self.get_logger().info('기존 구멍인데 trap 미확인 — 다가가서 실측 거리로 재확인')
+            self._start_approach(xy, depth_frame, reason='recheck')
 
     def _enter_verify(self):
         self.state = 'VERIFYING'
         self.verify_count = 0
+
+    def _arrived(self, xy):
+        """접근 goal에 도착(또는 이미 도착해 있음) → _start_approach의 reason에 따라 분기.
+
+        'new'면 아직 진짜 opening인지 모르니 depth_spread 검증부터.
+        'recheck'면 db가 이미 진짜 opening이라고 확인해준 상태라
+        depth_spread 검증은 건너뛰지만, bbox 겹침만으로 "미설치"를 단정하지
+        않고 INSPECTING으로 들어가 trap 좌표를 실측해 opening과의 거리로
+        다시 확인한다 — 정말 없을 때만(trap_bad/미검출) 그제서야 재설치된다.
+        """
+        if self._approach_reason == 'recheck':
+            self.hole = xy
+            self.state = 'INSPECTING'
+            self.verify_count = 0
+        else:
+            self.target = xy
+            self._enter_verify()
 
     def _box_to_map(self, box, img_shape, depth, depth_frame, wall=False):
         """bbox 중심 → depth → deproject → TF map좌표 (x, y). 무효면 None.
@@ -488,17 +583,18 @@ class DetectorNode(Node):
             return None
         return p.x, p.y
 
-    def _start_approach(self, xy, depth_frame):
+    def _start_approach(self, xy, depth_frame, reason='new'):
+        """opening쪽으로 접근을 시작한다. reason은 도착 후 _arrived가 참고한다
+        ('new'=검증부터, 'recheck'=검증 생략, INSPECTING에서 실측 재확인)."""
         robot = self.robot_xy()
         if robot is None:
             return          # TF 실패 — hold 안 걸고 SEARCHING 유지 (다음 프레임 재시도)
+        self._approach_reason = reason
         rx, ry = robot
         g = approach_point(xy[0] - rx, xy[1] - ry, self.approach_dist)
-        if g is None:                       # 이미 approach_dist 안 — 바로 검증
+        if g is None:                       # 이미 approach_dist 안 — 바로 도착 처리
             self._hold_patrol(True)         # goal 확정 — 이제 순찰 멈춤
-            self.target = xy
-            self.state = 'VERIFYING'
-            self.verify_count = 0
+            self._arrived(xy)
             return
         # 접근점을 map 절대좌표로 되돌려 target_pose로 발행 (robot_agent가 주행).
         gx, gy, yaw = rx + g[0], ry + g[1], g[2]
@@ -507,7 +603,8 @@ class DetectorNode(Node):
         self.target = xy
         self.goal = (gx, gy)
         self.state = 'APPROACHING'
-        self.get_logger().info(f'opening ({xy[0]:.2f}, {xy[1]:.2f}) 접근 goal 발행')
+        self.get_logger().info(
+            f'opening ({xy[0]:.2f}, {xy[1]:.2f}) 접근 goal 발행 ({reason})')
 
     def _refresh_approach(self, result, img_shape, depth, depth_frame):
         """APPROACHING 중 opening 재감지 → 접근 goal 갱신 (approach_goal_period).
@@ -539,19 +636,21 @@ class DetectorNode(Node):
         self.pose_pub.publish(make_pose(FRAME, gx, gy, yaw))
 
     def _check_arrival(self):
-        """APPROACHING 중 로봇이 goal 근처(arrive_tol)에 오면 db 조회로 전환.
+        """APPROACHING 중 로봇이 goal 근처(arrive_tol)에 오면 도착 처리(_arrived).
 
         Nav2 완료 콜백 대신 TF 거리로 판정 (detector는 주행을 안 하므로 도착
         신호가 없다). robot_agent가 실제로 그 goal로 몰고 있다고 전제한다.
-        도착 후 감지 좌표(self.target)로 db에 신구를 물어 분기한다.
+        신구·재설치 분기는 접근하기 전 _precheck_hole에서 이미 끝났다 —
+        그래서 db를 다시 묻지 않고 _start_approach가 정해둔 reason에 따라
+        바로 검증 또는 설치로 들어간다(_arrived).
         """
         robot = self.robot_xy()
         if robot is None or self.goal is None:
             return
         d = math.hypot(self.goal[0] - robot[0], self.goal[1] - robot[1])
         if d <= self.arrive_tol:
-            self.get_logger().info('도착 — db 조회')
-            self._request_db(*self.target)
+            self.get_logger().info('도착')
+            self._arrived(self.target)
 
     def command_cb(self, msg):
         """내 로봇 명령 처리 — A(TRACK)면 추적, B(SWEEP)면 구멍 순회 점검.
@@ -713,18 +812,20 @@ class DetectorNode(Node):
         어떤 비-SEARCHING 상태도 DEADLINES를 넘기면 빠져나온다 — Nav2 실패,
         db 무응답, trap_check 미실행 등으로 영구 대기하지 않는다. 처리 중엔
         hold=True를 재발행(heartbeat)해서, detector가 죽으면 robot_agent가
-        lease(hold_lease_sec) 만료로 자동 순찰 재개하게 한다.
+        lease(hold_lease_sec) 만료로 자동 순찰 재개하게 한다. 단 PRECHECK는
+        아직 접근을 시작 안 한(순찰 중인) 상태라 hold를 걸지 않는다.
         """
         now = self._now()
         if self.state != self._wd_state:    # 상태 전이 감지 — 시계 리셋
             self._wd_state, self._wd_since = self.state, now
         if self.state == 'SEARCHING':
             return
-        self._hold_patrol(True)             # heartbeat — agent의 lease 갱신
+        if self.state != 'PRECHECK':
+            self._hold_patrol(True)         # heartbeat — agent의 lease 갱신
         act = watchdog_action(self.state, now - self._wd_since)
-        if act == 'verify':
-            self.get_logger().warn('db 응답 timeout — 처음 본 셈 치고 검증')
-            self._enter_verify()
+        if act == 'approach':
+            self.get_logger().warn('db 응답 timeout — 접근해서 직접 검증')
+            self._start_approach(self._precheck_xy, self._precheck_depth_frame)
         elif act == 'finish':
             if self.sweeping:               # 순회 중 timeout — 이 구멍 스킵, 다음 구멍
                 self.get_logger().warn(f'{self.state} timeout — 이 구멍 스킵')
@@ -771,7 +872,7 @@ class DetectorNode(Node):
     def _inspect(self, result, img_shape, depth, depth_frame):
         """구멍 점검 — trap 감지해 좌표 뽑고 trap_check에 inspect job.
 
-        trap이 verify_timeout 프레임까지 안 보이면 사람이 아직 안 놓은 것으로 보고
+        trap이 inspect_timeout 프레임까지 안 보이면 사람이 아직 안 놓은 것으로 보고
         재설치(_reinstall)로 넘긴다.
         """
         box = self._pick(result, 'trap', img_shape, self.trap_conf)
@@ -793,7 +894,7 @@ class DetectorNode(Node):
         순회 점검(SWEEP) 중이면 재설치 없이 다음 구멍으로 넘어간다.
         """
         self.verify_count += 1
-        if self.verify_count >= self.verify_timeout:
+        if self.verify_count >= self.inspect_timeout:
             if self.sweeping:
                 self.get_logger().info(f'{why} — 다음 구멍')
                 self._next_sweep_hole()
@@ -923,10 +1024,13 @@ def _self_check():
     assert watchdog_action('SEARCHING', 9999.0) is None       # 대기 상태 아님
     assert watchdog_action('APPROACHING', 59.0) is None       # 한도 내
     assert watchdog_action('APPROACHING', 61.0) == 'finish'   # 접근 포기
-    assert watchdog_action('QUERYING', 6.0) == 'verify'       # db 무응답 → 검증 진행
+    assert watchdog_action('PRECHECK', 4.0) is None            # 한도 내
+    assert watchdog_action('PRECHECK', 6.0) == 'approach'      # db 무응답 → 접근해서 직접 검증
     assert watchdog_action('AWAIT_TRAP', 34.0) is None        # 설치 주행(~24s) 대기 중
     assert watchdog_action('AWAIT_TRAP', 36.0) == 'finish'    # trap_check 무응답
-    assert watchdog_action('VERIFYING', 31.0) == 'finish'     # 카메라 사망 백스톱
+    assert watchdog_action('VERIFYING', 14.0) is None          # 한도 내
+    assert watchdog_action('VERIFYING', 16.0) == 'finish'      # 카메라 사망 백스톱
+    assert watchdog_action('INSPECTING', 16.0) == 'finish'     # 카메라 사망 백스톱
     assert watchdog_action('SWEEP_NAV', 61.0) == 'finish'     # 순회 이동 백스톱
     assert watchdog_action('SWEEP_WAIT', 9.0) is None         # 목록/TF 대기 중
     assert watchdog_action('SWEEP_WAIT', 11.0) == 'finish'    # 대기 초과 → 재시도
@@ -936,6 +1040,12 @@ def _self_check():
     assert already_done((0.0, 0.0), [(0.1, 0.0)], 0.5) is True              # 근처 → 무시
     assert already_done((1.0, 0.0), [(0.0, 0.0)], 0.5) is False             # 멀다(1m>0.5) → 처리
     assert already_done((0.4, 0.0), [(2.0, 0.0), (0.0, 0.0)], 0.5) is True  # 여러 개 중 하나 근처
+
+    # bbox_iou: 두 박스가 실제로 겹치는 비율 (trap이 이 opening 것인지 판정)
+    assert bbox_iou((0, 0, 10, 10), (0, 0, 10, 10)) == 1.0        # 완전히 같음
+    assert bbox_iou((0, 0, 10, 10), (20, 20, 30, 30)) == 0.0      # 안 겹침
+    assert abs(bbox_iou((0, 0, 10, 10), (5, 0, 15, 10)) - 1 / 3) < 1e-9  # 절반씩 겹침 → 교집합50/합150
+    assert abs(bbox_iou((0, 0, 10, 10), (2, 2, 8, 8)) - 0.36) < 1e-9     # b가 a 안에 완전히 포함(36/100)
 
     # lost_action: 놓침 → 즉시 포기 대신 탐색 회전 → 그래도 없으면 진짜 lost
     assert lost_action(False, None, 0.0) is None            # 정상 추적 중
