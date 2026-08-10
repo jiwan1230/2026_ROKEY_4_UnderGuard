@@ -35,7 +35,10 @@ class TrapCheckNode(Node):
 
     def __init__(self):
         super().__init__('trap_check_node')
-        self.ok_dist = self.declare_parameter('trap_ok_dist', 0.15).value
+        # 구멍은 wall-band depth, trap은 center depth로 재 좌표가 체계적으로
+        # 벌어진다(트랩이 벽 앞에 놓임) → 15cm면 정상 설치도 trap_bad. 0.25로
+        # 오프셋 흡수. match_dist(0.3)보다 낮게 둬 옆 구멍 트랩까지 ok로 세지 않게.
+        self.ok_dist = self.declare_parameter('trap_ok_dist', 0.25).value
         # install 주행 — 전부 cmd_vel open-loop. 시간(sec)이 거리/각도 튜닝 노브.
         # 로봇은 구멍 0.8m 앞에서 시작 → 0.3m 전진(0.5m) → 대기 → 0.3m 후진(0.8m).
         self.fwd_speed = self.declare_parameter('fwd_speed', 0.1).value       # 전/후진 m/s
