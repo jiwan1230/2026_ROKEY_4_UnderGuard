@@ -92,12 +92,10 @@ def watchdog_action(state, elapsed):
     return 'verify' if state == 'QUERYING' else 'finish'
 
 
-def recently_done(xy, recent, recent_t, now, cooldown, dist):
-    """방금 처리 끝낸 구멍(recent) 근처를 cooldown 안에 또 감지했으면 True. 순수함수.
-    로봇이 구멍 앞에 선 채 완료 → 다음 프레임 재감지 → 무한 재점검을 막는다."""
-    if recent is None or now - recent_t > cooldown:
-        return False
-    return math.hypot(xy[0] - recent[0], xy[1] - recent[1]) <= dist
+def already_done(xy, done_holes, dist):
+    """이번 순찰에 이미 확인 끝낸 구멍(done_holes) 중 dist 안에 있으면 True. 순수함수.
+    같은 구멍을 계속 재점검하러 가느라 순찰이 진행 못 하는 걸 막는다."""
+    return any(math.hypot(xy[0] - h[0], xy[1] - h[1]) <= dist for h in done_holes)
 
 
 class RatTracker:
@@ -160,10 +158,9 @@ class DetectorNode(Node):
         self.trap_conf = self.declare_parameter('trap_conf', 0.4).value
         self.approach_dist = self.declare_parameter('approach_dist', 0.8).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.27).value
-        # 방금 처리 끝낸 구멍을 그 자리에서 곧바로 재감지해 무한 재점검하는 걸 막는다.
-        # 이 시간(초)/거리(m) 안이면 무시 → 패트롤이 로봇을 그 앞에서 치울 시간 확보.
-        self.hole_cooldown = self.declare_parameter('hole_cooldown', 20.0).value
-        self.hole_cooldown_dist = self.declare_parameter('hole_cooldown_dist', 0.5).value
+        # 이번 순찰에 이미 확인한 구멍을 또 점검하러 가지 않게 한다(순찰 진행).
+        # 이 거리(m) 안이면 "같은 구멍"으로 보고 무시. 목록은 PATROL 명령에 초기화.
+        self.done_hole_dist = self.declare_parameter('done_hole_dist', 0.5).value
         self.depth_gap = self.declare_parameter('depth_gap', 0.05).value
         self.side_margin = self.declare_parameter('side_margin', 0.05).value
         self.verify_timeout = self.declare_parameter('verify_timeout', 30).value
@@ -198,8 +195,7 @@ class DetectorNode(Node):
         self.verify_count = 0
         self.hole = None        # 점검 대상 구멍의 map 좌표 (INSPECTING/재설치용)
         self.reinstall_count = 0  # trap_bad/미검출로 인한 재설치 횟수
-        self.recent_hole = None   # 방금 처리 끝낸 구멍 좌표 (cooldown 재감지 억제용)
-        self.recent_hole_t = 0.0
+        self.done_holes = []      # 이번 순찰에 확인 끝낸 구멍 좌표들 — PATROL에 초기화
         # 쥐 추적 판정기 (포획/놓침). tracking True일 때만 굴린다.
         self.rat = RatTracker(cap_r, cap_s, lost_s)
         self.tracking = False
@@ -421,9 +417,8 @@ class DetectorNode(Node):
         xy = self._box_to_map(box, img_shape, depth, depth_frame, wall=True)
         if xy is None:
             return
-        if recently_done(xy, self.recent_hole, self.recent_hole_t, self._now(),
-                         self.hole_cooldown, self.hole_cooldown_dist):
-            return          # 방금 처리한 구멍 — 패트롤이 지나갈 때까지 무시
+        if already_done(xy, self.done_holes, self.done_hole_dist):
+            return          # 이번 순찰에 이미 확인한 구멍 — 무시 (순찰 진행)
         self._start_approach(xy, depth_frame)
 
     def _request_db(self, x, y):
@@ -583,6 +578,8 @@ class DetectorNode(Node):
                 self._stop_tracking()   # 쥐대응 종료 — 추적 판정 off
             if self.sweeping:
                 self._stop_sweep()      # 쥐대응 종료 — 순회 즉시 중단
+            if cmd == 'PATROL':
+                self.done_holes.clear()  # 새 순찰 시작 — 확인한 구멍 목록 초기화
 
     def lost_tick(self):
         """추적 놓침 감시 — 안 보이면 제자리 탐색 회전부터, 그래도 없으면 rat_lost.
@@ -858,12 +855,12 @@ class DetectorNode(Node):
     def _finish_opening(self):
         """opening 처리 종료 — 순찰 재개하고 SEARCHING으로.
 
-        처리한 구멍 좌표를 기록해 두면(recent_hole) 그 앞에서 곧바로 재감지해도
-        cooldown 동안 무시된다 → 패트롤이 로봇을 치울 시간을 준다."""
+        처리한 구멍 좌표를 done_holes에 넣어 두면 이후 순찰 중 그 구멍을 다시
+        감지해도 무시된다 → 같은 구멍 반복 점검 없이 순찰이 진행된다."""
         hole = self.hole or self.target
-        if hole is not None:
-            self.recent_hole = hole
-            self.recent_hole_t = self._now()
+        if hole is not None and not already_done(hole, self.done_holes,
+                                                 self.done_hole_dist):
+            self.done_holes.append(hole)
         self._hold_patrol(False)
         self._reset()
 
@@ -934,11 +931,11 @@ def _self_check():
     assert watchdog_action('SWEEP_WAIT', 9.0) is None         # 목록/TF 대기 중
     assert watchdog_action('SWEEP_WAIT', 11.0) == 'finish'    # 대기 초과 → 재시도
 
-    # recently_done: 방금 처리한 구멍 재감지 억제 (무한 재점검 방지)
-    assert recently_done((0.0, 0.0), None, 0.0, 5.0, 20.0, 0.5) is False       # 기록 없음
-    assert recently_done((0.0, 0.0), (0.1, 0.0), 0.0, 5.0, 20.0, 0.5) is True  # 근처+시간내 → 무시
-    assert recently_done((1.0, 0.0), (0.0, 0.0), 0.0, 5.0, 20.0, 0.5) is False # 멀다(1m>0.5) → 처리
-    assert recently_done((0.1, 0.0), (0.0, 0.0), 0.0, 25.0, 20.0, 0.5) is False # cooldown 지남 → 처리
+    # already_done: 이미 확인한 구멍 재점검 억제 (순찰 진행)
+    assert already_done((0.0, 0.0), [], 0.5) is False                       # 목록 비었음
+    assert already_done((0.0, 0.0), [(0.1, 0.0)], 0.5) is True              # 근처 → 무시
+    assert already_done((1.0, 0.0), [(0.0, 0.0)], 0.5) is False             # 멀다(1m>0.5) → 처리
+    assert already_done((0.4, 0.0), [(2.0, 0.0), (0.0, 0.0)], 0.5) is True  # 여러 개 중 하나 근처
 
     # lost_action: 놓침 → 즉시 포기 대신 탐색 회전 → 그래도 없으면 진짜 lost
     assert lost_action(False, None, 0.0) is None            # 정상 추적 중
