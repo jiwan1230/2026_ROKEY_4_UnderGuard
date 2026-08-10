@@ -1,4 +1,10 @@
-"""타겟 위치/속도 추정을 위한 등속도(constant-velocity) 칼만 필터."""
+"""쥐(표적)가 지금 어디 있는지 추측하는 칼만 필터.
+
+카메라로 매번 정확히 보이는 게 아니니까, "아까 이 속도로 가고 있었으니
+지금쯤 여기 있겠다"는 예측과 "방금 실제로 여기서 봤다"는 관측을 계속
+섞어서 제일 그럴듯한 위치를 만든다. 이렇게 두 추측을 섞는 방법이 칼만
+필터(Kalman filter)다.
+"""
 from dataclasses import dataclass
 
 import numpy as np
@@ -6,7 +12,7 @@ import numpy as np
 
 @dataclass
 class EstimatorConfig:
-    """칼만 필터 튜닝 및 occlusion 처리."""
+    """칼만 필터를 얼마나 조심스럽게 믿을지 정하는 값들 + 놓쳤을 때 처리 시간."""
     process_noise: float
     measurement_noise: float
     occlusion_timeout_sec: float
@@ -14,7 +20,7 @@ class EstimatorConfig:
 
 @dataclass
 class TargetState:
-    """타겟의 맵 프레임 상태에 대한 현재 최선의 추정치."""
+    """지금 이 순간 "쥐가 여기 있을 것이다"라는 최선의 추측."""
     position: np.ndarray
     velocity: np.ndarray
     covariance: np.ndarray
@@ -23,77 +29,77 @@ class TargetState:
 
 
 class TargetEstimator:
-    """등속도 KF로 타겟의 [x, y, vx, vy] 상태를 추적한다."""
+    """쥐의 위치(x, y)와 속도(vx, vy)를 계속 추적하는 칼만 필터."""
 
     def __init__(self, config: EstimatorConfig) -> None:
         self.config = config
-        self._x = np.zeros(4)          # 상태벡터 [px, py, vx, vy], 첫 관측 전엔 원점+정지로 가정
-        self._P = np.eye(4) * 1e3      # 공분산: 초깃값은 "전혀 모른다"는 뜻으로 크게 잡음
-        self._initialized = False      # 첫 update() 호출 여부 (원점 초깃값을 실제 위치로 덮어쓸지 판단)
-        self._time_since_obs = 0.0     # 마지막 관측 이후 경과 시간(occlusion 판정용)
+        self._x = np.zeros(4)          # [위치x, 위치y, 속도x, 속도y]. 아직 한 번도 못 봤으면 원점에서 정지로 가정
+        self._P = np.eye(4) * 1e3      # "내 추측이 얼마나 못 미더운지" 점수. 처음엔 "전혀 모른다"이므로 크게 잡음
+        self._initialized = False      # 실제로 한 번이라도 봤는지 (처음 보면 원점 대신 그 자리로 바로 이동시키려고)
+        self._time_since_obs = 0.0     # 마지막으로 본 뒤 몇 초 지났는지 (오래 못 보면 LOST 판정에 씀)
 
     def predict(self, dt: float) -> None:
-        """새로운 측정값 없이 필터 상태를 dt초만큼 전진시킨다.
+        """새로 본 게 없어도, "아까 가던 대로 dt초만큼 더 갔겠지"라고 위치를 밀어준다.
 
-        표준 칼만 필터의 예측(predict) 단계. 상태벡터는 x = [px, py, vx, vy]
-        (위치 2 + 속도 2). 등속도(constant-velocity) 모델이므로 상태 전이
-        행렬 F는 "위치 += 속도 * dt, 속도는 그대로 유지"를 인코딩한다:
+        속도는 그대로 두고 위치만 (속도 x 시간)만큼 옮기는 아주 단순한
+        가정이다 (등속도 모델):
 
-            [px]   [1 0 dt 0] [px]
-            [py] = [0 1 0 dt] [py]
-            [vx]   [0 0 1  0] [vx]
-            [vy]   [0 0 0  1] [vy]
+            새 위치x = 위치x + 속도x * dt
+            새 위치y = 위치y + 속도y * dt
+            속도는 그대로
 
-        Q(process noise)는 "등속도 가정이 완벽하지 않다"는 불확실성을
-        공분산 P에 매 스텝 더해 넣는 항이다 — 타겟이 실제로는 가속/방향전환을
-        하므로, Q가 없으면 필터가 과신(overconfident)해서 급격한 도주
-        방향전환에 둔감하게 반응한다. dt에 비례시키는 이유는 예측 구간이
-        길수록(관측이 뜸할수록) 그만큼 불확실성이 더 쌓여야 하기 때문이다.
-        LOST 상태에서도 이 함수는 계속 호출된다(관측 없이 dt만 흘려보냄) —
-        그래야 재관측 시 위치가 아니라 "얼마나 오래 못 봤는지"만으로
-        occlusion_timeout_sec 판정이 가능해진다.
+        문제는 쥐가 실제로는 이 가정처럼 얌전하지 않다는 것 — 갑자기
+        방향을 튼다. 그래서 예측할 때마다 "내 추측이 얼마나 못 미더운지"
+        점수(P)를 조금씩 올려준다(Q를 더함). 안 그러면 필터가 "내 예측이
+        무조건 맞다"고 과신해서, 쥐가 갑자기 방향을 틀어도 한참 뒤에야
+        알아챈다. 오래 못 볼수록(dt가 쌓일수록) 그만큼 못 미더워져야
+        하므로 dt에 비례해서 올린다.
+
+        쥐를 놓친 동안(LOST 상태)에도 이 함수는 계속 불린다 — 위치를
+        계속 갱신하려는 게 아니라, "못 본 지 몇 초나 됐는지"만 정확히
+        세기 위해서다.
         """
-        F = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]])  # 상태전이행렬 (위 docstring 수식)
-        Q = np.eye(4) * self.config.process_noise * dt  # 과정 잡음 공분산 — dt에 비례해 누적
-        self._x = F @ self._x                # 상태 예측: x_pred = F @ x
-        self._P = F @ self._P @ F.T + Q       # 공분산 예측: P_pred = F P F^T + Q
+        F = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]])  # 위 설명의 "속도만큼 밀기"를 행렬로 쓴 것
+        Q = np.eye(4) * self.config.process_noise * dt  # 예측이 못 미더워지는 정도 (시간이 지날수록 커짐)
+        self._x = F @ self._x                # 위치/속도 추측을 한 칸 전진
+        self._P = F @ self._P @ F.T + Q       # "못 미더운 정도"도 같이 갱신
         self._time_since_obs += dt            # 못 본 시간 누적
 
     def update(self, measurement: np.ndarray) -> None:
-        """새로운 (x, y) 위치 관측값을 필터에 융합한다.
+        """실제로 관측된 (x, y) 위치가 들어오면, 그 정보로 추측을 고친다.
 
-        표준 칼만 필터의 갱신(update) 단계. 관측 모델 H = [[1,0,0,0],[0,1,0,0]]는
-        "센서는 위치(px, py)만 직접 관측하고 속도는 관측하지 못한다"는 것을
-        인코딩한다 — 속도는 오직 위치가 시간에 따라 어떻게 변하는지로부터
-        간접적으로(P의 위치-속도 교차 공분산을 통해) 추정된다.
+        카메라는 위치만 보여주고 속도는 안 보여준다 — 속도는 "아까는
+        여기, 방금은 저기"라는 위치 변화로부터 필터가 스스로 계산해낸다.
 
-        innovation(= measurement - H@x)은 "예측이 틀린 정도"이고, 칼만 이득
-        K는 그 오차를 상태에 얼마나 반영할지를 결정한다: P(현재 예측이
-        얼마나 불확실한가)와 R(measurement_noise, 센서가 얼마나 믿을만한가)의
-        상대적 크기에 따라 자동으로 정해진다 — P가 크면(불확실하면) K가
-        커져 관측을 더 신뢰하고, R이 크면(센서가 노이즈가 많으면) K가
-        작아져 예측을 더 신뢰한다. 첫 번째 update() 호출 시에는 위치를
-        측정값으로 직접 초기화한다 — 초기 상태가 원점(0,0)에 임의로 고정돼
-        있어 첫 innovation이 비현실적으로 크게 튀는 것을 방지한다.
+        예측했던 위치와 실제로 관측된 위치의 차이(오차)를 얼마나 반영할지
+        정하는 값이 K(칼만 이득)다. 쉽게 말해 **저울**이다:
+          - 내 예측이 못 미더우면(P가 크면) → 방금 본 값을 더 믿는다 (K가 커짐)
+          - 카메라가 원래 좀 부정확하면(R이 크면) → 내 예측을 더 믿는다 (K가 작아짐)
+        어느 쪽을 더 믿을지 사람이 정하는 게 아니라 이 저울이 매번 자동으로 정한다.
+
+        맨 처음 한 번은 좀 특별하게 처리한다: 필터가 시작할 때 위치를
+        원점(0,0)으로 임의로 잡아뒀으므로, 첫 관측이 들어오면 "고쳐나가는"
+        대신 아예 그 자리로 텔레포트시킨다. 안 그러면 첫 오차가 너무 커서
+        이상하게 튄다.
         """
         if not self._initialized:
-            self._x[:2] = measurement       # 원점(0,0) 초깃값 대신 첫 실측 위치로 바로 시작
+            self._x[:2] = measurement       # 원점(0,0)이라는 엉터리 초깃값 대신, 첫 실측 위치로 바로 시작
             self._initialized = True
-        H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]])   # 관측행렬 — 위치(px,py)만 관측, 속도는 못 봄
-        R = np.eye(2) * self.config.measurement_noise  # 관측 잡음 공분산 (센서가 얼마나 못 믿을만한가)
-        innovation = measurement - H @ self._x    # 잔차 = 실제 관측 - 예측했던 관측(H@x)
-        S = H @ self._P @ H.T + R                 # 잔차 공분산 (예측 불확실성 + 관측 불확실성)
-        K = self._P @ H.T @ np.linalg.inv(S)      # 칼만 이득 — 잔차를 상태에 얼마나 반영할지
-        self._x = self._x + K @ innovation        # 상태 갱신: 예측 + 이득*잔차
-        self._P = (np.eye(4) - K @ H) @ self._P   # 공분산 갱신 — 관측을 반영해 불확실성 감소
-        self._time_since_obs = 0.0                # 방금 관측했으므로 경과시간 리셋
+        H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]])   # "카메라는 위치만 본다"는 규칙
+        R = np.eye(2) * self.config.measurement_noise  # 카메라가 얼마나 부정확한지
+        innovation = measurement - H @ self._x    # 오차 = 실제로 본 위치 - 예측했던 위치
+        S = H @ self._P @ H.T + R                 # 이 오차 자체가 얼마나 못 미더운지 (예측 오차 + 카메라 오차)
+        K = self._P @ H.T @ np.linalg.inv(S)      # 저울: 이 오차를 얼마나 반영할지
+        self._x = self._x + K @ innovation        # 최종 추측 = 예측 + 저울만큼 반영한 오차
+        self._P = (np.eye(4) - K @ H) @ self._P   # 방금 실제로 봤으니 "못 미더운 정도"는 줄어든다
+        self._time_since_obs = 0.0                # 방금 봤으니 못 본 시간 다시 0부터
 
     def get_state(self) -> TargetState:
-        """현재 위치/속도 추정치와 LOST 상태를 반환한다."""
-        is_lost = self._time_since_obs > self.config.occlusion_timeout_sec  # timeout 넘게 못 봤으면 LOST
+        """지금 이 순간 최선의 위치/속도 추측과, 너무 오래 못 봤는지(LOST)를 알려준다."""
+        is_lost = self._time_since_obs > self.config.occlusion_timeout_sec  # 정해둔 시간보다 오래 못 봤으면 LOST
         return TargetState(
-            position=self._x[:2].copy(),   # 상태벡터 앞 2개 = 위치. .copy()로 호출부가 내부 상태를 못 건드리게
-            velocity=self._x[2:].copy(),   # 뒤 2개 = 속도
+            position=self._x[:2].copy(),   # 앞 두 칸 = 위치. .copy()로 원본이 바깥에서 함부로 안 바뀌게
+            velocity=self._x[2:].copy(),   # 뒤 두 칸 = 속도
             covariance=self._P.copy(),
             is_lost=is_lost,
             time_since_observation=self._time_since_obs,

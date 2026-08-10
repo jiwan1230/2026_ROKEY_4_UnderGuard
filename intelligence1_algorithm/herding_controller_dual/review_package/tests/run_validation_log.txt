@@ -1,0 +1,55 @@
+$ python3 -m test.run_validation   (2026-08-10, 재-SLAM 맵 기준, 트랩당 100회 x 2모델 x 3트랩 + 추상 아레나 ALGO-001~008)
+
+/usr/lib/python3/dist-packages/scipy/__init__.py:146: UserWarning: A NumPy version >=1.17.3 and <1.25.0 is required for this version of SciPy (detected version 1.26.4
+  warnings.warn(f"A NumPy version >={np_minversion} and <{np_maxversion}"
+=== Evasion Model: reactive_flee ===
+  trials: 100 | success: 83.0% | mean time: 14.8 s | panic rate: 9.0%
+  role swaps/trial: 0.0 (max 0) | mean latency: 0.7 ms
+  of 83 successes, 4 spawned already inside the capture zone (counted in success rate; no herding required)
+=== Evasion Model: wall_hugger ===
+  trials: 100 | success: 83.0% | mean time: 15.1 s | panic rate: 9.0%
+  role swaps/trial: 0.0 (max 1) | mean latency: 0.7 ms
+  of 83 successes, 4 spawned already inside the capture zone (counted in success rate; no herding required)
+=== Evasion Model: noisy_human ===
+  trials: 100 | success: 97.0% | mean time: 18.8 s | panic rate: 9.0%
+  role swaps/trial: 0.0 (max 2) | mean latency: 0.6 ms
+  of 97 successes, 4 spawned already inside the capture zone (counted in success rate; no herding required)
+=== Evasion Model: random_walk ===
+  trials: 100 | success: 13.0% | mean time: 31.8 s | panic rate: 53.0%
+  role swaps/trial: 0.3 (max 3) | mean latency: 0.4 ms
+  of 13 successes, 4 spawned already inside the capture zone (counted in success rate; no herding required)
+=== Model Comparison ===
+  reactive_flee:  83.0%
+  wall_hugger  :  83.0%
+  noisy_human  :  97.0%   <- 실물 시연 예상치
+  random_walk  :  13.0%   <- 대조군
+=== Occlusion Recovery (ALGO-006) ===
+  episodes: 23/33 usable | re-acquired <= 5s: 100.0% | mean recovery: 0.05 s
+  (re-detection modelled at 1.5 m robot-to-target range; harness assumption, not a spec parameter)
+=== Control Experiment (ALGO-008) ===
+  algorithm ON : 85.0%  |  robots idle : 1.0%  |  robots random : 1.0%
+  difference   : +84.0 %p vs best baseline (idle)  |  chi-square p = 0.0000  -> PASS
+  (diagnostic) algorithm vs idle 2x2 chi-square p = 0.0000
+=== Parameter Sensitivity ===
+  drive_distance_m (10 trials/point, * = baseline): 0.15=70%  0.3*=60%  0.45=REJECTED  0.6=REJECTED
+    drive_distance_m=0.45 REJECTED by config invariant, not run: drive_distance_m * drive_distance_ease_factor must be < flee_reaction_distance_m, otherwise the Driver stops outside the target's reaction radius and the target never flees; got drive_distance_m=0.45 * drive_distance_ease_factor=1.15 = 0.5175 >= flee_reaction_distance_m=0.42
+    drive_distance_m=0.6 REJECTED by config invariant, not run: drive_distance_m * drive_distance_ease_factor must be < flee_reaction_distance_m, otherwise the Driver stops outside the target's reaction radius and the target never flees; got drive_distance_m=0.6 * drive_distance_ease_factor=1.15 = 0.69 >= flee_reaction_distance_m=0.42
+  block_lookahead_m (10 trials/point, * = baseline): 0.9=80%  1.8*=80%  2.7=80%  3.6=80%
+  robot_repulsion_weight (10 trials/point, * = baseline): 0.5=70%  1=70%  1.5*=70%  2=70%
+=== SUMMARY ===
+ALGO-001 PASS / ALGO-002 PASS / ALGO-003 PASS / ALGO-004 PASS / ALGO-005 PASS / ALGO-006 PASS / ALGO-007 PASS / ALGO-008 PASS
+=== 실제 맵 검증 (room_map.pgm, 정식) ===
+--- 트랩: top ---
+  reactive_flee: 성공  95.0% | 평균 소요  15.8s | panic  4.0% | 평균 발견시각 34.9s
+  noisy_human  : 성공  98.0% | 평균 소요  18.9s | panic  9.0% | 평균 발견시각 31.3s
+--- 트랩: left ---
+  reactive_flee: 성공  95.0% | 평균 소요  34.3s | panic 14.0% | 평균 발견시각 36.2s
+  noisy_human  : 성공  98.0% | 평균 소요  34.1s | panic 31.0% | 평균 발견시각 38.9s
+--- 트랩: bottom ---
+  reactive_flee: 성공  98.0% | 평균 소요  18.5s | panic  2.0% | 평균 발견시각 41.3s
+  noisy_human  : 성공  98.0% | 평균 소요  26.5s | panic 15.0% | 평균 발견시각 44.9s
+--- 트랩 전체 통합 (모델별) ---
+  reactive_flee: 성공  96.0% (n=300) | 평균 소요  22.8s | panic  6.7%
+  noisy_human  : 성공  98.0% (n=300) | 평균 소요  26.5s | panic 18.3%
+=== SUMMARY (실제 맵, 트랩당 100회 × 2개 모델) ===
+ALGO-001 (실제맵) PASS / ALGO-002 (실제맵) PASS / ALGO-003 (실제맵) PASS / ALGO-005 (실제맵) PASS

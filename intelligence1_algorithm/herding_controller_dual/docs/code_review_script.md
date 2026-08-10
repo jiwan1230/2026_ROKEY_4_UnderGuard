@@ -383,6 +383,23 @@ ALGO_003_MAX_PANIC_RATE = 0.10
 
 여기가 발표의 **하이라이트**다. 자세한 내용은 `docs/references.md`.
 
+## 8단계 한눈에 보기
+
+아래 4-1~4-6이 이 표의 1·2·3·4·5·6단계를 발표 대본으로 풀어쓴 것이다.
+전체 타임라인과 표 전체는 [`../review_package/timeline_8_stages.md`](../review_package/timeline_8_stages.md),
+GIF는 [`../review_package/tests/media/`](../review_package/tests/media/)에 있다.
+
+| 단계 | 내용 | 결과 |
+|---|---|---|
+| 1 | Driver-Blocker 구조 (Shepherding 이론 그대로) | 92% 달성 |
+| 2·위기 | 로봇 B를 고정해도 결과 동일 | 기여 450건 중 1건(0.2%) |
+| 3 | 16가지 개선 시도 | **전부 실패** (아래 4-3) |
+| 4·진단 | 표적 모델이 너무 단순했음을 확인 | 현실적 표적 도입 시 39%로 붕괴 |
+| 5·전환점 | 실패 전수분석 | 실패의 99%가 마지막 7cm |
+| 6·해결 | 엔드게임 협공 | 39.3%→84.0%, 구조 67:역행 0 |
+| 7 | 물리 보정(로봇 반경·충돌·물리적 포획) | 재검증 완료 |
+| 8 | 재-SLAM 좌표 이전 | 현재 96.0%/98.0%, 로봇B 14:0(p=0.00012) |
+
 ## 4-1. 출발점 — Shepherding (양치기) 모델
 
 **Strömbom et al. (2014), Journal of the Royal Society Interface**
@@ -400,6 +417,8 @@ driving_point = target_pos + drive_distance_m * u   # 쥐 기준 덫 반대편
 ```
 
 > "**이 한 가지 규칙만으로 로봇 한 대가 92%를 달성했습니다.**"
+
+GIF: [`stage1_driver_blocker_baseline.gif`](../review_package/tests/media/stage1_driver_blocker_baseline.gif)
 
 ## 4-2. 그런데 검증해보니 두 번째 로봇이 놀고 있었습니다
 
@@ -425,6 +444,9 @@ driving_point = target_pos + drive_distance_m * u   # 쥐 기준 덫 반대편
 >
 > 이게 이 프로젝트 최대의 위기였습니다. 기여가 0이면 이 패키지는 존재할 이유가 없습니다."
 
+GIF: [`stage2_robot_b_zero_contribution.gif`](../review_package/tests/media/stage2_robot_b_zero_contribution.gif)
+— 같은 시드로 "정상 작동"과 "완전히 고정" 두 조건을 나란히 돌린 것. 소요시간까지 완전히 같다.
+
 ### 왜 그런지는 나중에 이론이 설명해줬습니다
 
 > "원인을 찾다가 처음 참고했던 논문을 다시 봤습니다. 논문의 규칙은 두 개입니다."
@@ -444,7 +466,48 @@ driving_point = target_pos + drive_distance_m * u   # 쥐 기준 덫 반대편
 > 그래서 문제가 명확해졌습니다 — **문헌에 없는 두 번째 로봇의 역할을 저희가
 > 새로 만들어야 했습니다.**"
 
-## 4-3. 이론에서 근거를 찾으려 했고, 틀렸습니다
+## 4-3. 그래서 다 시도해봤습니다 — 16가지, 전부 실패
+
+> "기여가 0이라는 걸 확인한 다음, 로봇 B가 쓸모 있어지는 방법을 닥치는 대로
+> 시도했습니다. 파라미터 스윕부터 물리적으로 통로를 막는 것까지, **16가지를
+> 시도했고 전부 실패했습니다.**"
+
+| # | 시도 | 결과 |
+|---|---|---|
+| 1 | `blocking_point_commit_sec` 스윕 | 효과 없음 |
+| 2 | 회피 모델 4종 재검증 | 효과 없음 또는 악화 |
+| 3 | `block_lookahead_m` 재스윕 | 효과 없음 |
+| 4 | Blocking Point geodesic 재설계 | 효과 없음 |
+| 5 | "B가 준비될 때까지 A 대기" | 효과 없음, 소요시간만 27~40%↑ |
+| 6 | 교착(deadlock) 감지·해제 | 26건 중 2건만 수정 |
+| 7 | 도주모델 반발항 게이팅 | 부작용은 없앴지만 기여도 없음 |
+| 8 | 동적 역할 배정(플랜B) | 이득은 최초 배정뿐, 협력 아님 |
+| 9 | **봉인 선분**(물리적으로 통로 막기) | 이 방에서 **기하학적으로 불가능** (봉인 가능 비율 0.2%) |
+| 10 | 압박 선분(좌우 협착) | 로봇-로봇 겹침 버그 제거 후 재측정하니 **33~45%로 대폭 악화** |
+| 11 | **장애물(게이트) 설치** | 봉인 가능 비율은 올랐지만 성공률 **92%→15.8%로 붕괴** |
+| 12 | 도주 분포 직접 최적화 | 86.7%로 악화 |
+| 13 | 수비-쓸기(Guard & Sweep) | 기본 표적에서 유의하게 더 나쁨(p=0.003) |
+| 14 | 구석회피 모델 재검증(60→150쌍) | 60시행 +5.0%p → 150쌍에서 **-4.6%p로 뒤집힘**(우연이었음) |
+
+GIF: [`stage3_sealing_line_impossible.gif`](../review_package/tests/media/stage3_sealing_line_impossible.gif)
+(#9, 실제 경로 위에서 매 순간 계산 — 한 번도 봉인 안 됨),
+[`stage3_gate_reconstruction.gif`](../review_package/tests/media/stage3_gate_reconstruction.gif)
+(#11, **재구성판** — 원본 좌표가 커밋된 적이 없어 그대로 재현은 못 하지만 같은 실패
+메커니즘: 게이트 있음 0/20 vs 없음 19/20)
+
+> "**#11이 제일 중요한 교훈입니다.** 트랩으로 가는 길목에 게이트를 놓으면
+> '봉인 가능성'은 올라가지만, 표적이 트랩에 도달하는 것 자체가 막혀버립니다.
+> **대리 지표(봉인 가능 비율)를 최적화한 게 실패 원인**이었습니다 — 그래서 지금은
+> 항상 최종 성공률로 직접 판단합니다.
+>
+> **#14도 중요합니다.** 60시행에서 나온 +5.0%p 개선을, 표본을 3배로 늘려
+> 다시 재니 부호까지 뒤집혔습니다. **작은 표본의 개선은 반드시 짝지은 시드로
+> 표본을 키워 재확인해야 합니다** — 이 프로젝트의 측정 규칙이 여기서 나왔습니다."
+
+전체 16가지 시도의 자세한 수치와 근거는
+[`../review_package/timeline_8_stages.md`](../review_package/timeline_8_stages.md)의 3단계 표 참고.
+
+## 4-4. 이론에서 근거를 찾으려 했고, 틀렸습니다
 
 **Lion and Man (추격-회피 문제)**
 
@@ -499,7 +562,15 @@ driving_point = target_pos + drive_distance_m * u   # 쥐 기준 덫 반대편
 > **(a) 전제를 실제로 만족하는가, (b) 정리가 보장하는 것이 내가 주장하려는 것과
 > 같은가.** 저희는 둘 다 틀렸고, 측정으로 잡았습니다."
 
-## 4-4. 결국 답은 문헌이 아니라 실패 데이터에서 나왔습니다
+## 4-5. 결국 답은 문헌이 아니라 실패 데이터에서 나왔습니다
+
+> "16가지 시도가 전부 실패한 뒤, 진단부터 다시 했습니다. 주 검증 모델이
+> 로봇 반응거리 밖에서는 그냥 가만히 서 있는 물체였다는 걸 발견하고, 실제
+> 쥐처럼 궁지에 몰리면 옆으로 빠져나가는 표적(구석회피 모델)을 새로 넣었더니
+> **협공 이전 알고리즘이 그대로 무너졌습니다** (39% 근처)."
+
+GIF: [`stage4_realistic_target_collapse.gif`](../review_package/tests/media/stage4_realistic_target_collapse.gif)
+(협공 이전 조건 + 구석회피 표적 — 재구성)
 
 > "새로운 방법을 또 시도하는 대신, **실패한 시행을 전부 뜯어봤습니다.**"
 
@@ -519,7 +590,10 @@ driving_point = target_pos + drive_distance_m * u   # 쥐 기준 덫 반대편
 > **좌우를 동시에 막으려면 로봇이 두 대 있어야 합니다.** 이것이 두 번째 로봇이
 > 구조적으로 필요한 유일한 구간이었습니다."
 
-## 4-5. 그래서 만든 것 — 엔드게임 협공
+GIF: [`stage5_last_7cm_failure.gif`](../review_package/tests/media/stage5_last_7cm_failure.gif)
+— 트랩 0.40m 앞까지 왔다가 결국 옆으로 빠져나가는 실패 시행.
+
+## 4-6. 그래서 만든 것 — 엔드게임 협공
 
 ```
                     발동 반경 0.8m
@@ -564,6 +638,9 @@ driving_point = target_pos + drive_distance_m * u   # 쥐 기준 덫 반대편
 > 저희는 **덫을 세 번째 꼭짓점으로 씁니다.** 로봇 2대 + 덫 = 삼각형이고,
 > 쥐에게 남는 방향이 덫 쪽으로 수렴합니다. 포위가 불가능한 대수로 포위 효과를
 > 만든 셈입니다."
+
+GIF: [`endgame_pincer_demo_1.gif`](../review_package/tests/media/endgame_pincer_demo_1.gif),
+[`endgame_pincer_demo_2.gif`](../review_package/tests/media/endgame_pincer_demo_2.gif)
 
 ---
 

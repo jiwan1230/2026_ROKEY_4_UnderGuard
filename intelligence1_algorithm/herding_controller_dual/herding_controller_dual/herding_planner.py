@@ -32,87 +32,85 @@ def compute_driving_point(
     robot_pos: np.ndarray,
     config: PlannerConfig,
 ) -> DrivingResult:
-    """Driver의 목표점을 반환한다: 타겟 뒤쪽, 캡처 목표점의 반대 방향.
+    """미는 로봇(Driver)이 서야 할 자리를 알려준다: 쥐를 기준으로 덫의 정반대편.
 
-    핵심 기하: u = normalize(target_pos - goal_pos)는 "포획존에서 타겟을
-    향하는" 단위벡터다. Driver의 목표점 = target_pos + drive_distance_m * u,
-    즉 **타겟을 기준으로 포획존과 정반대편**에 위치한다. 표적은 접근하는
-    로봇으로부터 도망치는 반응(reactive flee)을 하므로, Driver가 이
-    "포획존 반대편" 지점에 서면 표적은 자연히 포획존 방향으로 밀려난다 —
-    로봇이 표적을 직접 붙잡거나 미는 게 아니라, 표적 자신의 도주 본능을
-    역이용해서 원하는 방향으로 유도하는 것이 이 알고리즘의 핵심 아이디어.
+    쥐는 다가오는 로봇을 보면 무서워서 반대로 도망친다(reactive flee).
+    그래서 로봇이 "쥐 기준으로 덫과 정반대편"에 서 있으면, 쥐는 로봇을
+    피해 자연스럽게 덫 쪽으로 도망치게 된다. 로봇이 쥐를 직접 붙잡거나
+    떠미는 게 아니라, **쥐 자신의 도망 본능을 역이용해서 원하는 방향으로
+    유도**하는 것이 이 알고리즘의 핵심 아이디어다.
+
+    계산은 간단하다: "덫 → 쥐" 방향을 구해서, 그 방향으로 쥐에서
+    `drive_distance_m`만큼 더 나아간 자리가 로봇의 목표점이다. 즉 쥐를
+    사이에 두고 덫과 정확히 반대쪽에 서는 것이다.
     """
-    to_target = target_pos - robot_pos   # 로봇 -> 타겟 방향(정규화 전)
+    to_target = target_pos - robot_pos   # 로봇 → 쥐 방향
     dist = np.linalg.norm(to_target)
-    if dist < config.panic_distance_m:   # 너무 가까움 — 정상 로직 대신 후퇴 분기로
-        # Panic-retreat: Driver가 타겟에 panic_distance_m보다 가까이
-        # 붙어버린 경우 (예: 급격한 방향전환으로 타겟이 로봇 쪽으로 순간
-        # 이동했을 때). 이 상태에서 정상적인 "타겟 뒤쪽" 목표점을 계속
-        # 요구하면 로봇이 타겟을 향해 더 다가가라는 명령을 받게 되어
-        # 표적이 과도하게 겁먹고 예측 불가능하게 튈 수 있다. 대신 로봇
-        # 자신의 현재 위치를 기준으로 타겟 반대쪽으로 즉시 물러나는 지점을
-        # 준다 — "너무 가까워졌으니 우선 거리부터 벌리자."
-        retreat_dir = -to_target / dist if dist > 1e-6 else np.array([1.0, 0.0])  # 타겟 반대쪽 단위벡터
-        retreat_point = robot_pos + retreat_dir * (config.panic_distance_m - dist)  # 딱 panic_distance만큼 벌어지는 지점
+    if dist < config.panic_distance_m:   # 로봇이 쥐한테 너무 가까이 붙어버렸다 — 정상 계산 대신 일단 물러나기
+        # 너무 가까움(panic): 예를 들어 쥐가 갑자기 방향을 틀어서 로봇
+        # 쪽으로 순간 다가온 경우다. 이럴 때도 평소처럼 "쥐 뒤쪽으로
+        # 가라"고 하면 로봇이 쥐한테 더 다가가라는 명령이 되어, 쥐가
+        # 너무 놀라서 어디로 튈지 예측할 수 없게 된다. 그래서 이럴 땐
+        # 계산을 다 건너뛰고 "일단 쥐 반대쪽으로 한 걸음 물러나기"만
+        # 시킨다 — 너무 가까워졌으니 거리부터 벌리자는 것.
+        retreat_dir = -to_target / dist if dist > 1e-6 else np.array([1.0, 0.0])  # 쥐 반대쪽 방향
+        retreat_point = robot_pos + retreat_dir * (config.panic_distance_m - dist)  # 딱 안전거리만큼 물러난 자리
         return DrivingResult(point=retreat_point, is_panic=True)
 
-    u = target_pos - goal_pos   # goal(포획존) -> target 방향(정규화 전)
+    u = target_pos - goal_pos   # 덫 → 쥐 방향
     norm = np.linalg.norm(u)
-    u = u / norm if norm > 1e-6 else np.array([1.0, 0.0])  # 단위벡터화 (겹치면 임의 방향)
+    u = u / norm if norm > 1e-6 else np.array([1.0, 0.0])  # 방향만 남기고 길이는 1로 (겹쳐 있으면 아무 방향)
 
     drive_distance = config.drive_distance_m
-    to_goal = -u  # goal_pos 쪽을 향하는 단위벡터 (u의 반대)
+    to_goal = -u  # 쥐 → 덫 방향 (u의 정반대)
     speed = np.linalg.norm(target_vel)
-    if speed > 1e-6:  # 타겟이 정지해 있으면 진행 방향이 없어 easing 판단 불가 — 그냥 평소 거리 사용
-        # Alignment easing: 타겟이 이미 스스로 포획존 쪽으로 가고 있다면
-        # (진행 방향과 to_goal의 내적이 alignment_threshold 이상이면),
-        # Driver가 평소처럼 바짝 붙어 압박할 필요가 없다 — 오히려 너무
-        # 가까이 붙으면 표적이 놀라서 엉뚱한 방향으로 급선회할 위험이
-        # 있다. 이런 경우 drive_distance를 ease_factor(>1)만큼 늘려
-        # 목표점을 타겟에서 더 멀리 물러나게 하고, 로봇은 "이미 잘
-        # 가고 있으니 살짝만 압박"하는 셈이 된다.
-        alignment = float(np.dot(target_vel / speed, to_goal))  # 진행방향과 goal방향의 정렬도(코사인)
+    if speed > 1e-6:  # 쥐가 멈춰 있으면 "가는 방향"이 없어서 아래 판단을 할 수 없음 — 그냥 평소 거리 그대로
+        # 살살 밀기(easing): 쥐가 이미 스스로 덫 쪽으로 가고 있다면
+        # (가는 방향과 "쥐→덫" 방향이 많이 비슷하면), 로봇이 굳이 바짝
+        # 붙어서 세게 밀 필요가 없다 — 오히려 너무 가까이 붙으면 쥐가
+        # 놀라서 엉뚱한 데로 튈 수 있다. 그래서 이럴 땐 목표점을 쥐에서
+        # 더 멀리 잡는다(거리를 ease_factor만큼 늘림) — "이미 잘 가고
+        # 있으니 살살 압박만 하자"는 뜻이다.
+        alignment = float(np.dot(target_vel / speed, to_goal))  # 쥐가 가는 방향과 "쥐→덫" 방향이 얼마나 비슷한지
         if alignment >= config.alignment_threshold:
-            drive_distance *= config.drive_distance_ease_factor  # 이미 잘 가고 있음 — 덜 압박(더 멀리 물러남)
+            drive_distance *= config.drive_distance_ease_factor  # 이미 잘 가고 있음 — 덜 압박 (더 멀리서 지켜봄)
 
-    return DrivingResult(point=target_pos + drive_distance * u, is_panic=False)  # 타겟 기준 goal 반대편 지점
+    return DrivingResult(point=target_pos + drive_distance * u, is_panic=False)  # 쥐를 기준으로 덫 반대편 자리
 
 
 def _geodesic_distance_to_goal(position: np.ndarray, grid_map: GridMap, geodesic_field) -> float | None:
-    """geodesic_field가 있으면 position 셀의 벽을 피한 실제 거리-to-goal, 없거나
-    계산 불가(그리드 밖/도달 불가능한 고립 셀)하면 None."""
+    """이 지점에서 벽을 피해 실제로 돌아가는 거리로 잰 "덫까지 거리". 계산 못 하면 None."""
     if geodesic_field is None:
-        return None  # 필드가 아직 없음(하위호환) — 호출부가 알아서 폴백
+        return None  # 이 기능을 아직 안 쓰는 경우 — 부르는 쪽이 알아서 다른 방법으로 처리
     try:
         row, col = grid_map.world_to_cell(*position)
     except ValueError:
-        return None  # 그리드 밖
+        return None  # 지도 바깥
     distance = geodesic_field.distance[row, col]
-    return float(distance) if np.isfinite(distance) else None  # inf(도달 불가)면 None
+    return float(distance) if np.isfinite(distance) else None  # 아예 못 가는 곳(무한대)이면 None
 
 
 def _leads_away_from_goal(
     point: np.ndarray, target_pos: np.ndarray, grid_map: GridMap, geodesic_field,
 ) -> bool:
-    """point가 target_pos보다 실제로(벽을 피해서) goal에서 더 먼지 확인한다.
+    """이 지점이 쥐보다 실제로(벽을 피해 돌아가도) 덫에서 더 먼 게 맞는지 확인한다.
 
-    geodesic_field가 없으면(하위호환) 항상 True를 반환해 기존 동작을 그대로
-    유지한다. 있으면, Euclidean lookahead 점 하나만으로는 "장애물이 아니다"밖에
-    확인할 수 없어 놓치는 두 가지 오판을 막아준다: (a) 그 점이 벽 뒤 작은
-    알코브 같은 막다른 골목이라 실제로는 그리로 가려면 트랩 쪽을 크게 돌아야
-    하는 경우, (b) 얇은 벽 건너편이라 Euclidean으로는 열려 보여도 실제 경로로는
-    오히려 트랩에 더 가까운 경우. target_pos 자신의 거리를 계산할 수 없으면
-    (표적이 고립된 셀에 있는 등) 비교 기준이 없으므로 필터링하지 않는다.
+    직선 거리만 보면 두 가지를 착각할 수 있다: (a) 벽 뒤 막다른 구석이라
+    직선으로는 가까워 보여도 실제로 가려면 덫 쪽으로 크게 돌아가야 하는
+    경우, (b) 얇은 벽 건너편이라 직선으로는 뚫려 보이지만 실제 길로는
+    오히려 덫에 더 가까운 경우. 이 함수는 벽을 피해 돌아가는 실제 거리로
+    다시 확인해서 이런 착각을 걸러낸다. 이 기능 자체를 안 쓰면(geodesic_field
+    없음) 항상 통과시킨다.
     """
     if geodesic_field is None:
-        return True  # 필드 없음(하위호환) — 항상 통과시켜 기존 동작 유지
+        return True  # 이 기능을 안 쓰는 경우 — 항상 통과
     point_dist = _geodesic_distance_to_goal(point, grid_map, geodesic_field)
     if point_dist is None:
-        return False  # point가 도달 불가능한 곳 — 후보에서 제외
+        return False  # 이 지점엔 아예 갈 수가 없음 — 후보에서 제외
     target_dist = _geodesic_distance_to_goal(target_pos, grid_map, geodesic_field)
     if target_dist is None:
-        return True  # 비교 기준(타겟 자신의 거리)이 없음 — 필터링하지 않고 통과
-    return point_dist > target_dist  # point가 target보다 실제로 goal에서 더 멀어야 "도주로 후보"로 유효
+        return True  # 쥐 자신의 거리를 못 재서 비교 기준이 없음 — 그냥 통과시킴
+    return point_dist > target_dist  # 쥐보다 실제로 더 멀어야 "진짜 도망로 후보"로 인정
 
 
 def compute_blocking_point(
@@ -124,50 +122,55 @@ def compute_blocking_point(
     geodesic_field=None,
     previous_point: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Blocker의 목표점을 반환한다: 목표 반구(goal hemisphere) 밖에서 가장 가능성 높은 도주 경로.
+    """막는 로봇(Blocker)이 서야 할 자리를 알려준다: 쥐가 도망갈 것 같은 다른 길목.
 
-    4단계 알고리즘: (1) escape_model이 예측한 8방향 확률을 확률 내림차순으로
-    순회하되, "포획존 쪽을 향하는" 방향(목표 반구, dots > 0)은 건너뛴다 —
-    그 방향은 Driver가 이미 처리 중이므로 Blocker가 갈 필요가 없다.
-    (2) 남은 후보 중 그 방향의 lookahead 지점이 장애물이면 건너뛴다 —
-    자연적으로 막힌 도주로는 애초에 표적이 쓸 수 없으므로 지킬 필요가
-    없다. geodesic_field가 주어졌으면 여기서 추가로, 그 지점이 벽을 피해서도
-    실제로 target_pos보다 goal에서 더 먼지 확인한다 — Euclidean 검사만으로는
-    막다른 알코브나 얇은 벽 건너편(오히려 더 가까움)을 "뚫려 있다"고 오판하기
-    때문이다. (3) 살아남은 첫 후보(= 목표 반구 밖에서 가장 확률 높고 실제로
-    갈 수 있는 도주로)를 Blocker의 목표점으로 채택. (4) 목표 반구 밖
-    후보가 전부 막혀 있으면 반구 조건을 완화해 전체 8방향 중 최고확률
-    빈 경로를 대신 취하고, 그마저 없으면(사방이 막힘) previous_point가
-    있으면 그 자리를 지키고 없으면 제자리를 지킨다 — 아래 코드의 세 개
-    루프가 각각 이 (3)/(4-완화)/(4-완전차단) 단계다.
+    마르코프 모델(`escape_model.py`)이 "쥐는 이 방향들로 도망갈 확률이
+    높다"고 알려주면, 그중에서 아래 순서로 하나를 고른다:
+
+    1. **덫 쪽 방향은 건너뛴다** — 그쪽은 미는 로봇(Driver)이 이미 맡고
+       있으니 Blocker가 또 갈 필요가 없다.
+    2. 남은 방향 중 확률이 제일 높은 것부터 순서대로 "여기가 진짜 갈 수
+       있는 길인지" 확인한다 — 벽으로 막혀 있으면 건너뛴다(애초에 쥐가
+       못 가는 길이니 지킬 필요 없음). geodesic_field가 있으면 한 번 더,
+       "벽을 피해 돌아가도 정말 덫에서 더 먼 길인지" 확인한다 — 그냥
+       직선거리만 보면 막다른 골목이나 얇은 벽 건너편(사실은 더 가까움)을
+       "뚫린 길"로 착각할 수 있어서다.
+    3. 이렇게 걸러낸 뒤 살아남은 첫 번째 후보(=덫 반대쪽에서 확률도 제일
+       높고 실제로 갈 수 있는 길)를 Blocker의 목표점으로 정한다.
+    4. 그런 길이 하나도 없으면(전부 막혔으면), "덫 쪽은 건너뛴다"는
+       조건을 빼고 8방향 전체에서 다시 찾는다. 그마저도 없으면(사방이
+       다 막힘) 바로 전에 정했던 자리를 그대로 유지하고, 그 자리도
+       없으면(맨 처음이면) 그냥 쥐 위치로 대신한다.
+
+    아래 코드의 세 덩어리(반복문 2개 + 마지막 처리)가 정확히 이 2/4-완화/4-완전차단
+    단계에 해당한다.
     """
-    to_goal = goal_pos - target_pos    # target -> goal 방향(정규화 전)
+    to_goal = goal_pos - target_pos    # 쥐 → 덫 방향
     norm = np.linalg.norm(to_goal)
-    to_goal = to_goal / norm if norm > 1e-6 else np.array([1.0, 0.0])  # 단위벡터화
+    to_goal = to_goal / norm if norm > 1e-6 else np.array([1.0, 0.0])  # 방향만 남기고 길이는 1로
 
-    # dots[i] > 0 은 방향 i가 to_goal과 같은 반구(포획존 쪽)에 있다는 뜻.
-    dots = escape_estimate.directions @ to_goal            # 8방향 각각과 to_goal의 내적
-    candidate_order = np.argsort(escape_estimate.probabilities)[::-1]  # 확률 내림차순 인덱스
+    # dots[i] > 0 이면 그 방향 i는 덫이 있는 쪽이라는 뜻.
+    dots = escape_estimate.directions @ to_goal            # 8방향 각각이 "덫 쪽"과 얼마나 비슷한지
+    candidate_order = np.argsort(escape_estimate.probabilities)[::-1]  # 확률 높은 순서로 정렬
 
-    for index in candidate_order:  # 확률 높은 방향부터 순서대로 검사
+    for index in candidate_order:  # 확률 높은 방향부터 하나씩 확인
         if dots[index] > 0:
-            continue  # 방향이 목표 반구 내부에 있으므로 건너뜀 (2-4 step 1)
+            continue  # 덫 쪽 방향 — Driver가 맡고 있으니 건너뜀 (위 설명 1번)
         direction = escape_estimate.directions[index]
-        point = target_pos + direction * config.block_lookahead_m  # 그 방향의 lookahead 지점
+        point = target_pos + direction * config.block_lookahead_m  # 그 방향으로 살짝 나아간 지점
         try:
             row, col = grid_map.world_to_cell(*point)
         except ValueError:
-            continue  # 그리드 밖 — 후보에서 제외
+            continue  # 지도 밖 — 후보 탈락
         if grid_map.is_obstacle(row, col):
-            continue  # 경로가 이미 자연적으로 막혀 있으므로 차선책 경로 시도 (2-4 step 4)
+            continue  # 이미 벽으로 막힌 길 — 지킬 필요 없으니 다음 후보로 (위 설명 2번)
         if not _leads_away_from_goal(point, target_pos, grid_map, geodesic_field):
-            continue  # 벽을 피해서 봐도 target보다 goal에 더 가까움 — 실제로는 도주로가 아님
-        return point  # 살아남은 첫 후보 채택
+            continue  # 실제로 돌아가 보면 오히려 덫에 더 가까운 길이었음 — 후보 탈락
+        return point  # 살아남은 첫 후보로 확정
 
-    # 목표 반구 밖의 후보가 모두 막혀 있거나 그리드 밖에 있음: 목표 반구
-    # 선호도를 완화하여, 무효인 것으로 알려진 지점을 반환하는 대신 여전히
-    # 장애물이 없고 범위 내에 있는(전체 8방향 중) 최고 확률 방향을 취한다.
-    for index in candidate_order:  # 위와 동일 로직, 다만 목표 반구 필터(dots>0 skip)는 뺀 완화판
+    # 덫 반대쪽에서는 갈 수 있는 길을 못 찾았다: "덫 쪽은 건너뛴다"는
+    # 조건을 빼고, 8방향 전체에서 확률 제일 높은 뚫린 길을 대신 찾는다.
+    for index in candidate_order:  # 위와 똑같은 확인 과정, 다만 덫 쪽 방향도 후보에 포함
         direction = escape_estimate.directions[index]
         point = target_pos + direction * config.block_lookahead_m
         try:
@@ -180,13 +183,13 @@ def compute_blocking_point(
             continue
         return point
 
-    # 모든 방향(8방향 전부)이 장애물에 막혀 있거나 그리드 밖에 있거나 geodesic으로
-    # 검증 불가함: 타겟이 완전히 갇혀 있어 근처에 유효한 blocking point가 없다.
-    # 직전에 커밋된 위치가 있으면 그 자리를 유지하고(표적 위치로 돌진하는 대신),
-    # 없으면(첫 호출 등) 기존처럼 표적 위치로 폴백한다.
+    # 8방향 전부 막혔거나 갈 수 없는 곳뿐이다: 쥐가 완전히 갇혀서 지킬
+    # 만한 길이 아예 없다는 뜻이다. 바로 전에 정했던 자리가 있으면 그
+    # 자리를 계속 지키고(쥐 쪽으로 돌진하지 않고), 없으면(맨 처음 호출
+    # 등) 그냥 쥐 위치를 대신 돌려준다.
     if previous_point is not None:
-        return np.asarray(previous_point, dtype=float).copy()  # 직전 커밋 위치 유지
-    return target_pos.copy()  # 정말 처음이라 이전 값도 없음 — 타겟 위치로 폴백
+        return np.asarray(previous_point, dtype=float).copy()  # 이전 자리 유지
+    return target_pos.copy()  # 이전 자리도 없음(맨 처음) — 일단 쥐 위치로
 
 
 # --------------------------------------------------------------------------- #
@@ -674,42 +677,51 @@ def compute_endgame_pincer(
     trigger_radius_m: float,
     half_angle_rad: float = np.pi / 3.0,   # 60도 -- 실측 채택값
 ) -> PincerPair | None:
-    """표적이 트랩 근처면, 트랩 반대편 좌우를 막는 두 지점을 돌려준다.
+    """쥐가 덫 코앞까지 왔는데 안 잡히면, 두 로봇이 갈라져 설 좌우 두 자리를 알려준다.
 
-    표적에서 **트랩 반대 방향**을 기준으로 ±`half_angle_rad`만큼 벌린 두
-    지점(표적 중심 반지름 `stand_distance_m` 원 위). 두 로봇이 표적의 뒤쪽
-    좌우를 동시에 막아, 표적에 남는 방향이 트랩 쪽으로 수렴한다.
+    **이게 이 프로젝트의 핵심이다.** 그냥 미는 것만으로는 로봇 한 대로도
+    충분해서, 로봇 B(원래 막는 역할)가 진짜로 쓸모 있다는 걸 보여줄 방법이
+    없었다. 그런데 쥐가 덫 코앞(`trigger_radius_m` = 0.8m)까지 왔는데도
+    3초 넘게 안 잡히면 — 아마 덫 바로 앞에서 좌우로 왔다갔다하며 버티고
+    있는 것이다. 이때 두 로봇이 "쥐 기준으로 덫 반대편"에서 좌우로
+    쫙 갈라져 서면(±60도), 쥐 입장에서는 왼쪽도 로봇, 오른쪽도 로봇이라
+    도망갈 데가 덫 쪽밖에 안 남는다. 이 순간이 바로 로봇 B가 있어야만
+    되는 순간이다.
 
-    각도는 클수록 좋지 않다. 실측(3트랩 x 50회 = 150쌍, 구석회피 표적)에서
-    ±60도 90.0% / ±90도 46.0% / ±120도 15.3% 였다. 크게 벌리면 두 로봇
-    사이가 뚫려 표적이 그리로 빠져나가고, 좁히면 한 대와 다를 바 없어진다.
-    채택값은 `config/herding_params.yaml`의 `endgame_half_angle_deg: 60.0`.
+    각도는 왜 60도냐면, 실제로 재봤더니(3곳 트랩 x 50번씩 = 150번) 이랬다:
+      - ±60도로 벌리면 → 90.0% 성공
+      - ±90도로 벌리면 → 46.0% 성공 (너무 벌어져서 그 사이로 쥐가 빠져나감)
+      - ±120도로 벌리면 → 15.3% 성공 (거의 일렬로 서 있는 것과 비슷해짐)
+    너무 좁게 벌리면 로봇 한 대나 다름없어지고, 너무 넓게 벌리면 둘 사이
+    틈으로 쥐가 도망친다 — 60도가 딱 적당한 지점이다.
+    (설정값 위치: `config/herding_params.yaml`의 `endgame_half_angle_deg: 60.0`)
 
-    표적이 `trigger_radius_m`보다 멀면 None (그 경우 평소 몰이 방식 유지).
+    쥐가 아직 `trigger_radius_m`보다 멀리 있으면 협공을 안 하고 None을
+    돌려준다 (그럴 땐 평소처럼 미는 로봇 + 막는 로봇 방식을 쓴다).
     """
     target = np.asarray(target_pos, dtype=float)
     trap = np.asarray(trap_pos, dtype=float)
-    to_trap = trap - target                          # 타겟 -> 트랩 방향(정규화 전)
+    to_trap = trap - target                          # 쥐 → 덫 방향
     dist = float(np.linalg.norm(to_trap))
     if dist > trigger_radius_m or dist < 1e-6:
-        return None  # 아직 트랩 근처 아님(또는 이미 트랩 위) — 협공 비활성
-    inward = to_trap / dist                           # 타겟 -> 트랩 단위벡터
-    outward = -inward                       # 트랩 반대편 = 미는 쪽
-    perp = np.array([-outward[1], outward[0]])  # outward에 수직 — 좌우로 벌리는 축
+        return None  # 아직 덫 근처가 아니거나 이미 덫 위에 있음 — 협공 안 함
+    inward = to_trap / dist                           # 쥐 → 덫 방향 (길이 1)
+    outward = -inward                       # 덫 반대편 = 로봇들이 서는 쪽
+    perp = np.array([-outward[1], outward[0]])  # outward와 수직인 방향 — 좌우로 벌어지는 축
 
     def place(sign):
-        """outward에서 sign*angle만큼 벌린 원 위의 점. 벽에 걸리면 각도를 줄여 재시도."""
-        for angle in (half_angle_rad, half_angle_rad * 0.7, half_angle_rad * 0.4):  # 60도 -> 42도 -> 24도로 축소
+        """"덫 반대편"에서 좌(sign=+1) 또는 우(sign=-1)로 벌어진 자리를 계산한다. 벽에 걸리면 덜 벌려서 다시 시도."""
+        for angle in (half_angle_rad, half_angle_rad * 0.7, half_angle_rad * 0.4):  # 60도 안 되면 42도, 그래도 안 되면 24도
             offset = outward * np.cos(angle) + perp * (sign * np.sin(angle))
             point = target + offset * stand_distance_m
             if _cell_clearance(point, grid_map, clearance_m) >= body_clearance_m:
                 return point
-        return None  # 세 각도 다 실패 — 이 지점엔 로봇이 설 자리가 없음
+        return None  # 세 각도 다 벽에 걸림 — 이쪽엔 로봇이 설 자리가 없음
 
-    point_a, point_b = place(+1.0), place(-1.0)   # 좌우 대칭으로 배치
+    point_a, point_b = place(+1.0), place(-1.0)   # 왼쪽/오른쪽 대칭으로 자리 계산
     if point_a is None or point_b is None:
-        return None  # 한쪽이라도 설 자리를 못 찾음 — 협공 불가
-    # 두 로봇이 겹치면 협공이 성립하지 않는다.
+        return None  # 한쪽이라도 설 자리가 없으면 협공 불가 — 평소 방식으로
+    # 두 자리가 너무 가까우면(로봇끼리 겹치면) 협공이라고 할 수 없다.
     if float(np.linalg.norm(point_a - point_b)) < 2.0 * (body_clearance_m - 0.03):
         return None
     return PincerPair(point_a=point_a, point_b=point_b, active=True)

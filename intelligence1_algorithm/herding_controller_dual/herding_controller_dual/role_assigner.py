@@ -42,57 +42,62 @@ class RoleAssigner:
         driving_point_candidate: np.ndarray,
         current_time_sec: float,
     ) -> tuple[int, int]:
-        """(driver_id, blocker_id)를 반환하며, margin+cooldown 임계값을 넘을 때만 교체한다."""
-        cost1 = self._cost(robot1_pos, robot1_heading, driving_point_candidate)  # 로봇1이 Driver라면 드는 비용
-        cost2 = self._cost(robot2_pos, robot2_heading, driving_point_candidate)  # 로봇2가 Driver라면 드는 비용
-        candidate_driver = 1 if cost1 <= cost2 else 2  # 지금 이 순간 비용이 더 싼 쪽 (이력현상 적용 전 raw 후보)
+        """두 로봇 중 누가 미는 역할(Driver)인지 정해서 (driver_id, blocker_id)로 돌려준다.
+
+        너무 자주 바뀌면 로봇이 갈팡질팡하니까, "확실히 유리할 때"만
+        바꾼다: 비용 차이가 margin보다 크게 나고 + 마지막으로 바꾼 지
+        cooldown 시간이 지났을 때만 실제로 교체한다.
+        """
+        cost1 = self._cost(robot1_pos, robot1_heading, driving_point_candidate)  # 로봇1이 미는 역할을 맡으면 드는 수고
+        cost2 = self._cost(robot2_pos, robot2_heading, driving_point_candidate)  # 로봇2가 미는 역할을 맡으면 드는 수고
+        candidate_driver = 1 if cost1 <= cost2 else 2  # 지금 이 순간만 보면 수고가 더 적은 쪽
 
         if self._last_swap_time is None:
-            # 최초 호출: margin/cooldown 게이팅으로 보호해야 할 이전 "swap"이
-            # 없고, 이력현상을 적용할 실제 이전 배정도 없다 -- 지금까지의
-            # self._driver_id == 1은 실제로 계산된 결정이 아니라 그저 임의의
-            # 부트스트랩 기본값이다. 비용이 최적인 후보를 그대로 채택한다.
+            # 맨 처음 부르는 경우: 지금까지 self._driver_id == 1은 실제로
+            # 계산한 게 아니라 그냥 임시로 넣어둔 값이었다. 그러니 "확실히
+            # 유리할 때만 바꾼다"는 규칙 없이, 지금 계산한 결과를 그냥
+            # 바로 채택한다.
             self._driver_id = candidate_driver
             self._last_swap_time = current_time_sec
-        elif candidate_driver != self._driver_id:  # 후보가 지금 Driver와 다름 = 교체가 논의될 상황
-            cost_diff = abs(cost1 - cost2)                              # 두 로봇 비용 차이 (근소한 차면 교체 안 함)
-            time_since_swap = current_time_sec - self._last_swap_time   # 마지막 교체 후 경과 시간
+        elif candidate_driver != self._driver_id:  # 지금 맡고 있는 로봇과 다른 로봇이 더 유리해 보임 — 바꿀지 검토
+            cost_diff = abs(cost1 - cost2)                              # 두 로봇 수고 차이 (차이가 작으면 굳이 안 바꿈)
+            time_since_swap = current_time_sec - self._last_swap_time   # 마지막으로 바꾼 뒤 지난 시간
             if cost_diff >= self.config.role_swap_margin and time_since_swap >= self.config.role_swap_cooldown_sec:
-                self._driver_id = candidate_driver   # margin+cooldown 둘 다 통과해야 실제 교체
+                self._driver_id = candidate_driver   # 차이도 충분하고 시간도 지났음 — 이제 진짜로 바꾼다
                 self._last_swap_time = current_time_sec
 
-        blocker_id = 2 if self._driver_id == 1 else 1  # Blocker는 Driver가 아닌 나머지 로봇
+        blocker_id = 2 if self._driver_id == 1 else 1  # 막는 역할은 미는 역할이 아닌 나머지 로봇
         return self._driver_id, blocker_id
 
     def _cost(self, robot_pos: np.ndarray, robot_heading: np.ndarray, target_point: np.ndarray) -> float:
-        """Driver 후보로서의 비용: 직선 거리 + (제자리 회전 각도 * 가중치).
+        """이 로봇이 미는 역할을 맡을 때 드는 수고 = 거리 + (돌아야 하는 각도 * 가중치).
 
-        거리만 비교하면 이미 정확한 방향을 보고 있는 로봇보다, 더 가깝지만
-        180도 돌아야 하는 로봇을 Driver로 뽑아버릴 수 있다. 회전 비용을
-        더해 두 로봇의 "실제로 그 지점에 도달하는 데 걸리는 수고"를 더
-        가깝게 근사한다.
+        거리만 비교하면, 이미 목표 방향을 보고 있는 로봇보다 "더 가깝지만
+        180도 뒤돌아야 하는" 로봇을 뽑아버릴 수 있다. 그래서 돌아야 하는
+        각도도 같이 더해서, "실제로 그 자리까지 가는 데 드는 진짜 수고"에
+        더 가깝게 맞춘다.
         """
         distance = float(np.linalg.norm(target_point - robot_pos))  # 목표점까지 직선 거리
-        desired = target_point - robot_pos    # 로봇 -> 목표점 방향(정규화 전)
+        desired = target_point - robot_pos    # 로봇 → 목표점 방향
         norm = np.linalg.norm(desired)
         if norm < 1e-6:
-            return distance  # 이미 목표점에 있음 — 회전 비용 계산 불필요(방향이 정의 안 됨)
-        desired = desired / norm  # 단위벡터로 정규화
-        cos_angle = float(np.clip(np.dot(desired, robot_heading), -1.0, 1.0))  # 목표방향과 현재 헤딩의 정렬도
-        turn_cost = float(np.arccos(cos_angle))  # 그 정렬도를 라디안(회전해야 할 각도)으로 변환
-        return distance + self.config.role_cost_turn_weight * turn_cost  # 거리 + 가중치*회전각
+            return distance  # 이미 목표점에 있음 — 방향이 없으니 회전 수고도 없음
+        desired = desired / norm  # 방향만 남기고 길이는 1로
+        cos_angle = float(np.clip(np.dot(desired, robot_heading), -1.0, 1.0))  # 지금 보는 방향과 목표 방향이 얼마나 비슷한지
+        turn_cost = float(np.arccos(cos_angle))  # 그걸 "돌아야 하는 각도(라디안)"로 바꿈
+        return distance + self.config.role_cost_turn_weight * turn_cost  # 거리 + 가중치를 곱한 회전 수고
 
 
 def resolve_separation(driving_point: np.ndarray, blocking_point: np.ndarray,
                        min_separation_m: float) -> np.ndarray:
-    """최소 이격 거리를 유지하기 위해 Blocker의 목표점을 Driver의 (실제/참고) 위치로부터 밀어낸다."""
-    delta = blocking_point - driving_point   # Driver -> Blocker 방향(정규화 전)
+    """두 로봇이 너무 가까워지지 않도록, 막는 로봇의 목표점을 미는 로봇 쪽에서 밀어낸다."""
+    delta = blocking_point - driving_point   # 미는 로봇 → 막는 로봇 방향
     dist = np.linalg.norm(delta)
     if dist >= min_separation_m:
-        return blocking_point  # 이미 충분히 떨어져 있음 — 그대로 반환
-    direction = delta / dist if dist > 1e-6 else np.array([1.0, 0.0])  # 겹쳐 있으면(0벡터) 임의 방향 x축으로 밀어냄
-    # 덧셈/뺄셈 왕복 과정의 부동소수점 반올림으로 인해 결과가
-    # min_separation_m보다 미세하게 부족해지지 않도록, 임계값을 살짝
-    # 넘겨서 밀어낸다 (float64에서 norm(a+b)는 정확히 ||b||가 아니다).
+        return blocking_point  # 이미 충분히 떨어져 있음 — 그대로 둔다
+    direction = delta / dist if dist > 1e-6 else np.array([1.0, 0.0])  # 완전히 겹쳐 있으면(방향 없음) 그냥 오른쪽으로 밀어냄
+    # 컴퓨터의 소수점 계산은 아주 살짝 오차가 생길 수 있어서, 밀어낸
+    # 거리가 min_separation_m보다 미세하게 모자라는 걸 막으려고 아주
+    # 조금 더 밀어낸다.
     push_distance = min_separation_m * (1.0 + 1e-9) + 1e-9
     return driving_point + direction * push_distance
