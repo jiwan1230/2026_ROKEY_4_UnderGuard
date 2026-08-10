@@ -185,6 +185,12 @@ class DetectorNode(Node):
         # opening bbox와 trap bbox가 이 비율(IoU) 이상 겹쳐야 인정한다.
         self.trap_overlap_ratio = self.declare_parameter(
             'trap_overlap_ratio', 0.6).value
+        # bbox가 안 겹쳐도(각도상 옆에서 보면 겹쳐 보이지 않을 수 있음) trap과
+        # opening의 실측 map좌표가 이 거리(m) 안이면 설치된 것으로 인정한다.
+        # trap_check_node의 trap_ok_dist(0.25)보다 살짝 여유를 둔다 — 이 판정은
+        # 순찰 중 더 먼 거리에서 재는 depth라 오차가 더 클 수 있어서.
+        self.trap_attach_dist = self.declare_parameter(
+            'trap_attach_dist', 0.35).value
         self.approach_dist = self.declare_parameter('approach_dist', 0.8).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.27).value
         # 이번 순찰에 이미 확인한 구멍을 또 점검하러 가지 않게 한다(순찰 진행).
@@ -235,6 +241,7 @@ class DetectorNode(Node):
         self._approach_reason = 'new'     # 도착 후 분기 ('new'=검증부터, 'recheck'=검증 생략, 실측 재확인)
         self.verify_count = 0
         self.hole = None        # 점검 대상 구멍의 map 좌표 (INSPECTING/재설치용)
+        self._last_trap_xy = None  # 가장 최근 INSPECTING에서 실측한 trap map좌표
         self.reinstall_count = 0  # trap_bad/미검출로 인한 재설치 횟수
         self.done_holes = []      # 이번 순찰에 확인 끝낸 구멍 좌표들 — PATROL에 초기화
         # 쥐 추적 판정기 (포획/놓침). tracking True일 때만 굴린다.
@@ -255,6 +262,9 @@ class DetectorNode(Node):
         self.hold_pub = self.create_publisher(Bool, 'patrol_hold', 10)
         # trap 설치/점검 지시 — trap_check가 받아 주행/판정만 한다.
         self.job_pub = self.create_publisher(TrapJob, 'trap_job', 10)
+        # trap_ok로 확정된 실좌표를 db_node에 등록 — 다음엔 db 기록만으로
+        # (bbox가 각도상 안 겹쳐도) 재확인 없이 넘어갈 수 있게.
+        self.trap_coord_pub = self.create_publisher(String, '/db/trap_coord', 10)
         # 탐색 회전용 직접 주행 — Nav2 goal로는 회전 속도를 못 정해서 cmd_vel.
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         # 탐색 회전 전 진행 중인 Nav2 goal을 끊어달라는 신호 (robot_agent 구독).
@@ -457,14 +467,18 @@ class DetectorNode(Node):
         이미 처리 끝난 구멍을 매번 다시 approach→inspect→복귀하느라 순찰이
         같은 자리만 맴도는 무한 루프가 된다.
 
-        그래서 접근 전에: (1) trap이 이 opening bbox와 실제로 겹치는지
-        (bbox_iou, 무관한 다른 trap에 속지 않게)를 지금 프레임에서 미리
-        계산해두고, (2) db 조회(_precheck_hole)로 신구를 나눈다 — db에
-        없는 새 구멍이면 trap 겹침 여부와 무관하게(당연히 아직 없을 테니)
-        예전처럼 접근→검증→설치로, db에 있는 기존 구멍이면 db 기록 또는
-        bbox 겹침 중 하나라도 trap이 있다고 하면 접근 없이 순찰 계속,
-        둘 다 아니면(각도 때문에 bbox만 안 겹쳐 보이는 경우가 있어) 검증
-        없이 다가가서 trap 좌표를 실측해 다시 확인한다.
+        그래서 접근 전에: (1) trap이 이 opening과 실제로 짝인지를 지금
+        프레임에서 미리 판단해두고, (2) db 조회(_precheck_hole)로 신구를
+        나눈다 — db에 없는 새 구멍이면 trap 판단과 무관하게(당연히 아직
+        없을 테니) 예전처럼 접근→검증→설치로, db에 있는 기존 구멍이면 db
+        기록 또는 지금 판단 중 하나라도 trap이 있다고 하면 접근 없이 순찰
+        계속, 둘 다 아니면 검증 없이 다가가서 trap 좌표를 실측해 다시
+        확인한다.
+
+        (1)의 trap 판단은 두 단계다: 먼저 bbox_iou(빠르고 저렴, 무관한 다른
+        trap에 안 속음). 겹침이 없어도 각도 때문일 수 있으니, trap bbox가
+        보이면 그 실측 map좌표도 opening과의 거리로 한 번 더 본다(각도에
+        안 좌우됨) — 두 판단 중 하나라도 맞으면 설치된 것으로 인정한다.
         """
         xy = self._box_to_map(box, img_shape, depth, depth_frame, wall=True)
         if xy is None:
@@ -472,8 +486,17 @@ class DetectorNode(Node):
         if already_done(xy, self.done_holes, self.done_hole_dist):
             return          # 이번 순찰에 이미 확인한 구멍 — 무시 (순찰 진행)
         trap_box = self._pick(result, 'trap', img_shape, self.trap_conf)
-        trap_ok_now = (trap_box is not None
-                       and bbox_iou(box, trap_box) >= self.trap_overlap_ratio)
+        trap_ok_now = False
+        if trap_box is not None:
+            if bbox_iou(box, trap_box) >= self.trap_overlap_ratio:
+                trap_ok_now = True
+            else:
+                trap_xy = self._box_to_map(trap_box, img_shape, depth,
+                                           depth_frame, wall=False)
+                trap_ok_now = (trap_xy is not None
+                               and math.hypot(xy[0] - trap_xy[0],
+                                              xy[1] - trap_xy[1])
+                               <= self.trap_attach_dist)
         self._precheck_hole(xy, depth_frame, trap_ok_now)
 
     def _precheck_hole(self, xy, depth_frame, trap_ok_now):
@@ -883,6 +906,7 @@ class DetectorNode(Node):
         if xy is None:
             self._inspect_miss('trap 좌표 실패')
             return
+        self._last_trap_xy = xy             # trap_ok로 확정되면 db 등록에 씀
         job = self._make_job('inspect', self.hole, trap=xy)
         self.job_pub.publish(job)           # 판정은 trap_check → trap_ok/bad 이벤트
         self.state = 'AWAIT_TRAP'           # trap_ok/bad 이벤트 대기
@@ -930,6 +954,8 @@ class DetectorNode(Node):
         name, x, y = fleet_msg.parse_event(msg.data)
         if self.sweeping:               # 순회 점검 — 결과 기록만, 재설치 없이 다음 구멍
             if name in ('trap_ok', 'trap_bad'):
+                if name == 'trap_ok':
+                    self._register_trap_coord()
                 self.get_logger().info(f'구멍 점검 결과 {name} — 다음 구멍')
                 self._next_sweep_hole()
             return
@@ -938,10 +964,24 @@ class DetectorNode(Node):
             self.verify_count = 0
         elif name == 'trap_ok':
             self.get_logger().info('점검 정상 — 순찰 재개')
+            self._register_trap_coord()
             self._finish_opening()
         elif name == 'trap_bad':
             self.get_logger().info('설치 이상 — 재설치')
             self._reinstall()
+
+    def _register_trap_coord(self):
+        """trap_ok로 확정된 순간의 (구멍, trap) 실좌표를 db_node에 등록.
+
+        다음에 이 구멍을 다시 만났을 때 db의 trap_installed 기록만으로
+        (bbox가 각도상 안 겹쳐도) 실측 재확인 없이 넘어갈 수 있게 해둔다.
+        """
+        if self.hole is None or self._last_trap_xy is None:
+            return
+        msg = String(data=fleet_msg.trap_coord(
+            self.hole[0], self.hole[1],
+            self._last_trap_xy[0], self._last_trap_xy[1]))
+        self.trap_coord_pub.publish(msg)
 
     def _make_job(self, phase, hole, trap=(0.0, 0.0)):
         job = TrapJob()

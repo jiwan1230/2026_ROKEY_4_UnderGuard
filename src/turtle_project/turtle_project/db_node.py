@@ -40,7 +40,13 @@ class DbNode(Node):
         self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.execute(
             'CREATE TABLE IF NOT EXISTS holes ('
-            'id INTEGER PRIMARY KEY, x REAL, y REAL, trap_installed INTEGER)')
+            'id INTEGER PRIMARY KEY, x REAL, y REAL, trap_installed INTEGER, '
+            'trap_x REAL, trap_y REAL)')
+        # 기존(옛 스키마) db 파일엔 trap_x/trap_y가 없을 수 있음 — 있으면 추가.
+        cols = {row[1] for row in self.conn.execute('PRAGMA table_info(holes)')}
+        for col in ('trap_x', 'trap_y'):
+            if col not in cols:
+                self.conn.execute(f'ALTER TABLE holes ADD COLUMN {col} REAL')
         self.conn.commit()
 
         self.srv = self.create_service(QueryHole, '/db/query_hole', self.query)
@@ -48,6 +54,9 @@ class DbNode(Node):
         self.list_srv = self.create_service(
             ListHoles, '/db/list_holes', self.list_holes)
         self.create_subscription(String, '/fleet/event', self.event_cb, 10)
+        # trap_ok로 확정된 순간의 trap 실좌표 — 각도 때문에 bbox가 안 겹쳐도
+        # 다음엔 이 좌표(또는 trap_installed 플래그)로 재확인을 건너뛸 수 있게.
+        self.create_subscription(String, '/db/trap_coord', self.trap_coord_cb, 10)
         n = len(self._load())
         self.get_logger().info(
             f'DB 노드 시작 ({db_path}, 구멍 {n}개) — 조회 + opening/trap 저장')
@@ -88,6 +97,24 @@ class DbNode(Node):
         self.conn.commit()
         self.get_logger().info(
             f'trap 상태 갱신 ({hx:.2f}, {hy:.2f}) → {installed}')
+
+    def trap_coord_cb(self, msg):
+        hole_x, hole_y, trap_x, trap_y = fleet_msg.parse_trap_coord(msg.data)
+        self._store_trap_coord(hole_x, hole_y, trap_x, trap_y)
+
+    def _store_trap_coord(self, hole_x, hole_y, trap_x, trap_y):
+        """확인된 trap 실좌표를 연결된 구멍 행에 저장."""
+        holes = self._load()
+        i, d = nearest(holes, hole_x, hole_y)
+        if i is None or d > self.match_dist:
+            return           # 아는 구멍 아님 — 무시
+        hx, hy, _ = holes[i]
+        self.conn.execute(
+            'UPDATE holes SET trap_x=?, trap_y=? WHERE x=? AND y=?',
+            (trap_x, trap_y, hx, hy))
+        self.conn.commit()
+        self.get_logger().info(
+            f'trap 좌표 저장 ({hx:.2f}, {hy:.2f}) → trap ({trap_x:.2f}, {trap_y:.2f})')
 
     def list_holes(self, req, resp):
         """저장된 모든 구멍 좌표 반환 (trap 유무 무관 — B가 다 점검한다)."""
@@ -147,6 +174,18 @@ def _self_check():
     rows = [(x, y, bool(t)) for x, y, t in
             conn.execute('SELECT x, y, trap_installed FROM holes')]
     assert rows == [(1.0, 2.0, True)]
+
+    # 옛 스키마(trap_x/trap_y 없음) db에 컬럼을 뒤늦게 추가하는 마이그레이션 경로
+    cols = {row[1] for row in conn.execute('PRAGMA table_info(holes)')}
+    assert 'trap_x' not in cols
+    for col in ('trap_x', 'trap_y'):
+        conn.execute(f'ALTER TABLE holes ADD COLUMN {col} REAL')
+    conn.commit()
+    conn.execute('UPDATE holes SET trap_x=?, trap_y=? WHERE x=? AND y=?',
+                 (1.05, 2.02, 1.0, 2.0))
+    conn.commit()
+    tx, ty = conn.execute('SELECT trap_x, trap_y FROM holes').fetchone()
+    assert abs(tx - 1.05) < 1e-9 and abs(ty - 2.02) < 1e-9
     print('db_node self-check ok')
 
 
