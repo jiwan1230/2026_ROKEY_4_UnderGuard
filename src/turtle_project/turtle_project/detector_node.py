@@ -156,6 +156,8 @@ class DetectorNode(Node):
         # trap 점검도 구멍 코앞(0.8m)에서 하므로 close-up 스케일로 확신도가 낮다.
         # 모델 바닥값(0.4) 이상은 화면에 그려지는데 conf(0.6)로 거르면 조용히 미검출.
         self.trap_conf = self.declare_parameter('trap_conf', 0.4).value
+        # rat은 오탐이 추적 출동으로 직결되니 기본(0.6)보다 높은 문턱을 쓴다.
+        self.rat_conf = self.declare_parameter('rat_conf', 0.75).value
         self.approach_dist = self.declare_parameter('approach_dist', 0.8).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.27).value
         # 이번 순찰에 이미 확인한 구멍을 또 점검하러 가지 않게 한다(순찰 진행).
@@ -321,7 +323,7 @@ class DetectorNode(Node):
         TRACK 모드(self.tracking)일 때만 포획/놓침을 판정한다. 순찰 중 우연히
         쥐가 보이면 rat_detected만 쏴 central이 쥐대응을 시작하게 한다.
         """
-        box = self._pick(result, 'rat', img_shape)
+        box = self._pick(result, 'rat', img_shape, self.rat_conf)
         if box is None:
             return
         xy = self._box_to_map(box, img_shape, depth, depth_frame)
