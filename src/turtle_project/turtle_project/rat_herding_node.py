@@ -19,22 +19,19 @@ robot1_goal을 구독해도 플랜 A에서는 아무도 발행하지 않아 콜�
 
 주의(플랜 B 전용): 플랜 B에서는 로봇 A의 target_pose를 detector_node도
 쓴다(추적 goal을 rat_goal_period마다 발행). 같은 토픽에 둘이 쏘면 로봇이
-"쥐한테 다가가라"(detector)와 "쥐 반대편으로 가라"(우리)를 번갈아 받아
-진동한다. HERD 세션 중에는 detector가 target_pose 발행을 멈추도록 로봇
-파트와 조율이 끝나야 플랜 B를 켤 수 있다.
+진동하므로, 로봇 A의 detector를 `-p plan:=b`로 띄워 추적 goal 발행을 꺼야
+한다 (detector에 훅 반영 완료 — 2026-08-10).
 
-주의: 로봇 pose는 fleet_msg 프로토콜에 없어서 TF에서 직접 조회한다
-(detector_node.py::robot_xy()와 같은 패턴). map 프레임 기준 각 로봇의
-base_link 프레임 이름은 `robot_frame_template` 파라미터로 뺐다 — 기본값
-`{robot}/base_link`은 이 저장소의 네임스페이스 관례(`{ns}/...`)를 따른
-가정이며, 실제 Nav2/AMCL launch 설정과 다를 수 있으니 실기 연동 전에
-반드시 팀원과 확인해야 한다.
+주의: 로봇 pose는 fleet_msg 프로토콜에 없어서 각 로봇의 amcl_pose(map
+프레임)를 구독해 최신값을 재발행한다. TF 조회 방식은 이 노드가 도는 중앙
+PC에서 로봇 TF(네임스페이스 토픽 /robotN/tf)가 아예 안 보여 폐기했다
+(2026-08-10). amcl_pose는 로봇이 움직일 때만 갱신되지만, 정지 중엔 마지막
+값이 그대로 유효하므로 문제없다.
 """
 import rclpy
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from rclpy.node import Node
 from std_msgs.msg import String
-from tf2_ros import Buffer, TransformException, TransformListener
 
 from turtle_project import fleet_msg
 
@@ -45,8 +42,6 @@ class RatHerdingNode(Node):
 
     def __init__(self):
         super().__init__('rat_herding_node')
-        self.robot_frame_template = self.declare_parameter(
-            'robot_frame_template', '{robot}/base_link').value
         control_rate_hz = self.declare_parameter('control_rate_hz', 5.0).value
 
         self.robot_a = None      # TRACK 명령 받은 로봇 (추적 = Driver)
@@ -55,9 +50,10 @@ class RatHerdingNode(Node):
         # robot1_goal이 아예 안 오므로 relay_a는 만들어져도 쓰이지 않는다.
         self.relay_a = None
         self.relay_b = None
-
-        self.tf = Buffer()
-        TransformListener(self.tf, self)
+        self.pose_a = None       # 각 로봇의 마지막 amcl_pose (PoseStamped)
+        self.pose_b = None
+        self.sub_a = None        # 로봇별 amcl_pose 구독 — 배정 시 생성
+        self.sub_b = None
 
         # herding_controller의 HerdingNode가 구독하는 입력 3종 (~/target_pose 등,
         # 이 노드가 'herding_controller' 네임스페이스로 리맵돼 실행된다고 가정).
@@ -81,11 +77,13 @@ class RatHerdingNode(Node):
             self.robot_a = robot
             self.relay_a = self.create_publisher(
                 PoseStamped, f'{robot}/target_pose', 10)
+            self.sub_a = self._resub(self.sub_a, robot, self._pose_a_cb)
             self.get_logger().info(f'robot A(추적) = {robot} — goal relay 대상')
         elif cmd == 'HERD' and robot != self.robot_b:
             self.robot_b = robot
             self.relay_b = self.create_publisher(
                 PoseStamped, f'{robot}/target_pose', 10)
+            self.sub_b = self._resub(self.sub_b, robot, self._pose_b_cb)
             self.get_logger().info(f'robot B(몰이) = {robot} — goal relay 대상')
 
     def event_cb(self, msg):
@@ -113,30 +111,31 @@ class RatHerdingNode(Node):
         self.relay_b.publish(msg)
 
     def _publish_robot_poses(self):
-        """robot_a/robot_b가 정해져 있으면 TF에서 각자 위치를 조회해 발행."""
-        if self.robot_a is not None:
-            pose = self._lookup_robot_pose(self.robot_a)
-            if pose is not None:
-                self.robot1_pose_pub.publish(pose)
-        if self.robot_b is not None:
-            pose = self._lookup_robot_pose(self.robot_b)
-            if pose is not None:
-                self.robot2_pose_pub.publish(pose)
+        """저장된 최신 amcl_pose를 herding 입력으로 재발행 (control_rate_hz)."""
+        if self.pose_a is not None:
+            self.robot1_pose_pub.publish(self.pose_a)
+        if self.pose_b is not None:
+            self.robot2_pose_pub.publish(self.pose_b)
 
-    def _lookup_robot_pose(self, robot):
-        frame = self.robot_frame_template.format(robot=robot)
-        try:
-            t = self.tf.lookup_transform(MAP_FRAME, frame, rclpy.time.Time())
-        except TransformException as e:
-            self.get_logger().warn(f'TF 실패 ({frame}): {e}', throttle_duration_sec=5.0)
-            return None
-        msg = PoseStamped()
-        msg.header.frame_id = MAP_FRAME
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.pose.position.x = t.transform.translation.x
-        msg.pose.position.y = t.transform.translation.y
-        msg.pose.orientation = t.transform.rotation
-        return msg
+    def _resub(self, old, robot, cb):
+        """로봇 (재)배정 — 이전 구독 정리 후 그 로봇의 amcl_pose 구독."""
+        if old is not None:
+            self.destroy_subscription(old)
+        return self.create_subscription(
+            PoseWithCovarianceStamped, f'{robot}/amcl_pose', cb, 10)
+
+    def _pose_a_cb(self, msg):
+        self.pose_a = self._to_pose_stamped(msg)
+
+    def _pose_b_cb(self, msg):
+        self.pose_b = self._to_pose_stamped(msg)
+
+    @staticmethod
+    def _to_pose_stamped(msg):
+        out = PoseStamped()
+        out.header = msg.header
+        out.pose = msg.pose.pose
+        return out
 
     def _make_pose(self, x, y):
         msg = PoseStamped()

@@ -157,7 +157,7 @@ class DetectorNode(Node):
         # 모델 바닥값(0.4) 이상은 화면에 그려지는데 conf(0.6)로 거르면 조용히 미검출.
         self.trap_conf = self.declare_parameter('trap_conf', 0.4).value
         # rat은 오탐이 추적 출동으로 직결되니 기본(0.6)보다 높은 문턱을 쓴다.
-        self.rat_conf = self.declare_parameter('rat_conf', 0.75).value
+        self.rat_conf = self.declare_parameter('rat_conf', 0.85).value
         self.approach_dist = self.declare_parameter('approach_dist', 0.8).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.27).value
         # 이번 순찰에 이미 확인한 구멍을 또 점검하러 가지 않게 한다(순찰 진행).
@@ -334,16 +334,20 @@ class DetectorNode(Node):
             self.event_pub.publish(String(data=fleet_msg.event(
                 'rat_detected', *xy)))
             return
-        # 추적 중 — 쥐 위치로 추적 goal 발행 + 포획 판정. robot_agent가 target_pose를
-        # 받아 실제로 몬다. 매 프레임 쏘면 goal 폭주라 rat_goal_period마다 한 번만.
+        # 추적 중 — 포획 판정은 항상, goal/이벤트는 rat_goal_period마다 한 번만
+        # (매 프레임 쏘면 goal 폭주·이벤트 스팸). robot_agent가 target_pose를 받아
+        # 실제로 몬다.
         if self.spin_until is not None:     # 탐색 회전 중 재발견 — 즉시 회전 정지
             self._stop_spin('탐색 회전 중 쥐 재발견 — 추적 재개')
         now = self._now()
         if now - self._last_rat_goal >= self.rat_goal_period:
+            # 몰이 알고리즘의 쥐 위치 입력 — 추적 시작 후에도 끊기면 안 된다.
+            self.event_pub.publish(String(data=fleet_msg.event(
+                'rat_detected', *xy)))
             self.pose_pub.publish(make_pose(FRAME, xy[0], xy[1], 0.0))
             self._last_rat_goal = now
             self.get_logger().info(
-                f'쥐 ({xy[0]:.2f}, {xy[1]:.2f}) 추적 goal 발행',
+                f'쥐 ({xy[0]:.2f}, {xy[1]:.2f}) 위치 갱신 — 추적 goal 발행',
                 throttle_duration_sec=1.0)
         if self.rat.seen(xy[0], xy[1], now):
             self.get_logger().info(f'쥐 포획 판정 ({xy[0]:.2f}, {xy[1]:.2f})')

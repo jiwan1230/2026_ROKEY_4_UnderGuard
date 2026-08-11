@@ -28,6 +28,9 @@ def generate_launch_description():
         Node(package='turtle_project', executable='db_node', name='db_node'),
         Node(package='turtle_project', executable='webcam_node', name='webcam_node'),
         Node(package='turtle_project', executable='rat_herding_node', name='rat_herding_node'),
+        # /map: central엔 전역 맵 토픽이 없다 — robot4의 map_server 것을 쓴다
+        # (두 로봇 같은 맵). 없어도 돌지만 장애물 없음 취급이라 벽 뚫는 경로가 나온다.
         Node(package='turtle_project', executable='herding_node',
-             name='herding_controller', parameters=[params]),
+             name='herding_controller', parameters=[params],
+             remappings=[('/map', '/robot4/map')]),
     ])
