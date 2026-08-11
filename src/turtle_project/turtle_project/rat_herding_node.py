@@ -72,7 +72,12 @@ class RatHerdingNode(Node):
 
     def command_cb(self, msg):
         """TRACK 대상 = 로봇A(Driver), HERD 대상 = 로봇B(Blocker)."""
-        robot, cmd = fleet_msg.parse_command(msg.data)
+        parsed = fleet_msg.try_parse_command(msg.data)
+        if parsed is None:
+            self.get_logger().warn(f'잘못된 명령 무시: {msg.data!r}',
+                                   throttle_duration_sec=5.0)
+            return
+        robot, cmd = parsed
         if cmd == 'TRACK' and robot != self.robot_a:
             self.robot_a = robot
             self.relay_a = self.create_publisher(
@@ -88,7 +93,12 @@ class RatHerdingNode(Node):
 
     def event_cb(self, msg):
         """쥐 위치를 herding_controller가 원하는 target_pose로 그대로 변환·발행."""
-        name, x, y = fleet_msg.parse_event(msg.data)
+        parsed = fleet_msg.try_parse_event(msg.data)
+        if parsed is None:
+            self.get_logger().warn(f'잘못된 이벤트 무시: {msg.data!r}',
+                                   throttle_duration_sec=5.0)
+            return
+        name, x, y = parsed
         if name != 'rat_detected':
             return
         self.target_pub.publish(self._make_pose(x, y))

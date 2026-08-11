@@ -43,6 +43,11 @@ STATE_TO_ROLE = {
     'SWEEPING': 'SWEEP', 'RETURNING': 'RETURN',
 }
 
+# 종료 이벤트(rat_captured/lost)가 유실되면 사건이 영원히 열린 채 남아 다음
+# 사건까지 흡수한다(incident_id 가드) — 이 시간 넘게 미종결인 사건은 새
+# rat_detected가 왔을 때 LOST로 닫고 새로 연다. 실제 쥐대응은 수 분 안에 끝난다.
+STALE_INCIDENT_SECS = 600.0
+
 
 def jsonable(v):
     """json이 모르는 DB 타입만 바꾼다 — DATETIME은 문자열, Decimal(AVG 결과)은 float."""
@@ -192,7 +197,12 @@ class DbNode(Node):
     # ---------- /fleet/event (기존 포맷 그대로, 분기만 확장) ----------
 
     def event_cb(self, msg):
-        name, x, y = fleet_msg.parse_event(msg.data)
+        parsed = fleet_msg.try_parse_event(msg.data)
+        if parsed is None:
+            self.get_logger().warn(f'잘못된 이벤트 무시: {msg.data!r}',
+                                   throttle_duration_sec=5.0)
+            return
+        name, x, y = parsed
         if name == 'opening_confirmed':
             self._store_opening(x, y)
         elif name in ('trap_ok', 'trap_bad'):
@@ -257,9 +267,17 @@ class DbNode(Node):
     def _start_incident(self, x, y):
         """rat_detected — 이미 진행 중인 사건이 있으면 무시. detector가 같은 쥐를
         여러 프레임 연속으로 rat_detected 쏘는 동안(중앙 응답 전) 사건이 여러 개
-        생기지 않게 막는 가드 — central_node의 rat_mode와 동일한 원리다."""
+        생기지 않게 막는 가드 — central_node의 rat_mode와 동일한 원리다.
+        단, 종료 이벤트가 유실돼 STALE_INCIDENT_SECS 넘게 열려 있는 사건은
+        여기서 LOST로 닫고 새 사건을 연다 (가드가 실제 사건을 영영 먹는 것 방지)."""
         if self.incident_id is not None:
-            return
+            started = self.incident_started or self._now()
+            if self._now() - started < STALE_INCIDENT_SECS:
+                return
+            self.get_logger().warn(
+                f'사건 #{self.incident_id} {STALE_INCIDENT_SECS:.0f}초 넘게 '
+                '미종결 — LOST로 닫고 새 사건 시작')
+            self._end_incident('LOST', x, y)
         self.incident_started = self._now()
         self.incident_id = self._run(
             'INSERT INTO incident (first_detected_at, first_x, first_y, severity, '
@@ -298,7 +316,12 @@ class DbNode(Node):
         """robot_agent가 실제로 도달한 state로 미션을 관리한다. 명령(/fleet/
         command) 기준으로 하면 undock 후 자동 순찰처럼 명령 없이 일어나는 전이를
         놓친다 — 상태머신/명령 흐름은 안 건드리고 보고만 관찰한다."""
-        robot, state, _battery = fleet_msg.parse_status(msg.data)
+        parsed = fleet_msg.try_parse_status(msg.data)
+        if parsed is None:
+            self.get_logger().warn(f'잘못된 status 무시: {msg.data!r}',
+                                   throttle_duration_sec=5.0)
+            return
+        robot, state, _battery = parsed
         role = STATE_TO_ROLE.get(state)
         open_ = self.open_mission.get(robot)
         now = self._now()

@@ -118,7 +118,12 @@ class RobotAgent(Node):
         self.get_logger().info(f'{self.ns} agent 시작 — 임계 {self.threshold}%')
 
     def command_cb(self, msg):
-        robot, cmd = fleet_msg.parse_command(msg.data)
+        parsed = fleet_msg.try_parse_command(msg.data)
+        if parsed is None:
+            self.get_logger().warn(f'잘못된 명령 무시: {msg.data!r}',
+                                   throttle_duration_sec=5.0)
+            return
+        robot, cmd = parsed
         if robot != self.ns:
             return                          # 내 명령 아님
         self.get_logger().info(f'명령 수신: {cmd}')

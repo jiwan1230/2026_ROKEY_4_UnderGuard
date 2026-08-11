@@ -117,7 +117,12 @@ class CentralNode(Node):
         STOP: 전 로봇 STOP 발행 + 대기 모드 복귀. started를 안 끄면 커버리지
         로직이 몇 초 뒤 IDLE 로봇을 도로 순찰 투입시키므로 반드시 같이 끈다.
         """
-        robot, cmd = fleet_msg.parse_command(msg.data)
+        parsed = fleet_msg.try_parse_command(msg.data)
+        if parsed is None:
+            self.get_logger().warn(f'잘못된 명령 무시: {msg.data!r}',
+                                   throttle_duration_sec=5.0)
+            return
+        robot, cmd = parsed
         if robot != 'system':
             return                      # 로봇 개별 명령 (자기 발행 echo 포함) — 무시
         if cmd == 'START' and not self.started:
@@ -134,7 +139,12 @@ class CentralNode(Node):
             self.get_logger().info('시스템 정지 — 전 로봇 STOP, 대기 모드 복귀')
 
     def status_cb(self, msg):
-        robot, state, battery = fleet_msg.parse_status(msg.data)
+        parsed = fleet_msg.try_parse_status(msg.data)
+        if parsed is None:
+            self.get_logger().warn(f'잘못된 status 무시: {msg.data!r}',
+                                   throttle_duration_sec=5.0)
+            return
+        robot, state, battery = parsed
         prev = self.robots.get(robot)
         self.robots[robot] = (state, battery)
         self.last_seen[robot] = self._now()
@@ -197,7 +207,12 @@ class CentralNode(Node):
         return any(s == 'PATROLLING' for s, _ in self.robots.values())
 
     def event_cb(self, msg):
-        name, x, y = fleet_msg.parse_event(msg.data)
+        parsed = fleet_msg.try_parse_event(msg.data)
+        if parsed is None:
+            self.get_logger().warn(f'잘못된 이벤트 무시: {msg.data!r}',
+                                   throttle_duration_sec=5.0)
+            return
+        name, x, y = parsed
         self.get_logger().info(f'이벤트 {name} at ({x:.2f}, {y:.2f})')
         if not self.started:
             return                      # 시스템 시작 전 — 쥐대응 등 조율 보류
@@ -244,16 +259,17 @@ class CentralNode(Node):
         self.send(robot_b, 'HERD')
 
     def _end_rat(self, caught):
-        """포획/놓침 -> 쥐대응 종료. B 먼저 도킹, A는 B가 도킹 완료하면 순찰 복귀.
+        """포획/놓침 -> 쥐대응 종료. A는 STOP(정지 대기), B는 도킹.
 
-        detector가 포획(rat_captured)/놓침(rat_lost)을 판정해 보내면 여기서
-        받는다. A에게 PATROL을 여기서 바로 보내지 않는다 — B가 DOCKED로
-        '전이'하면 기존 교대 로직(status_cb의 _TRANSITIONS)이 아무도 순찰
-        중이 아님을 보고 A를 순찰 투입한다. patroller를 비워두는 것이 가드다:
-        B 복귀 중 쥐가 다시 보여도 assign_roles(None,..)이 배정 불가라
-        쥐대응이 재트리거되지 않는다 (A가 PATROLLING을 보고하면 다시 채워짐).
-        # ponytail: B 도킹 실패(IDLE 종료)면 DOCKED 전이가 없어 A가 대기 상태로
-        # 남는다 — 그땐 수동 PATROL 필요. 자동 복구가 필요해지면 타임아웃 추가.
+        A에게 PATROL을 바로 보내지 않는 이유: 놓친 쥐 근처를 계속 돌면
+        재감지 루프가 생긴다. 대신 STOP — robot_agent가 IDLE로 돌아가고
+        detector는 무기한 mute가 걸린다(명령 대기 중 감지 불필요).
+        정상 경로: B가 DOCKED로 전이하면 교대 로직(status_cb)이 A를 순찰
+        투입. B 도킹 실패(IDLE 종료) 시에도 A·B 모두 IDLE이라
+        _ensure_coverage가 한 대를 다시 투입한다 — 어느 경로든 자동 복구.
+        patroller를 비워두는 것이 재트리거 가드: B 복귀 중 쥐가 다시 보여도
+        assign_roles(None,..)이 배정 불가라 쥐대응이 재트리거되지 않는다
+        (A가 PATROLLING을 보고하면 다시 채워짐).
         """
         if not self.rat_mode:
             return                      # 쥐대응 중 아님 — 무시 (중복 이벤트)
@@ -264,7 +280,11 @@ class CentralNode(Node):
         self.patroller = None
         result = '포획 성공' if caught else '놓침'
         self.get_logger().info(
-            f'쥐대응 종료 ({result}) — {robot_b} 도킹, 완료되면 {robot_a} 순찰 재개')
+            f'쥐대응 종료 ({result}) — {robot_a} 정지, {robot_b} 도킹 '
+            '(B 도킹 완료 시 A 순찰 재개)')
+        # A를 TRACKING인 채 두면 coverage_action이 busy로 오판해 B 도킹 실패 시
+        # 복구가 영구 정지한다 — STOP으로 IDLE에 되돌리는 것이 복구의 전제.
+        self.send(robot_a, 'STOP')
         self.send(robot_b, 'DOCK')
 
     def send(self, robot, cmd):
@@ -323,6 +343,9 @@ def _self_check():
     # 구멍 순회 점검 중(SWEEPING)도 busy — 다른 로봇을 또 깨우지 않는다
     assert coverage_action({'robot4': ('SWEEPING', 90), 'robot6': ('DOCKED', 100)}, None) is None
     assert coverage_action({'robot4': ('IDLE', 50)}, None) == 'robot4'  # 대기뿐 → 후보
+    # 쥐대응 종료 후 B 도킹 실패 — A(STOP)·B(도킹 실패) 둘 다 IDLE이면 복구 투입
+    assert coverage_action({'robot4': ('IDLE', 50), 'robot6': ('IDLE', 40)},
+                           None) in ('robot4', 'robot6')
     assert coverage_action({}, None) is None                            # 로봇 없음 → None
     # waking이 (robot, 시각) 튜플이어도 '깨우는 중' 판정은 그대로 동작
     assert coverage_action(both_docked, ('robot4', 100.0)) is None

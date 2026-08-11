@@ -182,8 +182,8 @@ class DetectorNode(Node):
         # 루프를 끊는다 — 로봇이 그 지점을 벗어날 시간만큼 주면 된다.
         self.patrol_mute_secs = self.declare_parameter(
             'patrol_resume_mute_secs', 20.0).value
-        # 감지 정지 시한 — PATROL은 patrol_mute_secs만큼, DOCK은 무기한
-        # (다음 임무 명령까지). 0이면 정지 아님. synced_cb가 참조.
+        # 감지 정지 시한 — PATROL·UNDOCK은 patrol_mute_secs만큼, STOP·DOCK은
+        # 무기한 (다음 임무 명령까지). 0이면 정지 아님. synced_cb가 참조.
         self.mute_until = 0.0
         # 디버그 창 (show:=true). headless/SSH에선 imshow가 터지므로 기본 off.
         self.show = self.declare_parameter('show', False).value
@@ -592,10 +592,17 @@ class DetectorNode(Node):
 
         쥐대응 종료 명령(PATROL/STOP/DOCK)이 오면 추적·순회를 모두 끄고,
         복귀 구간의 YOLO도 끈다(mute) — 놓친 쥐를 그 자리에서 재감지해 쥐대응이
-        무한 재트리거되는 루프 방지. PATROL은 patrol_mute_secs 뒤 자동 재개,
-        DOCK은 무기한(도킹/대기 중 감지 불필요), 임무(TRACK/SWEEP/HERD)는 즉시 재개.
+        무한 재트리거되는 루프 방지. PATROL·UNDOCK은 patrol_mute_secs 뒤 자동
+        재개, STOP·DOCK은 무기한(정지·도킹 중 감지 불필요 — 켜두면 그 자리
+        재감지가 db_node에 응답자 없는 유령 사건을 연다), 임무(TRACK/SWEEP/
+        HERD)는 즉시 재개.
         """
-        robot, cmd = fleet_msg.parse_command(msg.data)
+        parsed = fleet_msg.try_parse_command(msg.data)
+        if parsed is None:
+            self.get_logger().warn(f'잘못된 명령 무시: {msg.data!r}',
+                                   throttle_duration_sec=5.0)
+            return
+        robot, cmd = parsed
         if robot != self.robot_id:
             return                  # 내 로봇 명령 아님 (robot6용 TRACK 등)
         if cmd in ('TRACK', 'SWEEP', 'HERD'):
@@ -629,6 +636,11 @@ class DetectorNode(Node):
             elif cmd == 'DOCK':
                 self.mute_until = math.inf   # 도킹 복귀 — 다음 임무까지 감지 정지
                 self.get_logger().info('DOCK 수신 — YOLO 정지 (다음 임무까지)')
+            elif cmd == 'STOP':
+                # 정지 대기 — 감지를 켜두면 놓친 쥐를 그 자리에서 재감지해
+                # central은 무시해도 db_node가 유령 사건을 연다. 임무 명령이 풀어줌.
+                self.mute_until = math.inf
+                self.get_logger().info('STOP 수신 — YOLO 정지 (다음 임무까지)')
 
     def lost_tick(self):
         """추적 놓침 감시 — 안 보이면 제자리 탐색 회전부터, 그래도 없으면 rat_lost.
