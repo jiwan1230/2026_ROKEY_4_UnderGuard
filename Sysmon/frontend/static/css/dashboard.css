@@ -265,3 +265,10 @@ body.history-mode #view-history{height:auto!important;overflow:visible!important
 .system-button.start:hover{background:rgba(50,215,75,.12)}
 .system-button.stop{border-color:rgba(255,69,58,.5);color:var(--danger)}
 .system-button.stop:hover{background:rgba(255,69,58,.12)}
+
+/* 로봇 상태 패널을 flex 세로 배치로 — robot-list가 패널을 꽉 채워
+   system-controls가 overflow:hidden에 잘리는 문제 해결 (버튼이 항상 하단 고정). */
+.robot-panel{display:flex;flex-direction:column}
+.robot-panel .panel-title{flex:0 0 auto}
+.robot-panel .robot-list{flex:1 1 auto;height:auto;min-height:0;overflow:auto}
+.system-controls{flex:0 0 auto}
