@@ -244,11 +244,16 @@ class CentralNode(Node):
         self.send(robot_b, 'HERD')
 
     def _end_rat(self, caught):
-        """포획/놓침 -> 쥐대응 종료. A는 순찰 복귀, B는 도킹 복귀.
+        """포획/놓침 -> 쥐대응 종료. B 먼저 도킹, A는 B가 도킹 완료하면 순찰 복귀.
 
         detector가 포획(rat_captured)/놓침(rat_lost)을 판정해 보내면 여기서
-        받는다. 어느 쪽이든 쥐대응은 끝 — A는 다시 순찰, B는 원래 쉬던 로봇이라
-        도킹으로 돌아가 '한 대씩 순찰' 상태로 복귀한다.
+        받는다. A에게 PATROL을 여기서 바로 보내지 않는다 — B가 DOCKED로
+        '전이'하면 기존 교대 로직(status_cb의 _TRANSITIONS)이 아무도 순찰
+        중이 아님을 보고 A를 순찰 투입한다. patroller를 비워두는 것이 가드다:
+        B 복귀 중 쥐가 다시 보여도 assign_roles(None,..)이 배정 불가라
+        쥐대응이 재트리거되지 않는다 (A가 PATROLLING을 보고하면 다시 채워짐).
+        # ponytail: B 도킹 실패(IDLE 종료)면 DOCKED 전이가 없어 A가 대기 상태로
+        # 남는다 — 그땐 수동 PATROL 필요. 자동 복구가 필요해지면 타임아웃 추가.
         """
         if not self.rat_mode:
             return                      # 쥐대응 중 아님 — 무시 (중복 이벤트)
@@ -256,9 +261,10 @@ class CentralNode(Node):
         self.rat_mode = False
         self.rat_roles = None
         self.rat_caught = caught        # 결과 표출 (포획 성공/놓침)
+        self.patroller = None
         result = '포획 성공' if caught else '놓침'
-        self.get_logger().info(f'쥐대응 종료 ({result}) — {robot_a} 순찰, {robot_b} 도킹')
-        self.send(robot_a, 'PATROL')
+        self.get_logger().info(
+            f'쥐대응 종료 ({result}) — {robot_b} 도킹, 완료되면 {robot_a} 순찰 재개')
         self.send(robot_b, 'DOCK')
 
     def send(self, robot, cmd):
