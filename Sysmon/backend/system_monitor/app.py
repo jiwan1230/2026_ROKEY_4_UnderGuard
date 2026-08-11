@@ -271,6 +271,27 @@ def create_app(settings: Settings | None = None) -> Flask:
             )
         )
 
+    # 로봇 DB(db_node/MySQL) 기록 조회 — 여기도 조회만 있고 쓰기 라우트는 없다.
+    # MySQL에 직접 붙지 않고 db_node의 /db/query 서비스를 거친다: DB 스키마가
+    # 바뀌어도 UI는 안 깨지고, DB 접속 정보도 관제 서버에 두지 않는다.
+    DB_QUERIES = {"detections", "missions", "traps", "report"}
+
+    @app.get("/api/db/<query_name>")
+    def db_query(query_name: str):
+        if query_name not in DB_QUERIES:
+            return jsonify({"error": "unknown_query", "allowed": sorted(DB_QUERIES)}), 404
+        try:
+            limit = min(int(request.args.get("limit", 100)), 500)
+        except (TypeError, ValueError):
+            return jsonify({"error": "limit은 숫자여야 합니다."}), 400
+
+        result, error = ros.query_db(query_name, {"limit": limit})
+        if error is not None:
+            # DB가 없거나 응답이 없어도 실시간 화면은 그대로 돈다 — 이 요청만 실패한다.
+            status = 503 if error in {"ros_unavailable", "db_node_unavailable"} else 502
+            return jsonify({"error": error}), status
+        return jsonify(result)
+
     @app.post("/api/mock/events")
     def mock_event():
         """Mock 모드에서 실시간 UI 검증용 사건을 발생시킨다."""
