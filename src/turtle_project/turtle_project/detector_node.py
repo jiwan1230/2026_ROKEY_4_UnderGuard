@@ -25,7 +25,7 @@ from std_msgs.msg import Bool, String
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
-from turtle_interfaces.msg import TrapJob
+from turtle_interfaces.msg import DetectionEvent, TrapJob
 from turtle_interfaces.srv import ListHoles, QueryHole
 from turtle_project import fleet_msg
 from turtle_project.depth_math import (decode_depth, depth_at, depth_spread,
@@ -217,6 +217,8 @@ class DetectorNode(Node):
         self.hold_pub = self.create_publisher(Bool, 'patrol_hold', 10)
         # trap 설치/점검 지시 — trap_check가 받아 주행/판정만 한다.
         self.job_pub = self.create_publisher(TrapJob, 'trap_job', 10)
+        # DB 기록 전용 (제어 무관) — confidence/robot_id는 /fleet/event에 못 실어 분리.
+        self.detect_pub = self.create_publisher(DetectionEvent, '/fleet/detection', 10)
         # 탐색 회전용 직접 주행 — Nav2 goal로는 회전 속도를 못 정해서 cmd_vel.
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         # 탐색 회전 전 진행 중인 Nav2 goal을 끊어달라는 신호 (robot_agent 구독).
@@ -308,12 +310,13 @@ class DetectorNode(Node):
         # 들어가면 APPROACHING 조기 return으로 _detect_rat이 끊겨 rat_lost로
         # 쥐대응 전체가 조기 종료된다.
         if self.state == 'SEARCHING' and not (self.tracking or self.sweeping):
-            box = self._pick(result, 'opening', img.shape)
+            box, _ = self._pick(result, 'opening', img.shape)
             if box is not None:
                 self._on_opening(box, img.shape, depth, depth_frame)
         elif self.state == 'VERIFYING':
-            self._verify(self._pick(result, 'opening', img.shape,
-                                    self.opening_verify_conf), img.shape, depth)
+            box, conf = self._pick(result, 'opening', img.shape,
+                                   self.opening_verify_conf)
+            self._verify(box, img.shape, depth, conf)
         elif self.state == 'INSPECTING':
             self._inspect(result, img.shape, depth, depth_frame)
 
@@ -322,13 +325,21 @@ class DetectorNode(Node):
 
         TRACK 모드(self.tracking)일 때만 포획/놓침을 판정한다. 순찰 중 우연히
         쥐가 보이면 rat_detected만 쏴 central이 쥐대응을 시작하게 한다.
+
+        DB 기록(detect_pub)은 제어 goal과 같은 rat_goal_period 주기로 —
+        추적 전이든 중이든 동일 타이머 하나로 묶어 별도 Timer 없이 처리한다.
         """
-        box = self._pick(result, 'rat', img_shape, self.rat_conf)
+        box, conf = self._pick(result, 'rat', img_shape, self.rat_conf)
         if box is None:
             return
         xy = self._box_to_map(box, img_shape, depth, depth_frame)
         if xy is None:
             return
+        now = self._now()
+        due = now - self._last_rat_goal >= self.rat_goal_period
+        if due:
+            self._last_rat_goal = now
+            self.detect_pub.publish(self._make_detection('RAT', xy, conf))
         if not self.tracking:
             # 아직 쥐대응 전 — 최초 감지만 알림 (central이 역할배정 시작).
             self.event_pub.publish(String(data=fleet_msg.event(
@@ -339,13 +350,11 @@ class DetectorNode(Node):
         # 실제로 몬다.
         if self.spin_until is not None:     # 탐색 회전 중 재발견 — 즉시 회전 정지
             self._stop_spin('탐색 회전 중 쥐 재발견 — 추적 재개')
-        now = self._now()
-        if now - self._last_rat_goal >= self.rat_goal_period:
+        if due:
             # 몰이 알고리즘의 쥐 위치 입력 — 추적 시작 후에도 끊기면 안 된다.
             self.event_pub.publish(String(data=fleet_msg.event(
                 'rat_detected', *xy)))
             self.pose_pub.publish(make_pose(FRAME, xy[0], xy[1], 0.0))
-            self._last_rat_goal = now
             self.get_logger().info(
                 f'쥐 ({xy[0]:.2f}, {xy[1]:.2f}) 위치 갱신 — 추적 goal 발행',
                 throttle_duration_sec=1.0)
@@ -393,17 +402,17 @@ class DetectorNode(Node):
         self.marker_pub.publish(arr)
 
     def _pick(self, result, cls_name, img_shape, min_conf=None):
-        """cls_name 박스 중 화면 중앙에 가장 가까운 것 -> xyxy or None.
+        """cls_name 박스 중 화면 중앙에 가장 가까운 것 -> (xyxy, confidence) or (None, None).
 
         min_conf: 이 클래스에 적용할 최소 확신도. None이면 conf(기본 0.6).
         모델은 낮은 바닥값으로 돌리므로 클래스별 실제 문턱은 여기서 건다.
         """
         if self.model is None:
-            return None
+            return None, None
         if min_conf is None:
             min_conf = self.conf
         cx = img_shape[1] / 2
-        best, best_d = None, None
+        best, best_d, best_conf = None, None, None
         for b in result.boxes:
             if self.model.names[int(b.cls)] != cls_name:
                 continue
@@ -412,8 +421,8 @@ class DetectorNode(Node):
             u = float(b.xywh[0][0])
             d = abs(u - cx)
             if best_d is None or d < best_d:
-                best_d, best = d, b.xyxy[0].tolist()
-        return best
+                best_d, best, best_conf = d, b.xyxy[0].tolist(), float(b.conf)
+        return best, best_conf
 
     def _on_opening(self, box, img_shape, depth, depth_frame):
         """opening 감지 → 접근 goal 계산 성공 후에만 순찰 정지(hold).
@@ -534,7 +543,7 @@ class DetectorNode(Node):
         now = self._now()
         if now - self._last_appr_goal < self.approach_goal_period:
             return
-        box = self._pick(result, 'opening', img_shape, self.opening_verify_conf)
+        box, _ = self._pick(result, 'opening', img_shape, self.opening_verify_conf)
         if box is None:
             return
         xy = self._box_to_map(box, img_shape, depth, depth_frame, wall=True)
@@ -751,7 +760,7 @@ class DetectorNode(Node):
     def _now(self):
         return self.get_clock().now().nanoseconds / 1e9
 
-    def _verify(self, box, img_shape, depth):
+    def _verify(self, box, img_shape, depth, conf):
         """도착 지점(0.8m)에서 opening 재검출 → depth_spread로 진짜 구멍 판정."""
         if box is None:
             self._verify_miss('opening 재검출 실패')
@@ -761,7 +770,7 @@ class DetectorNode(Node):
             self._verify_miss('depth 유효 픽셀 부족')
             return
         if gap >= self.depth_gap:
-            self._confirm_opening(gap)
+            self._confirm_opening(gap, conf)
         else:
             self.get_logger().info(
                 f'opening 아님 (gap={gap:.3f}m < {self.depth_gap}) — 순찰 재개')
@@ -775,12 +784,12 @@ class DetectorNode(Node):
         side = side_px(self.side_margin, z, self.K[0, 0])
         return depth_spread(depth, du1, dv1, du2, dv2, side=side)
 
-    def _confirm_opening(self, gap):
-        """진짜 opening 확정 → db 저장(opening_confirmed) 후 최초 설치.
-        접근 중 검증(_refresh_approach)·close-range 검증(_verify) 공용."""
+    def _confirm_opening(self, gap, conf):
+        """진짜 opening 확정 → db 저장(opening_confirmed) 후 최초 설치."""
         self.get_logger().info(f'진짜 opening 확인 (gap={gap:.3f}m) — 설치 지시')
         self.event_pub.publish(String(data=fleet_msg.event(
             'opening_confirmed', *self.target)))
+        self.detect_pub.publish(self._make_detection('OPENING', self.target, conf))
         self.hole = self.target
         self.reinstall_count = 0
         self._send_install()
@@ -797,7 +806,7 @@ class DetectorNode(Node):
         trap이 verify_timeout 프레임까지 안 보이면 사람이 아직 안 놓은 것으로 보고
         재설치(_reinstall)로 넘긴다.
         """
-        box = self._pick(result, 'trap', img_shape, self.trap_conf)
+        box, _ = self._pick(result, 'trap', img_shape, self.trap_conf)
         if box is None:
             self._inspect_miss('trap 미검출')
             return
@@ -871,6 +880,14 @@ class DetectorNode(Node):
         job.hole_x, job.hole_y = float(hole[0]), float(hole[1])
         job.trap_x, job.trap_y = float(trap[0]), float(trap[1])
         return job
+
+    def _make_detection(self, object_type, xy, conf):
+        m = DetectionEvent()
+        m.object_type = object_type
+        m.x, m.y = float(xy[0]), float(xy[1])
+        m.confidence = float(conf)
+        m.robot_id = self.robot_id
+        return m
 
     def _hold_patrol(self, hold):
         self.hold_pub.publish(Bool(data=hold))
