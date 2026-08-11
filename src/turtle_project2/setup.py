@@ -28,7 +28,7 @@ setup(
             'resource/herding_dual_params.yaml',
         ]),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools', 'mysql-connector-python'],
     zip_safe=True,
     maintainer='rokey',
     maintainer_email='tmdwodl12@gmail.com',
