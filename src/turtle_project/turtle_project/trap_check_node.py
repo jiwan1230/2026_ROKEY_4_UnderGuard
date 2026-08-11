@@ -22,7 +22,7 @@ from irobot_create_msgs.msg import AudioNote, AudioNoteVector
 from rclpy.node import Node
 from std_msgs.msg import String
 
-from turtle_interfaces.msg import TrapJob
+from turtle_interfaces.msg import TrapInspection, TrapJob
 from turtle_project import fleet_msg
 
 
@@ -55,10 +55,17 @@ class TrapCheckNode(Node):
         self.beep_hz = self.declare_parameter('beep_hz', 1000).value
         self.beep_sec = self.declare_parameter('beep_sec', 1.0).value
 
+        # fleet 명령 대상 필터용과 같은 방식 — __ns:=/robot4로 실행 시 'robot4'.
+        # DB 기록(trap_inspection)에 robot_id를 실으려고만 쓴다 (제어엔 안 씀).
+        self.robot_id = self.get_namespace().rstrip('/').split('/')[-1]
+
         self.event_pub = self.create_publisher(String, '/fleet/event', 10)
         # 내 로봇 detector 전용 결과 채널 (상대 토픽 → 네임스페이스로 분리).
         # /fleet/event만 쓰면 다른 로봇 detector가 남의 결과로 상태 전이한다.
         self.local_pub = self.create_publisher(String, 'trap_event', 10)
+        # DB 기록 전용 (제어 무관) — /fleet/event(trap_ok/bad)는 hole 좌표만 실어
+        # 실제 감지된 trap 좌표·거리는 여기로 별도 전달한다.
+        self.inspect_pub = self.create_publisher(TrapInspection, '/fleet/trap_inspection', 10)
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)   # 설치 주행 open-loop
         self.audio_pub = self.create_publisher(AudioNoteVector, 'cmd_audio', 10)
         self.create_subscription(TrapJob, 'trap_job', self.job_cb, 10)
@@ -81,6 +88,13 @@ class TrapCheckNode(Node):
         msg = String(data=fleet_msg.event(name, job.hole_x, job.hole_y))
         self.event_pub.publish(msg)     # db 저장·central 관찰용 (전역)
         self.local_pub.publish(msg)     # 내 detector 상태 전이용 (로봇별)
+        insp = TrapInspection()
+        insp.hole_x, insp.hole_y = job.hole_x, job.hole_y
+        insp.trap_x, insp.trap_y = job.trap_x, job.trap_y
+        insp.distance = d
+        insp.result = 'OK' if ok else 'MOVED'
+        insp.robot_id = self.robot_id
+        self.inspect_pub.publish(insp)  # db 기록 전용 — 실제 trap좌표·거리
 
     def _install(self, job):
         """trap 설치 — beep로 사람 호출 → 0.5m 전진 → 대기 → 후진 → trap_installed.

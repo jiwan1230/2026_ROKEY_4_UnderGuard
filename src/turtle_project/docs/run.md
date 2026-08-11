@@ -33,7 +33,13 @@ ros2 run turtle_project robot_agent --ros-args \
 
 ## 중앙 PC (전체에서 한 번만 — 네임스페이스 없음)
 
+db_node가 MySQL을 쓰므로, 최초 1회 DB/테이블을 만들고 매번 비밀번호를 환경변수로 넘긴다
+(`docs/db.md` 참고). MySQL 서버가 안 떠 있으면 db_node가 기동 시 바로 실패한다.
+
 ```bash
+mysql -u root -p < src/turtle_project/config/mysql_init.sql   # 최초 1회, DB/테이블 + underguard 계정
+
+export MYSQL_PASSWORD='...'   # underguard 계정 비밀번호
 # central_node, db_node, webcam_node, rat_herding_node(배관), herding_node(몰이 알고리즘)를 한 번에.
 # herding_node는 turtle_project.herding 내장 (플랜 A 단일 blocker).
 ros2 launch turtle_project central_pc.launch.py
