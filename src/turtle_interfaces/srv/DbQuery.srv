@@ -1,0 +1,9 @@
+# UI(System Monitor)의 기록 조회 전용 — 로봇 제어와 무관한 읽기 전용 계약.
+# 화면이 늘어나도 query_name만 추가하면 되므로 이 파일은 다시 고치지 않는다.
+# UI가 MySQL에 직접 붙지 않게 하려는 것 — 스키마가 바뀌어도 UI는 안 깨진다.
+string query_name    # detections | missions | traps | report
+string params_json   # {"limit":50} — 빈 문자열이면 기본값
+---
+bool ok
+string result_json   # 조회 결과 JSON (ok=false면 빈 문자열)
+string error         # 실패 사유 (ok=true면 빈 문자열)

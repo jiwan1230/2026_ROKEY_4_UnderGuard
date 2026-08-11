@@ -18,6 +18,9 @@ DB 기록 실패는 로그만 남기고 조용히 넘어간다 — Robot 제어(
 응답에 의존하지 않는다. QueryHole만 예외로, 실패 시 fallback은 detector_node가
 이미 갖고 있다(service_is_ready 확인, 여기선 안전한 기본값만 돌려주면 된다).
 """
+import datetime
+import decimal
+import json
 import math
 import os
 
@@ -28,7 +31,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 from turtle_interfaces.msg import DetectionEvent, TrapInspection
-from turtle_interfaces.srv import ListHoles, QueryHole
+from turtle_interfaces.srv import DbQuery, ListHoles, QueryHole
 from turtle_project import fleet_msg
 
 # robot_agent가 보고하는 상태 중 "역할"로 볼 수 있는 것만 매핑한다. IDLE/
@@ -39,6 +42,15 @@ STATE_TO_ROLE = {
     'PATROLLING': 'PATROL', 'TRACKING': 'TRACK', 'HERDING': 'HERD',
     'SWEEPING': 'SWEEP', 'RETURNING': 'RETURN',
 }
+
+
+def jsonable(v):
+    """json이 모르는 DB 타입만 바꾼다 — DATETIME은 문자열, Decimal(AVG 결과)은 float."""
+    if isinstance(v, datetime.datetime):
+        return v.isoformat(sep=' ', timespec='seconds')
+    if isinstance(v, decimal.Decimal):
+        return float(v)
+    return v
 
 
 def nearest(rows, x, y):
@@ -83,6 +95,7 @@ class DbNode(Node):
         self.srv = self.create_service(QueryHole, '/db/query_hole', self.query)
         self.list_srv = self.create_service(
             ListHoles, '/db/list_holes', self.list_holes)
+        self.ui_srv = self.create_service(DbQuery, '/db/query', self.db_query)
         self.create_subscription(String, '/fleet/event', self.event_cb, 10)
         self.create_subscription(String, '/fleet/status', self.status_cb, 10)
         self.create_subscription(
@@ -114,6 +127,19 @@ class DbNode(Node):
         except mysql.connector.Error as e:
             self.get_logger().error(f'DB 쿼리 실패: {e}')
             return [] if fetch else None
+
+    def _fetch_dicts(self, sql, params=()):
+        """조회 전용 — 컬럼명이 붙은 dict 리스트로 돌려준다(UI 응답을 그대로 JSON
+        으로 만들기 위함). 실패하면 빈 리스트 — 호출부가 그대로 이어간다."""
+        try:
+            cur = self.conn.cursor(dictionary=True)
+            cur.execute(sql, params)
+            rows = [{k: jsonable(v) for k, v in r.items()} for r in cur.fetchall()]
+            cur.close()
+            return rows
+        except mysql.connector.Error as e:
+            self.get_logger().error(f'DB 조회 실패: {e}')
+            return []
 
     def _now(self):
         return self.get_clock().now().nanoseconds / 1e9
@@ -354,6 +380,98 @@ class DbNode(Node):
             'VALUES (%s, %s, NOW(), %s, %s, %s, %s)',
             (trap_id, msg.robot_id, msg.result, msg.trap_x, msg.trap_y,
              msg.distance))
+
+
+    # ---------- /db/query (UI 조회 전용, 읽기만) ----------
+
+    def db_query(self, req, resp):
+        """UI(System Monitor)의 기록 조회. 읽기 전용이라 로봇 제어와 겹치는 상태가
+        없고, 어떤 실패든 ok=False로만 돌려준다 — 노드는 계속 돈다.
+
+        전부 LIMIT/집계로 응답이 작게 끝나는 쿼리다. 실행자가 단일 스레드라 여기서
+        오래 걸리면 QueryHole도 같이 밀리는데, detector_node에 5초 워치독 fallback이
+        이미 있어 최악의 경우에도 로봇은 멈추지 않는다."""
+        resp.ok, resp.result_json, resp.error = False, '', ''
+        try:
+            p = json.loads(req.params_json) if req.params_json else {}
+            limit = max(1, min(int(p.get('limit', 100)), 500))
+            if req.query_name == 'detections':
+                out = {'rows': self._q_detections(limit)}
+            elif req.query_name == 'missions':
+                out = {'rows': self._q_missions(limit)}
+            elif req.query_name == 'traps':
+                out = {'rows': self._q_traps()}
+            elif req.query_name == 'report':
+                out = self._q_report()
+            else:
+                resp.error = f'모르는 query_name: {req.query_name}'
+                return resp
+            resp.result_json = json.dumps(out, ensure_ascii=False)
+            resp.ok = True
+        except Exception as e:      # JSON 파싱·타입 등 뭐가 터져도 서비스는 응답한다
+            resp.error = str(e)
+            self.get_logger().warn(f'UI 조회 실패 ({req.query_name}): {e}')
+        return resp
+
+    def _q_detections(self, limit):
+        """탐지기록. trap_installed는 구멍(OPENING) 행에만 의미가 있어 쥐(RAT)
+        행에는 null을 준다 — 화면에서 빈칸으로 두면 된다."""
+        return self._fetch_dicts(
+            'SELECT d.detection_id, d.incident_id, d.detected_at, d.object_type, '
+            'd.x, d.y, d.confidence, d.robot_id, d.image_path, '
+            "CASE WHEN d.object_type <> 'OPENING' THEN NULL "
+            '     WHEN MAX(t.trap_id) IS NULL THEN 0 ELSE 1 END AS trap_installed '
+            'FROM detection_event d '
+            'LEFT JOIN opening o ON ABS(o.x - d.x) <= %s AND ABS(o.y - d.y) <= %s '
+            'LEFT JOIN trap t ON t.opening_id = o.opening_id '
+            'GROUP BY d.detection_id ORDER BY d.detected_at DESC LIMIT %s',
+            (self.match_dist, self.match_dist, limit))
+
+    def _q_missions(self, limit):
+        """순찰·대응 기록. PATROL/SWEEP은 result가 null인 게 정상이다 — 순찰 중
+        이상을 알리는 이벤트가 아직 없어서 판정할 근거가 없다."""
+        return self._fetch_dicts(
+            'SELECT mission_id, incident_id, robot_id, role, started_at, ended_at, '
+            'duration_sec, result, failure_reason '
+            'FROM robot_mission ORDER BY started_at DESC LIMIT %s', (limit,))
+
+    def _q_traps(self):
+        """트랩 상세 — 구멍 좌표와 점검 이력 요약을 붙여서."""
+        return self._fetch_dicts(
+            'SELECT t.trap_id, t.opening_id, o.x AS opening_x, o.y AS opening_y, '
+            't.x AS trap_x, t.y AS trap_y, t.installed_at, t.status, '
+            't.last_checked_at, COUNT(i.inspection_id) AS inspections, '
+            "CAST(IFNULL(SUM(i.result = 'MOVED'), 0) AS SIGNED) AS moved_count, "
+            'AVG(i.distance_from_opening) AS avg_drift_m '
+            'FROM trap t JOIN opening o ON o.opening_id = t.opening_id '
+            'LEFT JOIN trap_inspection i ON i.trap_id = t.trap_id '
+            'GROUP BY t.trap_id ORDER BY t.trap_id')
+
+    def _q_report(self):
+        """한 사이클 보고서 — 저장된 집계 테이블 없이 매번 계산한다. 표가 작아
+        빠르고, 기록이 고쳐지면 보고서도 자동으로 맞는다."""
+        agg = self._fetch_dicts(
+            'SELECT COUNT(*) AS total, '
+            "CAST(IFNULL(SUM(result = 'CAPTURED'), 0) AS SIGNED) AS captured, "
+            "CAST(IFNULL(SUM(result = 'LOST'), 0) AS SIGNED) AS lost, "
+            'AVG(response_seconds) AS avg_response_sec, '
+            'MAX(response_seconds) AS max_response_sec '
+            "FROM incident WHERE status = 'CLOSED'")
+        inc = agg[0] if agg else {'total': 0, 'captured': 0, 'lost': 0,
+                                  'avg_response_sec': None, 'max_response_sec': None}
+        inc['success_rate_pct'] = (
+            round(100.0 * inc['captured'] / inc['total'], 1) if inc['total'] else None)
+        return {
+            'generated_at': datetime.datetime.now().isoformat(
+                sep=' ', timespec='seconds'),
+            'incidents': inc,
+            'missions_by_role': self._fetch_dicts(
+                'SELECT role, COUNT(*) AS count, AVG(duration_sec) AS avg_sec, '
+                'MIN(duration_sec) AS min_sec, MAX(duration_sec) AS max_sec '
+                'FROM robot_mission WHERE ended_at IS NOT NULL '
+                'GROUP BY role ORDER BY AVG(duration_sec) DESC'),
+            'traps': self._q_traps(),
+        }
 
 
 def main():

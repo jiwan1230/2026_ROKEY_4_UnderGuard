@@ -28,12 +28,42 @@ CREATE TABLE IF NOT EXISTS holes (
 |---|---|---|---|
 | Service | `/db/query_hole` (`QueryHole`) | detector → db | 이 좌표가 기존 구멍인가? |
 | Service | `/db/list_holes` (`ListHoles`) | detector → db | SWEEP 순회용 전체 좌표 |
-| Topic | `/fleet/event` (`std_msgs/String`) | detector·trap_check → db | `opening_confirmed` / `trap_ok` / `trap_bad` |
+| Service | `/db/query` (`DbQuery`) | UI → db | 기록 조회 (읽기 전용, 아래 참고) |
+| Topic | `/fleet/event` (`std_msgs/String`) | detector·trap_check → db | `opening_confirmed` / `trap_ok` / `trap_bad` / `trap_installed` / `rat_*` |
+| Topic | `/fleet/status` (`std_msgs/String`) | robot_agent → db | 로봇별 역할 시작·종료 (`robot_mission`) |
+| Topic | `/fleet/detection` (`DetectionEvent`) | detector → db | 탐지 상세 — `robot_id`·`confidence` 포함 |
+| Topic | `/fleet/trap_inspection` (`TrapInspection`) | trap_check → db | 실제 감지된 trap 좌표·거리 |
 
 조회는 Service(응답 있음), 저장은 Topic(응답 없음)으로 비대칭이다.
 저장 실패를 발행 측이 알 방법이 없다 — 아래 한계 2번.
 
-UI(`system_monitor`)는 이 DB를 직접 읽지 않는다. 같은 `/fleet/event`를 자체 구독한다.
+### `/db/query` — UI 기록 조회
+
+UI(`system_monitor`)는 **MySQL에 직접 붙지 않는다.** 이 서비스 하나만 거친다 —
+스키마가 바뀌어도 UI가 안 깨지고, DB 접속 정보도 관제 서버에 두지 않기 위함이다.
+
+```
+string query_name    # detections | missions | traps | report
+string params_json   # {"limit":50}
+---
+bool ok / string result_json / string error
+```
+
+화면이 늘어나도 `query_name`만 추가하면 되므로 `DbQuery.srv`는 다시 고치지 않는다.
+읽기 전용이라 로봇 제어와 겹치는 상태가 없고, 어떤 실패든 `ok=False`로만 돌려준다.
+
+| `query_name` | 내용 |
+|---|---|
+| `detections` | 탐지기록 — 시간·좌표·신뢰도·로봇, 구멍이면 트랩 설치 여부 |
+| `missions` | 순찰·대응 기록 — 역할별 시작/종료/소요시간/결과 |
+| `traps` | 트랩 상세 — 구멍 좌표, 점검 횟수, 이탈 횟수·평균 이탈거리 |
+| `report` | 한 사이클 집계 — 포획 성공률, 평균 대응시간, 역할별 소요시간 |
+
+집계 테이블은 두지 않는다. 표가 작아 매번 계산해도 빠르고, 기록이 고쳐지면
+보고서도 자동으로 맞는다.
+
+UI는 실시간 화면(`/fleet/status`·`/fleet/event`)과 이 조회를 분리해서 쓴다 —
+db_node가 죽어도 조회만 실패하고 실시간 화면은 그대로 돈다.
 
 ## 핵심 규칙
 
