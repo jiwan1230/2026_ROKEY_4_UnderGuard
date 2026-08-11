@@ -9,15 +9,19 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description():
     share = get_package_share_directory('turtle_project')
     return LaunchDescription([
+        # nav2:=false — bringup(nav2)이 이미 떠 있으면 이중 실행 방지용으로 제외.
+        DeclareLaunchArgument('nav2', default_value='true'),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(share, 'launch', 'robot_nodes.launch.py')),
-            launch_arguments=[('robot', 'robot6')]),
+            launch_arguments=[('robot', 'robot6'),
+                              ('nav2', LaunchConfiguration('nav2'))]),
     ])

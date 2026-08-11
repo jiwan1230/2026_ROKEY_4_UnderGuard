@@ -11,8 +11,9 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 
 
 def _include(name, args=None):
@@ -24,6 +25,9 @@ def _include(name, args=None):
 
 def generate_launch_description():
     return LaunchDescription([
-        _include('robot_nodes.launch.py', [('robot', 'robot4')]),
+        # nav2:=false — bringup(nav2)이 이미 떠 있으면 이중 실행 방지용으로 제외.
+        DeclareLaunchArgument('nav2', default_value='true'),
+        _include('robot_nodes.launch.py',
+                 [('robot', 'robot4'), ('nav2', LaunchConfiguration('nav2'))]),
         _include('central_pc.launch.py'),
     ])

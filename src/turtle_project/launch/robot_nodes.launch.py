@@ -26,11 +26,16 @@ def _nodes(context, *_args, **_kwargs):
     robot = LaunchConfiguration('robot').perform(context)
     share = get_package_share_directory('turtle_project')
     ns = f'/{robot}'
-    return [
-        IncludeLaunchDescription(
+    nodes = []
+    # nav2:=false — 이미 bringup(nav2)이 떠 있는 PC에서 우리 노드만 추가로 띄울
+    # 때. nav2를 이중 실행하면 amcl·lifecycle manager가 충돌해 기존
+    # localization까지 망가진다.
+    if LaunchConfiguration('nav2').perform(context).lower() != 'false':
+        nodes.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(share, 'launch', 'robot_bringup.launch.py')),
-            launch_arguments=[('namespace', ns)]),
+            launch_arguments=[('namespace', ns)]))
+    return nodes + [
         Node(package='turtle_project', executable='detector_node',
              namespace=ns, remappings=TF_REMAPS),
         Node(package='turtle_project', executable='trap_check_node',
@@ -44,5 +49,8 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('robot', default_value='robot4',
                               description="'robot4' 또는 'robot6'"),
+        DeclareLaunchArgument('nav2', default_value='true',
+                              description="'false'면 bringup(nav2) 제외 — "
+                                          "이미 떠 있을 때 이중 실행 방지"),
         OpaqueFunction(function=_nodes),
     ])
