@@ -157,7 +157,7 @@ class DetectorNode(Node):
         # 모델 바닥값(0.4) 이상은 화면에 그려지는데 conf(0.6)로 거르면 조용히 미검출.
         self.trap_conf = self.declare_parameter('trap_conf', 0.4).value
         # rat은 오탐이 추적 출동으로 직결되니 기본(0.6)보다 높은 문턱을 쓴다.
-        self.rat_conf = self.declare_parameter('rat_conf', 0.85).value
+        self.rat_conf = self.declare_parameter('rat_conf', 0.8).value
         self.approach_dist = self.declare_parameter('approach_dist', 0.8).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.27).value
         # 이번 순찰에 이미 확인한 구멍을 또 점검하러 가지 않게 한다(순찰 진행).
@@ -176,7 +176,15 @@ class DetectorNode(Node):
         self.approach_goal_period = self.declare_parameter(
             'approach_goal_period', 0.5).value
         # 쥐 놓침 직전 제자리 탐색 회전 시간(초) — 이 시간에 정확히 한 바퀴 돌도록 각속도를 정하므로(2π/spin_secs) 시간이 곧 회전 속도다.
-        self.spin_secs = self.declare_parameter('search_spin_secs', 10.0).value
+        self.spin_secs = self.declare_parameter('search_spin_secs', 15.0).value
+        # 쥐대응 종료 후 순찰 복귀(PATROL) 시 YOLO 감지 정지 시간(초).
+        # 놓친 쥐를 그 자리에서 곧바로 재감지해 쥐대응이 무한 재트리거되는
+        # 루프를 끊는다 — 로봇이 그 지점을 벗어날 시간만큼 주면 된다.
+        self.patrol_mute_secs = self.declare_parameter(
+            'patrol_resume_mute_secs', 20.0).value
+        # 감지 정지 시한 — PATROL은 patrol_mute_secs만큼, DOCK은 무기한
+        # (다음 임무 명령까지). 0이면 정지 아님. synced_cb가 참조.
+        self.mute_until = 0.0
         # 디버그 창 (show:=true). headless/SSH에선 imshow가 터지므로 기본 off.
         self.show = self.declare_parameter('show', False).value
 
@@ -274,6 +282,8 @@ class DetectorNode(Node):
     def synced_cb(self, rgb_msg, depth_msg, info_msg):
         if self.model is None:
             return
+        if self._now() < self.mute_until:
+            return      # 복귀/도킹 전환 구간 — YOLO 정지 (command_cb가 설정)
         if self.state == 'SWEEP_NAV':       # 순회 중 구멍으로 이동 — 도착만 감시
             self._check_sweep_arrival()
             if self.show:
@@ -580,11 +590,16 @@ class DetectorNode(Node):
     def command_cb(self, msg):
         """내 로봇 명령 처리 — A(TRACK)면 추적, B(SWEEP)면 구멍 순회 점검.
 
-        쥐대응 종료 명령(PATROL/STOP/DOCK)이 오면 추적·순회를 모두 끈다.
+        쥐대응 종료 명령(PATROL/STOP/DOCK)이 오면 추적·순회를 모두 끄고,
+        복귀 구간의 YOLO도 끈다(mute) — 놓친 쥐를 그 자리에서 재감지해 쥐대응이
+        무한 재트리거되는 루프 방지. PATROL은 patrol_mute_secs 뒤 자동 재개,
+        DOCK은 무기한(도킹/대기 중 감지 불필요), 임무(TRACK/SWEEP/HERD)는 즉시 재개.
         """
         robot, cmd = fleet_msg.parse_command(msg.data)
         if robot != self.robot_id:
             return                  # 내 로봇 명령 아님 (robot6용 TRACK 등)
+        if cmd in ('TRACK', 'SWEEP', 'HERD'):
+            self.mute_until = 0.0   # 임무 시작 — 감지 즉시 재개
         if cmd == 'TRACK' and not self.tracking:
             if self.state != 'SEARCHING':
                 # opening 처리 중이면 프레임이 조기 return돼 _detect_rat이 안 돌고,
@@ -597,13 +612,23 @@ class DetectorNode(Node):
             self.get_logger().info('TRACK 시작 — 쥐 포획/놓침 판정 on')
         elif cmd == 'SWEEP' and not self.sweeping:
             self._start_sweep()     # B 역할 — DB 구멍 순회 점검 시작
-        elif cmd in ('PATROL', 'STOP', 'DOCK'):
+        elif cmd in ('PATROL', 'STOP', 'DOCK', 'UNDOCK'):
             if self.tracking:
                 self._stop_tracking()   # 쥐대응 종료 — 추적 판정 off
             if self.sweeping:
                 self._stop_sweep()      # 쥐대응 종료 — 순회 즉시 중단
             if cmd == 'PATROL':
                 self.done_holes.clear()  # 새 순찰 시작 — 확인한 구멍 목록 초기화
+            if cmd in ('PATROL', 'UNDOCK'):
+                # 순찰 (재)시작 — 이동 구간 동안 감지 정지 후 자동 재개.
+                # UNDOCK도 순찰로 이어지므로(robot_agent) 같은 취급 — 특히
+                # DOCK으로 무기한 정지된 로봇을 다시 깨울 때 mute를 풀어준다.
+                self.mute_until = self._now() + self.patrol_mute_secs
+                self.get_logger().info(
+                    f'{cmd} 수신 — YOLO {self.patrol_mute_secs:.0f}초 정지 후 재개')
+            elif cmd == 'DOCK':
+                self.mute_until = math.inf   # 도킹 복귀 — 다음 임무까지 감지 정지
+                self.get_logger().info('DOCK 수신 — YOLO 정지 (다음 임무까지)')
 
     def lost_tick(self):
         """추적 놓침 감시 — 안 보이면 제자리 탐색 회전부터, 그래도 없으면 rat_lost.
