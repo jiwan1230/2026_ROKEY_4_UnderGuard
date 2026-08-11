@@ -15,6 +15,7 @@ ROS에서 메시지가 도착하면 해당 토픽에 등록된 ``_on_*`` 콜백�
 from __future__ import annotations
 
 import math
+import sqlite3
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,7 @@ from .detection_service import (
     record_target_lost,
     record_trap_installed,
 )
+from .history_store import HistoryStore
 from .risk_signals import ENTRY_POINT, LIVE_RODENT, is_live_rodent, normalize_risk_signal
 from .state_manager import StateManager
 
@@ -113,6 +115,9 @@ class RosBridge:
         low_battery_threshold: float = 15.0,
         interface: RosInterfaceConfig | None = None,
         camera_frame_store: CameraFrameStore | None = None,
+        history_store: HistoryStore | None = None,
+        detection_record_interval_sec: float = 1.0,
+        trail_record_interval_sec: float = 0.5,
     ) -> None:
         # 외부에서 주입받은 저장소와 설정을 보관한다. 이렇게 하면 실제 ROS가
         # 없는 테스트에서도 가짜 메시지를 콜백에 직접 넣어 검증할 수 있다.
@@ -122,6 +127,11 @@ class RosBridge:
         self.low_battery_threshold = low_battery_threshold
         self.interface = interface or RosInterfaceConfig()
         self.camera_frame_store = camera_frame_store or CameraFrameStore()
+        self.history_store = history_store
+        self.detection_record_interval_sec = max(
+            0.0, detection_record_interval_sec
+        )
+        self.trail_record_interval_sec = max(0.0, trail_record_interval_sec)
         self._thread: threading.Thread | None = None
         self._node = None
         # 타이머와 여러 콜백이 역할 배정·경고 기록을 동시에 바꾸지 않도록
@@ -134,6 +144,8 @@ class RosBridge:
         self._target_lost_reported: set[str] = set()
         self._low_battery_reported: set[str] = set()
         self._last_active_robot_id: str | None = None
+        self._last_detection_recorded_at: dict[tuple[str, str], float] = {}
+        self._last_trail_recorded_at: dict[str, float] = {}
 
     @property
     def available(self) -> bool:
@@ -349,7 +361,7 @@ class RosBridge:
 
                 # 탐지 저장과 함께 로봇 역할/상태 및 이벤트까지 일관되게
                 # 갱신해야 하므로 직접 저장하지 않고 공통 서비스를 거친다.
-                process_detection(
+                item = process_detection(
                     self.state,
                     {
                         "robot_id": robot_id,
@@ -367,6 +379,7 @@ class RosBridge:
                     fallback_task="탐지 위치 확인 중",
                     camera_status="NORMAL",
                 )
+                self._record_detection_history(item)
                 return
             if name == "trap_ok":
                 record_trap_installed(
@@ -421,6 +434,7 @@ class RosBridge:
                     fallback_task=f"{data['object_type']} 탐지 확인 중",
                     camera_status="NORMAL",
                 )
+                self._record_detection_history(item)
 
                 # 중요 #
                 # 탐지 출처가 OAK-D이고, 탐지한 객체가 살아있는 쥐인지 확인
@@ -502,6 +516,82 @@ class RosBridge:
             nav_status="MOVING" if speed > 0.02 else "STOPPED",
             slam_status="NORMAL",
         )
+        self._record_trail_history(
+            robot_id,
+            position_frame=position_frame,
+            map_x=float(p.x),
+            map_y=float(p.y),
+        )
+
+    def _record_detection_history(self, detection: dict[str, Any]) -> None:
+        """실시간 탐지를 영속 이력에 저장하되 고주파 중복 기록을 제한한다."""
+
+        if self.history_store is None:
+            return
+        robot_id = str(detection.get("robot_id") or "")
+        object_type = str(detection.get("object_type") or "")
+        key = (robot_id, object_type)
+        now = time.monotonic()
+        last = self._last_detection_recorded_at.get(key)
+        if last is not None and now - last < self.detection_record_interval_sec:
+            return
+
+        frame = self.camera_frame_store.get(robot_id)
+        image_bytes = frame.content if frame is not None else None
+        image_ext = (
+            "png" if frame is not None and "png" in frame.format.lower() else "jpg"
+        )
+        try:
+            self.history_store.record_detection(
+                robot_id=robot_id or None,
+                object_type=object_type or None,
+                map_x=detection.get("map_x"),
+                map_y=detection.get("map_y"),
+                confidence=detection.get("confidence"),
+                timestamp=detection.get("timestamp"),
+                image_bytes=image_bytes,
+                image_ext=image_ext,
+            )
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            self._log_history_error(f"탐지 기록 저장 실패: {exc}")
+            return
+        self._last_detection_recorded_at[key] = now
+
+    def _record_trail_history(
+        self,
+        robot_id: str,
+        *,
+        position_frame: str,
+        map_x: float,
+        map_y: float,
+    ) -> None:
+        """map 좌표의 odom 위치를 제한된 주기로 이동 경로 DB에 저장한다."""
+
+        if self.history_store is None:
+            return
+        expected_frame = self.interface.map_frame.strip("/") or "map"
+        if position_frame != expected_frame:
+            return
+        now = time.monotonic()
+        last = self._last_trail_recorded_at.get(robot_id)
+        if last is not None and now - last < self.trail_record_interval_sec:
+            return
+        try:
+            self.history_store.record_trail_point(
+                robot_id=robot_id,
+                map_x=map_x,
+                map_y=map_y,
+            )
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            self._log_history_error(f"이동 경로 저장 실패: {exc}")
+            return
+        self._last_trail_recorded_at[robot_id] = now
+
+    def _log_history_error(self, message: str) -> None:
+        """기록 실패가 실시간 관제를 중단하지 않도록 ROS 로그만 남긴다."""
+
+        if self._node is not None:
+            self._node.get_logger().error(message)
 
     # 중요 #
     def _on_battery(self, robot_id: str, msg: Any) -> None:

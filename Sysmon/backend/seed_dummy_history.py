@@ -75,20 +75,37 @@ def seed(detection_count: int = 12, trail_points_per_robot: int = 60) -> None:
 
     # 1) 탐지 기록 — LIVE_RODENT는 자리표시자 사진을 붙이고, 나머지는 사진 없이.
     object_types = [LIVE_RODENT, ENTRY_POINT, DROPPINGS]
+    opening_index = 0
     for i in range(detection_count):
         ts = now - random.uniform(0, window_sec)
         object_type = random.choices(object_types, weights=[3, 2, 2])[0]
         x = round(random.uniform(x_lo, x_hi), 2)
         y = round(random.uniform(y_lo, y_hi), 2)
         image_bytes = (
-            _make_placeholder_image(object_type, ts) if object_type == LIVE_RODENT else None
+            _make_placeholder_image(object_type, ts)
+            if object_type == LIVE_RODENT
+            else None
         )
+        opening_id = None
+        trap_id = None
+        trap_installation_status = None
+        if object_type == ENTRY_POINT:
+            opening_index += 1
+            opening_id = f"O{opening_index:03d}"
+            trap_installation_status = random.choice(
+                ["INSTALLED", "NOT_INSTALLED", "UNKNOWN"]
+            )
+            if trap_installation_status == "INSTALLED":
+                trap_id = f"T{opening_index:03d}"
         store.record_detection(
             robot_id=random.choice(robot_ids),
             object_type=object_type,
             map_x=x,
             map_y=y,
             confidence=round(random.uniform(0.75, 0.97), 2),
+            opening_id=opening_id,
+            trap_id=trap_id,
+            trap_installation_status=trap_installation_status,
             timestamp=ts,
             image_bytes=image_bytes,
             image_ext="jpg",

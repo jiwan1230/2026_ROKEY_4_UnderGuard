@@ -7,10 +7,17 @@ from system_monitor.replay_manager import ReplayManager
 from system_monitor.state_manager import StateManager
 
 
-def _write_frames_file(tmp_dir: Path, trials: list[dict], traps: dict | None = None) -> Path:
+def _write_frames_file(
+    tmp_dir: Path,
+    trials: list[dict],
+    traps: dict | None = None,
+    metadata: dict | None = None,
+) -> Path:
     path = tmp_dir / "frames.json"
+    payload = {"trials": trials, "traps": traps or {}}
+    payload.update(metadata or {})
     path.write_text(
-        json.dumps({"trials": trials, "traps": traps or {}}), encoding="utf-8"
+        json.dumps(payload), encoding="utf-8"
     )
     return path
 
@@ -37,8 +44,8 @@ class ReplayManagerTest(unittest.TestCase):
             [("robot4", "SCOUT"), ("robot6", "SCOUT")], offline_timeout_sec=100
         )
 
-    def _manager(self, trials, traps=None, **kwargs):
-        path = _write_frames_file(Path(self.tmp.name), trials, traps)
+    def _manager(self, trials, traps=None, metadata=None, **kwargs):
+        path = _write_frames_file(Path(self.tmp.name), trials, traps, metadata)
         return ReplayManager(
             self.state, ["robot4", "robot6"], frames_path=path, **kwargs
         )
@@ -184,6 +191,78 @@ class ReplayManagerTest(unittest.TestCase):
             trial_index=2,  # len(trials) == 2 -> wraps back to index 0
         )
         self.assertEqual(manager._trial["model"], "a")
+
+    def test_history_record_returns_selected_trial_without_exposing_internal_data(self):
+        manager = self._manager(
+            [
+                {
+                    "model": "reactive_flee",
+                    "success": True,
+                    "duration": 1.0,
+                    "frames": [_frame(driver_goal=[0.5, 0.5])],
+                }
+            ],
+            traps={"bottom": [1.0, 2.0]},
+            metadata={
+                "map_image": "data:image/png;base64,example",
+                "photo_frame": {
+                    "x_low": -3.0,
+                    "x_high": 2.0,
+                    "y_low": -9.0,
+                    "y_high": -2.0,
+                },
+                "capture_radius": 0.35,
+            },
+        )
+
+        record = manager.history_record()
+
+        self.assertTrue(record["available"])
+        self.assertEqual(record["selected_trial_index"], 0)
+        self.assertEqual(record["trial_count"], 1)
+        self.assertEqual(record["trial_options"][0]["frame_count"], 1)
+        self.assertEqual(record["driver_id"], "robot4")
+        self.assertEqual(record["blocker_id"], "robot6")
+        self.assertEqual(record["trial"]["frames"][0]["driver_goal"], [0.5, 0.5])
+        self.assertEqual(record["map_image"], "data:image/png;base64,example")
+        self.assertEqual(record["photo_frame"]["x_low"], -3.0)
+        self.assertEqual(record["parameters"]["capture_radius"], 0.35)
+        record["trial"]["frames"][0]["driver"][0] = 999.0
+        record["photo_frame"]["x_low"] = 999.0
+        self.assertEqual(manager._trial["frames"][0]["driver"][0], 0.0)
+        self.assertEqual(manager._record_meta["photo_frame"]["x_low"], -3.0)
+
+    def test_history_record_selects_another_trial_without_changing_runtime_trial(self):
+        manager = self._manager(
+            [
+                {
+                    "model": "runtime-model",
+                    "success": True,
+                    "duration": 1.0,
+                    "goal_name": "bottom",
+                    "frames": [_frame()],
+                },
+                {
+                    "model": "history-model",
+                    "success": False,
+                    "duration": 2.0,
+                    "goal_name": "top",
+                    "seed": 7,
+                    "frames": [_frame(t=0.0), _frame(t=0.1)],
+                },
+            ]
+        )
+
+        record = manager.history_record(1)
+
+        self.assertEqual(record["selected_trial_index"], 1)
+        self.assertEqual(record["trial_count"], 2)
+        self.assertEqual(record["trial"]["model"], "history-model")
+        self.assertEqual(record["trial_options"][1]["frame_count"], 2)
+        self.assertEqual(record["trial_options"][1]["goal_name"], "top")
+        self.assertEqual(manager._trial["model"], "runtime-model")
+        with self.assertRaises(IndexError):
+            manager.history_record(2)
 
     def test_single_robot_is_unavailable_instead_of_raising(self):
         """app.py는 mock/ros 모드에서도 이 객체를 항상 만든다 — 로봇이 1대뿐인

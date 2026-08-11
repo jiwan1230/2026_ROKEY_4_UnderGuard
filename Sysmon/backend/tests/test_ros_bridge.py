@@ -1,8 +1,11 @@
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from system_monitor.config import RobotConfig, RosInterfaceConfig
+from system_monitor.history_store import HistoryStore
 from system_monitor.ros_bridge import RosBridge
 from system_monitor.state_manager import StateManager
 
@@ -37,9 +40,17 @@ def odometry(frame_id: str):
 
 class RosBridgeTest(unittest.TestCase):
     def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.history = HistoryStore(root / "history.db", root / "captures")
         self.state = StateManager([("robot4", "SCOUT")], offline_timeout_sec=100)
         self.bridge = RosBridge(
-            self.state, (RobotConfig("robot4", "SCOUT"),)
+            self.state,
+            (RobotConfig("robot4", "SCOUT"),),
+            history_store=self.history,
+            detection_record_interval_sec=0,
+            trail_record_interval_sec=0,
         )
 
     def _event_count(self, event_type):
@@ -55,6 +66,10 @@ class RosBridgeTest(unittest.TestCase):
         robot = self.state.get_robot("robot4")
         self.assertEqual((row["map_x"], row["map_y"]), (1.5, 2.0))
         self.assertEqual(row["object_type"], "LIVE_RODENT")
+        stored = self.history.list_detections()
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]["object_type"], "LIVE_RODENT")
+        self.assertEqual((stored[0]["map_x"], stored[0]["map_y"]), (1.5, 2.0))
         self.assertEqual(robot["state"], "TRACKING")
         self.assertEqual(robot["role"], "RAT_TRACKER")
 
@@ -74,6 +89,9 @@ class RosBridgeTest(unittest.TestCase):
 
         self.assertIsNone(row["map_x"])
         self.assertIsNone(row["map_y"])
+        stored = self.history.list_detections()[0]
+        self.assertIsNone(stored["map_x"])
+        self.assertIsNone(stored["map_y"])
 
     def test_camera_frame_is_cached_without_reencoding(self):
         self.bridge._on_camera_frame(
@@ -96,6 +114,12 @@ class RosBridgeTest(unittest.TestCase):
         row = self.state.snapshot()["detections"][0]
         self.assertEqual(row["image_url"], "/api/camera/robot4/frame")
         self.assertEqual(row["distance"], 2.5)
+        stored = self.history.list_detections()[0]
+        self.assertIsNotNone(stored["image_url"])
+        self.assertEqual(
+            self.history.image_path_for(stored["id"]).read_bytes(),
+            b"raw-jpeg-bytes",
+        )
 
     def test_robot_topic_supports_suffix_absolute_and_template_names(self):
         robot = RobotConfig("/robot4", "SCOUT")
@@ -113,6 +137,12 @@ class RosBridgeTest(unittest.TestCase):
         self.assertEqual(robot["position_frame"], "odom")
         self.assertEqual((robot["position"]["x"], robot["position"]["y"]), (1.25, 2.5))
         self.assertEqual(robot["nav_status"], "MOVING")
+        self.assertEqual(self.history.get_trail(), [])
+
+        self.bridge._on_odom("robot4", odometry("map"))
+        trail = self.history.get_trail()
+        self.assertEqual(len(trail), 1)
+        self.assertEqual((trail[0]["map_x"], trail[0]["map_y"]), (1.25, 2.5))
 
     def test_oakd_timeout_reports_target_lost_once(self):
         self.bridge._on_detection("robot4", "OAK-D", detection_array("map"))
@@ -182,6 +212,27 @@ class RosBridgeTest(unittest.TestCase):
         self.assertEqual(detection["object_type"], "LIVE_RODENT")
         self.assertEqual((detection["map_x"], detection["map_y"]), (1.2, 3.4))
         self.assertEqual((trap["map_x"], trap["map_y"]), (2.0, 4.0))
+        stored = self.history.list_detections()
+        self.assertEqual(len(stored), 1)
+        self.assertEqual((stored[0]["map_x"], stored[0]["map_y"]), (1.2, 3.4))
+
+    def test_history_recording_throttles_repeated_sensor_messages(self):
+        root = Path(self.temp.name)
+        bridge = RosBridge(
+            self.state,
+            (RobotConfig("robot4", "SCOUT"),),
+            history_store=HistoryStore(root / "throttle.db", root / "throttle-images"),
+            detection_record_interval_sec=60,
+            trail_record_interval_sec=60,
+        )
+
+        bridge._on_detection("robot4", "OAK-D", detection_array("map"))
+        bridge._on_detection("robot4", "OAK-D", detection_array("map"))
+        bridge._on_odom("robot4", odometry("map"))
+        bridge._on_odom("robot4", odometry("map"))
+
+        self.assertEqual(len(bridge.history_store.list_detections()), 1)
+        self.assertEqual(len(bridge.history_store.get_trail()), 1)
 
 if __name__ == "__main__":
     unittest.main()

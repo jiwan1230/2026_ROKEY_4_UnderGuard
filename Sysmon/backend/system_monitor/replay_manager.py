@@ -8,6 +8,7 @@ Mock은 지도 중심을 도는 원(``math.cos``/``math.sin``)을 그릴 뿐 벽
 
 from __future__ import annotations
 
+import copy
 import json
 import threading
 import time
@@ -82,8 +83,16 @@ class ReplayManager:
         self.speed = speed if speed > 0 else 1.0
         self.map_frame = map_frame.strip("/") or "map"
         self._frames_path = Path(frames_path)
-        self._trial, self._known_traps = (
-            self._load(self._frames_path, trial_index) if self.driver_id else (None, {})
+        (
+            self._trial,
+            self._known_traps,
+            self._record_meta,
+            self._trials,
+            self._trial_index,
+        ) = (
+            self._load(self._frames_path, trial_index)
+            if self.driver_id
+            else (None, {}, {}, [], 0)
         )
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -112,6 +121,63 @@ class ReplayManager:
             "frame_count": len(self._trial["frames"]) if self._trial else 0,
         }
 
+    def history_record(self, trial_index: int | None = None) -> dict[str, Any]:
+        """요청한 검증 시험을 기록 화면이 읽을 수 있는 형태로 반환한다.
+
+        실시간 재생은 ``apply_frame()``이 StateManager를 계속 바꾸지만, 기록
+        화면은 원본 시험 전체를 한 번에 읽어 경로를 그린다. 내부 dict를 그대로
+        돌려주면 API 사용자가 실수로 ReplayManager의 원본까지 바꿀 수 있으므로
+        복사본을 제공한다. ``trial_index``는 기록 조회에만 사용하며 현재 실행 중인
+        Replay 시험인 ``self._trial``은 바꾸지 않는다.
+        """
+
+        selected_index = self._trial_index
+        selected_trial = self._trial
+        if trial_index is not None:
+            if trial_index < 0 or trial_index >= len(self._trials):
+                raise IndexError("trial_index_out_of_range")
+            selected_index = trial_index
+            selected_trial = self._trials[trial_index]
+
+        trial_options = []
+        for index, trial in enumerate(self._trials):
+            frames = trial.get("frames") or []
+            duration = trial.get("duration")
+            if duration is None and frames:
+                duration = frames[-1].get("t")
+            trial_options.append(
+                {
+                    "index": index,
+                    "model": trial.get("model"),
+                    "success": bool(trial.get("success")),
+                    "duration": duration,
+                    "frame_count": len(frames),
+                    "goal_name": trial.get("goal_name"),
+                    "seed": trial.get("seed"),
+                }
+            )
+
+        return {
+            "available": selected_trial is not None,
+            "source_name": self._frames_path.name,
+            "map_frame": self.map_frame,
+            "driver_id": self.driver_id,
+            "blocker_id": self.blocker_id,
+            "selected_trial_index": selected_index,
+            "trial_count": len(self._trials),
+            "trial_options": trial_options,
+            "traps": copy.deepcopy(self._known_traps),
+            "trial": copy.deepcopy(selected_trial),
+            # Replay JSON 안의 지도와 좌표 범위를 함께 보내야 프런트엔드가
+            # 별도의 ROS map 파일 없이도 기록 당시의 배경 위에 경로를 그릴 수 있다.
+            "map_image": self._record_meta.get("map_image"),
+            "photo_frame": copy.deepcopy(self._record_meta.get("photo_frame")),
+            "parameters": {
+                name: self._record_meta.get(name)
+                for name in ("capture_radius", "panic_distance", "sensor_range")
+            },
+        }
+
     def start(self) -> None:
         """궤적 재생 스레드를 중복 없이 시작한다."""
 
@@ -129,7 +195,15 @@ class ReplayManager:
         self._thread = None
 
     @staticmethod
-    def _load(path: Path, trial_index: int) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    def _load(
+        path: Path, trial_index: int
+    ) -> tuple[
+        dict[str, Any] | None,
+        dict[str, Any],
+        dict[str, Any],
+        list[dict[str, Any]],
+        int,
+    ]:
         """파일을 못 읽거나 trial이 없으면 조용히 재생 불가 상태로 남긴다.
 
         ``available``이 이걸 반영하므로 /api/health가 degraded로 표시한다 —
@@ -141,11 +215,28 @@ class ReplayManager:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return None, {}
+            return None, {}, {}, [], 0
         trials = data.get("trials") or []
         if not trials:
-            return None, {}
-        return trials[trial_index % len(trials)], (data.get("traps") or {})
+            return None, {}, {}, [], 0
+        selected_index = trial_index % len(trials)
+        metadata = {
+            name: data.get(name)
+            for name in (
+                "map_image",
+                "photo_frame",
+                "capture_radius",
+                "panic_distance",
+                "sensor_range",
+            )
+        }
+        return (
+            trials[selected_index],
+            data.get("traps") or {},
+            metadata,
+            trials,
+            selected_index,
+        )
 
     def _run(self) -> None:
         if self._trial is None:

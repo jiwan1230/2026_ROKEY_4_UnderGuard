@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from system_monitor.app import create_app, start_background_service
@@ -63,6 +64,29 @@ class AppTest(unittest.TestCase):
         self.assertIn("탐지 마커".encode(), dashboard)
         self.assertIn("현재 세션 이벤트".encode(), dashboard)
         self.assertIn("기록 조회".encode(), dashboard)
+        self.assertIn("탐지·이동 기록".encode(), dashboard)
+        self.assertIn("쥐몰이 기록".encode(), dashboard)
+        self.assertIn(b'id="history-view-activity"', dashboard)
+        self.assertIn(b'id="history-view-herding"', dashboard)
+        self.assertIn(b'id="history-filter-trap-status"', dashboard)
+        self.assertNotIn(b'id="history-timeline"', dashboard)
+        self.assertIn("선택한 탐지 증거".encode(), dashboard)
+        self.assertIn("설치 확인".encode(), dashboard)
+        self.assertIn("확인 필요".encode(), dashboard)
+        self.assertIn(b'id="herding-summary-result"', dashboard)
+        self.assertIn(b'id="herding-history-map-canvas"', dashboard)
+        self.assertIn(b'id="herding-trial-select"', dashboard)
+        self.assertIn(b'id="herding-trial-detail"', dashboard)
+        self.assertIn(b'id="herding-playback-toggle"', dashboard)
+        self.assertIn(b'id="herding-playback-slider"', dashboard)
+        self.assertIn(b'id="herding-playback-state"', dashboard)
+        self.assertIn(b'id="herding-playback-state-description"', dashboard)
+        self.assertIn(b'id="herding-capture-distance"', dashboard)
+        self.assertIn(b'id="herding-event-timeline"', dashboard)
+        self.assertIn(b'data-herding-layer="driver_goal"', dashboard)
+        self.assertIn(b'data-herding-layer="future"', dashboard)
+        self.assertIn(b'data-herding-speed="0.5"', dashboard)
+        self.assertIn(b'data-herding-speed="2"', dashboard)
         self.assertIn(b'id="fleet-connection-state"', dashboard)
         self.assertNotIn(b'data-command=', dashboard)
         self.assertNotIn(b'id="stop-all-robots"', dashboard)
@@ -83,6 +107,10 @@ class AppTest(unittest.TestCase):
 
     def test_background_service_starts_explicitly_once(self):
         manager = self.app.extensions["mock_manager"]
+        self.assertIs(
+            self.app.extensions["ros_bridge"].history_store,
+            self.app.extensions["history_store"],
+        )
         self.assertFalse(manager.running)
 
         start_background_service(self.app)
@@ -148,20 +176,48 @@ class AppTest(unittest.TestCase):
                           {"detections": 0, "trail_points": 0})
         self.assertEqual(client.get("/api/history/detections").get_json(), [])
         self.assertEqual(client.get("/api/history/trail").get_json(), [])
+        self.assertFalse(client.get("/api/history/herding").get_json()["available"])
 
         detection_id = store.record_detection(
             robot_id="robot4", object_type="LIVE_RODENT", map_x=1.0, map_y=2.0,
             confidence=0.9, image_bytes=b"jpeg-bytes", image_ext="jpg",
         )
+        opening_id = store.record_detection(
+            robot_id="robot4", object_type="ENTRY_POINT", map_x=2.0, map_y=3.0,
+            opening_id="O001", trap_id="T001",
+            trap_installation_status="INSTALLED",
+        )
         store.record_trail_point(robot_id="robot4", map_x=1.0, map_y=2.0)
 
         detections = client.get("/api/history/detections").get_json()
-        self.assertEqual(len(detections), 1)
-        self.assertEqual(detections[0]["id"], detection_id)
-        self.assertEqual(detections[0]["image_url"],
+        self.assertEqual(len(detections), 2)
+        live_rodent = next(row for row in detections if row["id"] == detection_id)
+        opening = next(row for row in detections if row["id"] == opening_id)
+        self.assertEqual(live_rodent["image_url"],
                           f"/api/history/detections/{detection_id}/image")
+        self.assertEqual(opening["opening_id"], "O001")
+        self.assertEqual(opening["trap_id"], "T001")
+        self.assertEqual(
+            opening["trap_installation_status"], "INSTALLED"
+        )
 
-        image = client.get(detections[0]["image_url"])
+        installed = client.get(
+            "/api/history/detections?trap_installation_status=INSTALLED"
+        ).get_json()
+        self.assertEqual([row["id"] for row in installed], [opening_id])
+        filtered_summary = client.get(
+            "/api/history/summary?object_type=ENTRY_POINT&"
+            "trap_installation_status=INSTALLED"
+        ).get_json()
+        self.assertEqual(filtered_summary["detections"], 1)
+        self.assertEqual(
+            client.get(
+                "/api/history/detections?trap_installation_status=MOVED"
+            ).status_code,
+            400,
+        )
+
+        image = client.get(live_rodent["image_url"])
         self.assertEqual(image.status_code, 200)
         self.assertEqual(image.data, b"jpeg-bytes")
 
@@ -177,6 +233,49 @@ class AppTest(unittest.TestCase):
             client.delete(f"/api/history/detections/{detection_id}/image").status_code, 405
         )
 
+    def test_herding_history_route_returns_replay_frames_for_two_robots(self):
+        settings = replace(
+            self._settings("mock"),
+            robots=(
+                RobotConfig("robot4", "SCOUT"),
+                RobotConfig("robot6", "SCOUT"),
+            ),
+        )
+        app = create_app(settings)
+
+        response = app.test_client().get("/api/history/herding")
+        record = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(record["available"])
+        self.assertEqual(record["driver_id"], "robot4")
+        self.assertEqual(record["blocker_id"], "robot6")
+        self.assertEqual(record["selected_trial_index"], 0)
+        self.assertEqual(record["trial_count"], 4)
+        self.assertEqual(len(record["trial_options"]), 4)
+        self.assertGreater(len(record["trial"]["frames"]), 0)
+        self.assertTrue(record["map_image"].startswith("data:image/png;base64,"))
+        self.assertLess(record["photo_frame"]["x_low"], record["photo_frame"]["x_high"])
+        self.assertEqual(response.headers["Content-Type"], "application/json")
+
+        second = app.test_client().get("/api/history/herding?trial_index=1")
+        second_record = second.get_json()
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second_record["selected_trial_index"], 1)
+        self.assertEqual(second_record["trial"]["model"], "noisy_human")
+        self.assertEqual(len(second_record["trial"]["frames"]), 99)
+        # 기록 화면의 선택은 실제 Replay 실행 대상을 바꾸지 않는다.
+        self.assertEqual(app.extensions["replay_manager"]._trial["model"], "reactive_flee")
+
+        self.assertEqual(
+            app.test_client().get("/api/history/herding?trial_index=bad").status_code,
+            400,
+        )
+        self.assertEqual(
+            app.test_client().get("/api/history/herding?trial_index=99").status_code,
+            400,
+        )
+
     def test_history_query_params_reject_non_numeric_values(self):
         client = self.app.test_client()
         self.assertEqual(
@@ -184,6 +283,9 @@ class AppTest(unittest.TestCase):
         )
         self.assertEqual(
             client.get("/api/history/trail?limit=not-a-number").status_code, 400
+        )
+        self.assertEqual(
+            client.get("/api/history/summary?since=not-a-number").status_code, 400
         )
 
     def test_removed_feature_css_is_not_shipped(self):

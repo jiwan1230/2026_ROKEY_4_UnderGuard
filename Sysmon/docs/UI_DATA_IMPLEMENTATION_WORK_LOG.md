@@ -2,7 +2,7 @@
 
 최초 작성일: 2026-08-11
 
-현재 상태: 기획·범위 선정 완료, 구현 시작 전
+현재 상태: 쥐구멍 탐지의 Trap 설치 여부 1차 구현 완료, 운영 DB 연동 대기
 
 ## 1. 문서 목적
 
@@ -35,12 +35,13 @@ System Monitor의 기존 기능과 겹치지 않는 데이터 화면을 선정�
 | 0 | 최초 데이터 분류 | 완료 |
 | 1 | 기존 System Monitor와 중복 검토 | 완료 |
 | 2 | 구현 대상과 우선순위 선정 | 완료 |
-| 3 | 1차 구현 범위와 화면 명세 확정 | 대기 |
-| 4 | 데이터/API 계약 설계 | 대기 |
-| 5 | 백엔드 집계·조회 구현 | 대기 |
-| 6 | 프론트엔드 화면 구현 | 대기 |
-| 7 | 단위·통합·화면 검증 | 대기 |
+| 3 | 1차 구현 범위와 화면 명세 확정 | 완료 |
+| 4 | 데이터/API 계약 설계 | 완료(로컬 계약) |
+| 5 | 백엔드 집계·조회 구현 | 완료(운영 DB 연동 제외) |
+| 6 | 프론트엔드 화면 구현 | 완료 |
+| 7 | 단위·통합·화면 검증 | 완료(실물 연동 제외) |
 | 8 | 문서 정리와 완료 판정 | 대기 |
+| 9 | 기존 탐지·이동 기록 저장 배선과 UI 단순화 | 완료(실물 연동 제외) |
 
 ## 4. 단계별 작업 기록
 
@@ -173,110 +174,136 @@ Dropping 통계와 신호가 없는 Trap `MISSING`/`CAPTURED` 상태는 현재 �
 
 ### 단계 3. 1차 구현 범위와 화면 명세 확정
 
-상태: 대기
+상태: 완료
 
-#### 목표
+작업일: 2026-08-11
 
-1차 구현 대상을 탐지 분석 대시보드로 확정하고, 표시 지표와 사용자 동작을
-구체화한다.
+#### 우선순위 변경
 
-#### 예정 작업
+최초에는 탐지 분석을 먼저 구현할 예정이었으나, 사용자가 쥐구멍 탐지 기록에서
+Trap 설치 여부를 먼저 확인할 필요가 있다고 결정했다. 탐지 분석 계획은 삭제하지
+않고 후속 작업으로 이동했다.
 
-- 기존 기록 조회 화면과 분석 화면의 경계 확정
-- 분석 기간 필터 확정
-- 시간대 그래프의 시간 구간과 현장 시간대 규칙 확정
-- 객체·Robot 필터 적용 범위 확정
-- Heatmap 표시 방식과 빈 데이터 상태 확정
-- 데스크톱·모바일 화면 구성 초안 작성
-- API 응답 예시 작성
+#### 확정한 1차 범위
 
-#### 완료 조건
+- 기존 `기록 조회 → 탐지·이동 기록` 화면을 확장한다.
+- `ENTRY_POINT` 기록에만 Trap 설치 상태를 표시한다.
+- 상태는 `INSTALLED`, `NOT_INSTALLED`, `UNKNOWN` 세 가지로 제한한다.
+- 목록 배지, 선택 상세, 기록 지도 보조 기호와 전용 필터를 제공한다.
+- 실제 운영 MySQL 연결 전에는 현재 HistoryStore와 더미 데이터로 UI 계약을
+  검증한다.
+- `ACTIVE/MOVED` 상세 상태, 점검 거리와 최근 점검시간은 다음 연동 단계로 둔다.
 
-- UI에 표시할 모든 값의 출처가 정해져 있다.
-- 기간, 시간대, 필터, 빈 값 처리 규칙이 정해져 있다.
-- 기존 화면과 중복되는 요소가 식별되어 있다.
-- 구현 파일과 테스트 범위가 정해져 있다.
+#### 화면 표현
+
+| API 상태 | 화면 문구 | 색상 의미 |
+|---|---|---|
+| `INSTALLED` | 트랩 설치 확인 | 초록 |
+| `NOT_INSTALLED` | 트랩 미설치 | 회색 |
+| `UNKNOWN` 또는 누락 | 트랩 확인 필요 | 노랑 |
 
 ### 단계 4. 데이터/API 계약 설계
 
-상태: 대기
+상태: 완료(로컬 계약)
 
-#### 예정 작업
+작업일: 2026-08-11
 
-- 기존 `/api/history/detections` 재사용 가능 범위 확인
-- 클라이언트 집계와 서버 집계의 성능·책임 비교
-- 분석 전용 API가 필요하면 요청 파라미터와 응답 스키마 정의
-- UTC 저장과 Asia/Seoul 화면 표시 규칙 정의
-- 기간 경계, 객체 종류, Robot ID 검증 규칙 정의
-- 데이터가 없거나 일부 필드가 누락된 응답 정의
+#### DB 브랜치 확인 결과
 
-#### 완료 조건
+DB 브랜치를 병합하지 않고 `origin/DB`를 조회했다.
 
-- API 계약이 문서와 테스트로 고정되어 있다.
-- UI가 SQLite 파일을 직접 읽지 않는다.
-- 집계 분모와 제외 조건이 명확하다.
+- MySQL `opening`과 `trap` 테이블이 존재한다.
+- `trap.status`는 `ACTIVE`, `MOVED`, `MISSING`, `CAPTURED`를 준비하고 있지만
+  현재 실제 신호는 `ACTIVE`, `MOVED`만 사용한다.
+- `/db/query_hole`은 좌표 기준으로 `trap_installed` bool을 반환한다.
+- 전체 Opening/Trap 상태를 System Monitor에 제공하는 조회 API는 아직 없다.
+- `QueryHole`의 bool은 `ACTIVE`만 true이므로 `MOVED`와 미설치를 구분할 수 없다.
+- 운영 DB의 객체명 `OPENING`은 System Monitor 표준값 `ENTRY_POINT`로 변환해야
+  한다.
 
-### 단계 5. 백엔드 집계·조회 구현
+#### 1차 API 응답 계약
 
-상태: 대기
+기존 `GET /api/history/detections` 응답에 아래 필드를 추가했다.
 
-#### 예정 작업
+```json
+{
+  "opening_id": "O001",
+  "trap_id": "T001",
+  "trap_installation_status": "INSTALLED"
+}
+```
 
-- 필요한 HistoryStore 집계 쿼리 추가
-- 분석 조회 API 추가
-- 기간·종류·Robot 필터 구현
-- 시간대별 집계와 요약값 구현
-- 잘못된 파라미터와 빈 결과 처리
-- 백엔드 단위/API 테스트 작성
+쥐나 배설물 기록에는 세 필드가 `null`이고, 과거 쥐구멍 기록처럼 값이 없으면
+API가 `UNKNOWN`으로 반환한다. 다음 필터도 추가했다.
 
-#### 완료 후 기록할 내용
+```text
+GET /api/history/detections?trap_installation_status=INSTALLED
+```
 
-- 변경 파일
-- 추가된 API
-- 쿼리와 인덱스 영향
-- 실행한 테스트와 결과
-- 남은 제약
+### 단계 5. 백엔드 저장·조회 구현
+
+상태: 완료(운영 DB 연동 제외)
+
+작업일: 2026-08-11
+
+#### 구현 내용
+
+- 기존 SQLite `detections`에 `opening_id`, `trap_id`,
+  `trap_installation_status` 필드를 추가했다.
+- 기존 DB는 삭제하지 않고 `PRAGMA table_info` 확인 후 `ALTER TABLE`로 이전한다.
+- `ENTRY_POINT` 신규 기록은 상태를 생략하면 `UNKNOWN`으로 저장한다.
+- 허용하지 않는 상태는 저장과 API 요청에서 거부한다.
+- Trap 상태 필터는 쥐구멍 기록만 반환한다.
+- 더미 생성기는 쥐구멍에 세 상태와 Opening/Trap ID 예시를 넣는다.
+
+#### 남은 제약
+
+현재 구현은 화면과 API 계약을 먼저 검증하기 위한 로컬 HistoryStore 기준이다.
+운영 MySQL의 `opening`/`trap` 전체 조회 API가 제공되면 해당 데이터를 이 응답으로
+매핑해야 한다. System Monitor가 MySQL 파일이나 계정으로 직접 접속하지 않는다.
 
 ### 단계 6. 프론트엔드 화면 구현
 
-상태: 대기
+상태: 완료
 
-#### 예정 작업
+작업일: 2026-08-11
 
-- 분석 화면 또는 기록 조회 하위 탭 추가
-- 기간·객체·Robot 필터 구현
-- 시간대별 탐지 그래프 구현
-- 요약 카드 구현
-- Heatmap 또는 밀도 지도 구현
-- 로딩, 오류, 빈 데이터 상태 구현
-- 모바일 레이아웃과 키보드 접근성 확인
+#### 구현 내용
 
-#### 완료 후 기록할 내용
+- `쥐구멍 트랩` 필터를 추가했다.
+- Trap 필터를 선택하면 객체 종류를 자동으로 쥐구멍으로 맞춘다.
+- 다른 객체 종류를 선택하면 Trap 필터를 해제한다.
+- 쥐구멍 기록 카드에 상태 배지를 표시한다.
+- 선택 상세에 Opening ID, Trap 설치 여부와 Trap ID를 표시한다.
+- 기록 지도 쥐구멍 마커 옆에 `✓`, `–`, `?` 보조 기호를 표시한다.
+- 색상만으로 상태를 판단하지 않도록 목록과 상세에는 텍스트를 함께 표시한다.
 
-- 변경 파일과 주요 UI 구성
-- 기존 컴포넌트 재사용 범위
-- 화면 상태별 동작
-- 스크린샷 또는 수동 확인 결과
+#### 변경 파일
+
+- `frontend/templates/dashboard.html`
+- `frontend/static/js/dashboard.js`
+- `frontend/static/css/dashboard.css`
 
 ### 단계 7. 단위·통합·화면 검증
 
-상태: 대기
+상태: 완료(실물·운영 DB 연동 제외)
 
-#### 예정 작업
+작업일: 2026-08-11
 
-- 백엔드 전체 테스트 실행
-- 신규 집계의 경계값 테스트
-- API와 프론트엔드 연결 확인
-- 데이터 없음, 일부 누락, 대량 데이터 확인
-- Mock과 실제 DB 결과 구분 확인
-- 데스크톱과 모바일 화면 확인
-- 기존 실시간 관제와 기록 조회 회귀 확인
+#### 자동 검증
 
-#### 완료 조건
+- Python 전체 단위 테스트 76개 통과
+- 기존 SQLite 스키마 자동 이전과 데이터 보존 테스트 통과
+- 기본 `UNKNOWN`, 정상 상태, 잘못된 상태 거부와 필터 테스트 통과
+- Flask API 및 기존 Mock/ROS/Replay 회귀 테스트 통과
+- Python 문법 검사 통과
 
-- 자동 테스트가 통과한다.
-- 주요 사용자 흐름을 수동 확인했다.
-- 발견된 문제와 미해결 제약이 문서에 남아 있다.
+#### 브라우저 확인
+
+- 임시 DB와 Flask 서버로 실제 API 응답을 확인했다.
+- Chrome Headless가 HTML, CSS, JavaScript와 `/api/snapshot`을 정상 요청했다.
+- `node`가 설치돼 있지 않아 `node --check`는 실행하지 못했다.
+- 실제 MySQL과 실물 Robot의 end-to-end 검증은 DB 조회 계약 완료 후 진행한다.
 
 ### 단계 8. 문서 정리와 완료 판정
 
@@ -292,11 +319,61 @@ Dropping 통계와 신호가 없는 Trap `MISSING`/`CAPTURED` 상태는 현재 �
 
 #### 최종 완료 조건
 
-- 운영자가 기존 기록 목록과 겹치지 않는 탐지 분석을 확인할 수 있다.
-- 데이터 출처와 집계 기준을 설명할 수 있다.
+- 운영자가 쥐구멍 탐지별 Trap 설치 여부를 확인할 수 있다.
+- 운영 MySQL의 Opening/Trap 상태가 조회 API를 통해 연결돼 있다.
 - 빈 데이터와 오류 상태가 정상적으로 표시된다.
 - 자동 테스트와 주요 화면 검증이 완료됐다.
-- 남은 Opening·Trap 및 Incident 연동 작업이 명확히 기록돼 있다.
+- 실제 `ACTIVE/MOVED` 상태와 설치 여부 변환 규칙이 DB 담당자와 확정돼 있다.
+
+### 단계 9. 기존 탐지·이동 기록 저장 배선과 UI 단순화
+
+상태: 완료(실물 연동 제외)
+
+작업일: 2026-08-11
+
+#### 시작 전 확인
+
+- `HistoryStore.record_detection()`과 `record_trail_point()`는 있었지만
+  `RosBridge`에 저장소가 전달되지 않아 실제 ROS 수신 데이터가 DB에 쌓이지 않았다.
+- 기록 Summary는 필터와 무관한 전체 건수를 반환했다.
+- 시간대별 점과 탐지 목록이 같은 선택 동작을 중복 제공했다.
+- 목록과 상세가 좌표·신뢰도까지 반복 표시했다.
+- README와 책임 범위 문서가 로컬 이력 DB가 없다고 설명해 실제 코드와 달랐다.
+
+#### 백엔드 변경
+
+- `app.py`가 생성한 같은 `HistoryStore`를 `RosBridge`에 주입했다.
+- Detection3D와 `/fleet/event` 탐지를 실시간 상태 처리 후 SQLite에도 저장한다.
+- 탐지 시점의 최신 카메라 프레임이 있으면 증거 이미지 파일도 함께 저장한다.
+- 동일 Robot·객체 탐지는 기본 1초 간격으로 제한한다.
+- odom은 좌표 frame이 `map`일 때만 기본 0.5초 간격으로 이동 경로에 저장한다.
+- 기록 실패는 ROS 실시간 관제를 중단하지 않고 로그만 남긴다.
+- `/api/history/summary`에 기간·종류·Robot·Trap 필터를 적용했다.
+
+#### UI 변경
+
+- 중복된 `시간대별 기록` 타임라인을 제거했다.
+- 화면 순서를 `필터 → 지도·탐지 목록 → 선택한 탐지 증거`로 단순화했다.
+- 탐지 목록에서는 좌표와 confidence를 제거하고 시간·Robot만 요약한다.
+- 좌표, confidence와 Opening/Trap 정보는 선택 상세에 유지한다.
+- 상세 패널을 큰 증거 이미지 중심으로 확장했다.
+- 상단의 경로 row 개수를 제거하고 현재 필터의 탐지 건수만 표시한다.
+- Robot 필터 후보를 이동 경로뿐 아니라 탐지 기록에서도 수집한다.
+
+#### 문서 변경
+
+- README의 데이터 소유·영속 기록·ROS 입력 설명을 현재 구현에 맞췄다.
+- `SYSTEM_MONITOR_SCOPE.md`에 로컬 탐지·이동 기록 책임을 반영했다.
+- `SYSTEM_MONITOR_FILE_STRUCTURE.md`의 RosBridge 역할을 갱신했다.
+
+#### 검증 결과
+
+- Python 전체 단위 테스트 77개 통과
+- ROS 탐지·Fleet 탐지·map odom 저장 테스트 통과
+- map이 아닌 odom 좌표의 저장 제외 테스트 통과
+- 고주파 탐지·이동 기록 제한 테스트 통과
+- 필터 Summary 테스트와 기존 기능 회귀 테스트 통과
+- 실물 TurtleBot과 실제 map 위치 토픽 검증은 남아 있다.
 
 ## 5. 결정 이력
 
@@ -316,6 +393,24 @@ Dropping 통계와 신호가 없는 Trap `MISSING`/`CAPTURED` 상태는 현재 �
 보여주는 관리 화면으로 설계한다. 현재 데이터가 제한적이므로 API와 스키마를
 확인한 뒤 구현한다.
 
+### 2026-08-11: 첫 구현을 Trap 설치 여부로 변경
+
+사용자 결정에 따라 탐지 분석보다 쥐구멍별 Trap 설치 여부를 먼저 구현했다.
+기존 탐지 기록 화면을 재사용해 중복 화면을 만들지 않고 목록·상세·지도·필터를
+함께 확장했다.
+
+### 2026-08-11: DB 브랜치를 병합하지 않고 계약만 확인
+
+`origin/DB`의 MySQL 스키마와 `db_node.py`를 읽어 `opening`, `trap`,
+`trap_inspection` 구조를 확인했다. 현재 조회 인터페이스만으로는 `MOVED`와
+미설치를 구분할 수 있어, 운영 연동 전에 DB 담당자의 전체 조회 API가 필요하다.
+
+### 2026-08-11: 기존 기록 화면의 데이터 완결성을 UI보다 우선
+
+새 분석 화면을 추가하기 전에 실제 ROS 입력이 HistoryStore까지 도달하도록
+배선하고, 중복 타임라인과 불일치 Summary를 정리했다. 이 변경은 운영 DB 확장과
+별개로 현재 탐지·이동 기록 기능 자체를 완성하기 위한 작업이다.
+
 ## 6. 작업 변경 목록
 
 ### 2026-08-11
@@ -325,10 +420,44 @@ Dropping 통계와 신호가 없는 Trap `MISSING`/`CAPTURED` 상태는 현재 �
 - 코드 변경: 없음
 - 테스트: 문서만 추가하여 실행하지 않음
 
+### 2026-08-11 — Trap 설치 여부 1차 구현
+
+- 수정: `backend/system_monitor/history_store.py`
+- 수정: `backend/system_monitor/app.py`
+- 수정: `backend/seed_dummy_history.py`
+- 수정: `backend/tests/test_history_store.py`
+- 수정: `backend/tests/test_app.py`
+- 수정: `frontend/templates/dashboard.html`
+- 수정: `frontend/static/js/dashboard.js`
+- 수정: `frontend/static/css/dashboard.css`
+- 수정: `docs/SYSTEM_MONITOR_FILE_STRUCTURE.md`
+- 테스트: Python 전체 단위 테스트 76개 통과
+- 브라우저: Chrome Headless에서 정적 자원과 API 요청 확인
+- 미검증: 실제 MySQL Opening/Trap 조회와 실물 Robot 연동
+
+### 2026-08-11 — 기존 탐지·이동 기록 개선
+
+- 수정: `backend/system_monitor/ros_bridge.py`
+- 수정: `backend/system_monitor/app.py`
+- 수정: `backend/system_monitor/history_store.py`
+- 수정: `backend/tests/test_ros_bridge.py`
+- 수정: `backend/tests/test_history_store.py`
+- 수정: `backend/tests/test_app.py`
+- 수정: `frontend/templates/dashboard.html`
+- 수정: `frontend/static/js/dashboard.js`
+- 수정: `frontend/static/css/dashboard.css`
+- 수정: `README.md`
+- 수정: `docs/SYSTEM_MONITOR_SCOPE.md`
+- 수정: `docs/SYSTEM_MONITOR_FILE_STRUCTURE.md`
+- 테스트: Python 전체 단위 테스트 77개 통과
+- 미검증: 실물 Robot Detection/odom과 실제 지도 좌표계 end-to-end
+
 ## 7. 다음 작업
 
-다음 단계는 **단계 3: 1차 구현 범위와 화면 명세 확정**이다.
+다음 단계는 **운영 DB 조회 계약 연결**이다.
 
-실제 구현을 시작할 때 이 문서의 단계 3 상태를 `진행 중`으로 변경하고, 화면
-명세가 확정된 뒤 결정 내용과 변경 파일을 기록한다. 이후에도 각 단계 시작과
-완료 시 같은 방식으로 이 문서를 갱신한다.
+DB 담당자에게 전체 Opening/Trap 조회 API 또는 ROS Service를 받아
+`opening_id`, `trap_id`, 최신 `trap.status`를 현재 API 계약으로 변환한다. 특히
+`MOVED`를 단순 미설치로 처리하지 않도록 설치 여부와 상태를 분리한 응답 계약을
+확정하고, DB의 `OPENING` 객체명을 UI의 `ENTRY_POINT`로 정규화해야 한다. 연동 후
+실제 데이터로 목록·상세·지도와 재시작 복원을 검증하면 단계 8을 완료한다.

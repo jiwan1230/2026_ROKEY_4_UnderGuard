@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -19,7 +20,8 @@ class HistoryStoreTest(unittest.TestCase):
     def test_record_and_list_detection_without_image(self):
         detection_id = self.store.record_detection(
             robot_id="robot4", object_type="ENTRY_POINT", map_x=1.5, map_y=-2.5,
-            confidence=0.8, timestamp=1000.0,
+            confidence=0.8, timestamp=1000.0, opening_id="O001",
+            trap_id="T001", trap_installation_status="INSTALLED",
         )
         rows = self.store.list_detections()
         self.assertEqual(len(rows), 1)
@@ -27,6 +29,9 @@ class HistoryStoreTest(unittest.TestCase):
         self.assertEqual(rows[0]["robot_id"], "robot4")
         self.assertEqual(rows[0]["object_type"], "ENTRY_POINT")
         self.assertEqual((rows[0]["map_x"], rows[0]["map_y"]), (1.5, -2.5))
+        self.assertEqual(rows[0]["opening_id"], "O001")
+        self.assertEqual(rows[0]["trap_id"], "T001")
+        self.assertEqual(rows[0]["trap_installation_status"], "INSTALLED")
         self.assertIsNone(rows[0]["image_url"])
         self.assertFalse(rows[0]["is_dummy"])
 
@@ -65,6 +70,84 @@ class HistoryStoreTest(unittest.TestCase):
         self.assertEqual(len(self.store.list_detections(until=150.0)), 1)
         self.assertEqual(len(self.store.list_detections(object_type="ENTRY_POINT")), 1)
         self.assertEqual(len(self.store.list_detections(robot_id="robot4")), 2)
+        self.store.record_trail_point(
+            robot_id="robot4", map_x=0, map_y=0, timestamp=100.0
+        )
+        self.store.record_trail_point(
+            robot_id="robot6", map_x=0, map_y=0, timestamp=200.0
+        )
+        self.assertEqual(
+            self.store.summary(since=150.0, robot_id="robot6"),
+            {"detections": 1, "trail_points": 1},
+        )
+        self.assertEqual(
+            self.store.summary(object_type="LIVE_RODENT"),
+            {"detections": 2, "trail_points": 2},
+        )
+
+    def test_opening_trap_status_defaults_validates_and_filters(self):
+        unknown_id = self.store.record_detection(
+            robot_id="robot4", object_type="ENTRY_POINT", map_x=0, map_y=0
+        )
+        installed_id = self.store.record_detection(
+            robot_id="robot6", object_type="ENTRY_POINT", map_x=1, map_y=1,
+            opening_id="O002", trap_id="T002",
+            trap_installation_status="installed",
+        )
+        rodent_id = self.store.record_detection(
+            robot_id="robot4", object_type="LIVE_RODENT", map_x=2, map_y=2,
+            opening_id="ignored", trap_id="ignored",
+            trap_installation_status="INSTALLED",
+        )
+
+        rows = {row["id"]: row for row in self.store.list_detections()}
+        self.assertEqual(
+            rows[unknown_id]["trap_installation_status"], "UNKNOWN"
+        )
+        self.assertEqual(
+            rows[installed_id]["trap_installation_status"], "INSTALLED"
+        )
+        self.assertIsNone(rows[rodent_id]["opening_id"])
+        self.assertIsNone(rows[rodent_id]["trap_installation_status"])
+        self.assertEqual(
+            [row["id"] for row in self.store.list_detections(
+                trap_installation_status="INSTALLED"
+            )],
+            [installed_id],
+        )
+        self.assertEqual(
+            self.store.summary(trap_installation_status="INSTALLED")["detections"],
+            1,
+        )
+
+        with self.assertRaises(ValueError):
+            self.store.record_detection(
+                robot_id="robot4", object_type="ENTRY_POINT", map_x=0, map_y=0,
+                trap_installation_status="MOVED",
+            )
+
+    def test_existing_detection_schema_is_migrated_without_data_loss(self):
+        root = Path(self.temp.name)
+        db_path = root / "legacy.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "CREATE TABLE detections ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp REAL NOT NULL, "
+            "robot_id TEXT, object_type TEXT, map_x REAL, map_y REAL, "
+            "confidence REAL, image_path TEXT, is_dummy INTEGER NOT NULL DEFAULT 0)"
+        )
+        conn.execute(
+            "INSERT INTO detections "
+            "(timestamp, robot_id, object_type, map_x, map_y, is_dummy) "
+            "VALUES (1, 'robot4', 'ENTRY_POINT', 1, 2, 0)"
+        )
+        conn.commit()
+        conn.close()
+
+        migrated = HistoryStore(db_path, root / "legacy-captures")
+        row = migrated.list_detections()[0]
+        self.assertEqual(row["opening_id"], None)
+        self.assertEqual(row["trap_installation_status"], "UNKNOWN")
 
     def test_list_detections_orders_newest_first(self):
         self.store.record_detection(

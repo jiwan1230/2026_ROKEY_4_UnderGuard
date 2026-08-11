@@ -109,6 +109,7 @@ def create_app(settings: Settings | None = None) -> Flask:
         low_battery_threshold=settings.low_battery_threshold,
         interface=settings.ros_interface,
         camera_frame_store=camera_frame_store,
+        history_store=history_store,
     )
     # replay 모드 — herding_controller_dual 검증 시뮬레이션이 남긴 궤적을
     # 재생한다. Mock/ROS와 마찬가지로 항상 만들어 두되(app.extensions로
@@ -242,7 +243,26 @@ def create_app(settings: Settings | None = None) -> Flask:
     # 원칙을 이 저장소에도 그대로 유지한다.
     @app.get("/api/history/summary")
     def history_summary():
-        return jsonify(history_store.summary())
+        args = request.args
+        try:
+            since = float(args["since"]) if "since" in args else None
+            until = float(args["until"]) if "until" in args else None
+        except (TypeError, ValueError):
+            return jsonify({"error": "since/until은 숫자여야 합니다."}), 400
+        trap_status = args.get("trap_installation_status") or None
+        if trap_status is not None:
+            trap_status = trap_status.strip().upper()
+            if trap_status not in {"INSTALLED", "NOT_INSTALLED", "UNKNOWN"}:
+                return jsonify({"error": "지원하지 않는 트랩 설치 상태입니다."}), 400
+        return jsonify(
+            history_store.summary(
+                since=since,
+                until=until,
+                object_type=args.get("object_type") or None,
+                robot_id=args.get("robot_id") or None,
+                trap_installation_status=trap_status,
+            )
+        )
 
     @app.get("/api/history/detections")
     def history_detections():
@@ -253,6 +273,11 @@ def create_app(settings: Settings | None = None) -> Flask:
             until = float(args["until"]) if "until" in args else None
         except (TypeError, ValueError):
             return jsonify({"error": "limit/since/until은 숫자여야 합니다."}), 400
+        trap_status = args.get("trap_installation_status") or None
+        if trap_status is not None:
+            trap_status = trap_status.strip().upper()
+            if trap_status not in {"INSTALLED", "NOT_INSTALLED", "UNKNOWN"}:
+                return jsonify({"error": "지원하지 않는 트랩 설치 상태입니다."}), 400
         return jsonify(
             history_store.list_detections(
                 limit=limit,
@@ -260,6 +285,7 @@ def create_app(settings: Settings | None = None) -> Flask:
                 until=until,
                 object_type=args.get("object_type") or None,
                 robot_id=args.get("robot_id") or None,
+                trap_installation_status=trap_status,
             )
         )
 
@@ -287,6 +313,24 @@ def create_app(settings: Settings | None = None) -> Flask:
                 limit=limit,
             )
         )
+
+    @app.get("/api/history/herding")
+    def history_herding():
+        """요청한 Replay 시험의 전체 경로와 알고리즘 결과를 반환한다.
+
+        ``trial_index``를 생략하면 실행 설정의 기본 시험을 반환한다. 이 API에서
+        다른 번호를 조회해도 실제 Replay 모드가 재생하는 시험은 바뀌지 않는다.
+        """
+
+        raw_index = request.args.get("trial_index")
+        try:
+            trial_index = int(raw_index) if raw_index is not None else None
+        except (TypeError, ValueError):
+            return jsonify({"error": "trial_index는 정수여야 합니다."}), 400
+        try:
+            return jsonify(replay.history_record(trial_index))
+        except IndexError:
+            return jsonify({"error": "존재하지 않는 시험 번호입니다."}), 400
 
     @app.post("/api/mock/events")
     def mock_event():

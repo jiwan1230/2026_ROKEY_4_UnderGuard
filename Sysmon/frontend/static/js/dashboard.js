@@ -1016,6 +1016,740 @@ function drawMap(snapshot) {
 const HISTORY_TRAIL_COLORS = [ '#2997ff', '#ff9f0a', '#bf5af2', '#32d74b' ];
 let historyDetections = [];
 let selectedHistoryDetectionId = null;
+let activeHistorySubview = 'activity';
+let herdingHistoryRecord = null;
+let herdingHistoryMapImage = null;
+let herdingPlaybackFrameIndex = 0;
+let herdingPlaybackSpeed = 1;
+let herdingPlaybackPlaying = false;
+let herdingPlaybackAnimationId = null;
+let herdingPlaybackLastTimestamp = null;
+let herdingPlaybackTime = 0;
+let selectedHerdingTrialIndex = null;
+let herdingHistoryRequestId = 0;
+
+const TRAP_INSTALLATION_PRESENTATION = {
+  INSTALLED : {label : '트랩 설치 확인', className : 'installed'},
+  NOT_INSTALLED : {label : '트랩 미설치', className : 'not-installed'},
+  UNKNOWN : {label : '트랩 확인 필요', className : 'unknown'}
+};
+
+/** 쥐구멍 탐지의 Trap 설치 상태를 안전한 화면 표시값으로 변환한다. */
+function trapInstallationPresentation(detection) {
+  if (detection.object_type !== 'ENTRY_POINT')
+    return null;
+  const status = String(detection.trap_installation_status || 'UNKNOWN').toUpperCase();
+  return TRAP_INSTALLATION_PRESENTATION[status] ||
+      TRAP_INSTALLATION_PRESENTATION.UNKNOWN;
+}
+
+/** 기록 지도의 쥐구멍 마커 옆에 Trap 설치 여부를 작은 보조 기호로 표시한다. */
+function drawHistoryTrapIndicator(ctx, point, presentation) {
+  const center = {x : point.x + 9, y : point.y - 9};
+  const colors = {
+    installed : '#32d74b',
+    'not-installed' : '#8e8e93',
+    unknown : '#ffd60a'
+  };
+  ctx.save();
+  ctx.fillStyle = '#111214';
+  ctx.strokeStyle = colors[presentation.className];
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = colors[presentation.className];
+  ctx.font = 'bold 8px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(presentation.className === 'installed' ? '✓' :
+                   presentation.className === 'not-installed' ? '–' : '?',
+               center.x, center.y + .5);
+  ctx.restore();
+}
+
+const HERDING_STATE_LABELS = {
+  IDLE : '대기',
+  SEARCH : '공동 탐색',
+  TRACK : '쥐 추적',
+  HERD : '쥐 몰이',
+  CORNER : '구석 유도',
+  LOST : '대상 유실',
+  CAPTURED : '포획 완료'
+};
+const HERDING_STATE_DESCRIPTIONS = {
+  IDLE : '임무 시작 전 역할을 기다리는 중',
+  SEARCH : '두 로봇이 쥐 위치를 공동 탐색하는 중',
+  TRACK : '쥐를 확인하고 Driver·Blocker 역할을 배정',
+  HERD : 'Driver가 밀고 Blocker가 도주 경로를 차단',
+  CORNER : '쥐를 포획 지점 가까이 유도하는 중',
+  LOST : '마지막 위치를 기준으로 쥐를 다시 찾는 중',
+  CAPTURED : '쥐가 포획 지점에 도달해 임무 완료'
+};
+const HERDING_GOAL_LABELS = {
+  top : '상단(top)',
+  left : '좌측(left)',
+  bottom : '하단(bottom)'
+};
+const herdingLayerVisibility = {
+  target : true,
+  driver : true,
+  blocker : true,
+  driver_goal : false,
+  blocker_goal : false,
+  traps : true,
+  future : true
+};
+
+/**
+ * 기록 조회 안에서 일반 탐지 기록과 쥐몰이 기록 화면을 전환한다.
+ * 두 화면은 서로 다른 API를 사용하므로 선택된 화면의 데이터만 요청한다.
+ */
+function switchHistorySubview(view) {
+  activeHistorySubview = view === 'herding' ? 'herding' : 'activity';
+  document.querySelectorAll('[data-history-view]').forEach(tab => {
+    const active = tab.dataset.historyView === activeHistorySubview;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+  $('#history-view-activity')
+      .classList.toggle('hidden', activeHistorySubview !== 'activity');
+  $('#history-view-herding')
+      .classList.toggle('hidden', activeHistorySubview !== 'herding');
+  $('#history-heading-actions')
+      .classList.toggle('hidden', activeHistorySubview !== 'activity');
+
+  if (activeHistorySubview === 'activity') {
+    setHerdingPlaybackPlaying(false);
+    loadHistory();
+  } else {
+    loadHerdingHistory();
+  }
+}
+
+/** 쥐몰이 기록 영역에 로딩·데이터 없음·오류 안내를 표시한다. */
+function showHerdingHistoryMessage(title, description) {
+  const empty = $('#herding-history-empty');
+  empty.querySelector('h2').textContent = title;
+  empty.querySelector('p:not(.eyebrow)').textContent = description;
+  empty.classList.remove('hidden');
+  $('#herding-history-content').classList.add('hidden');
+}
+
+/** `[x, y]` 형식이고 두 값이 실제 숫자인 좌표만 지도 그리기에 사용한다. */
+function isHerdingPoint(point) {
+  return Array.isArray(point) && point.length >= 2 &&
+      Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]));
+}
+
+/**
+ * Replay JSON의 내장 지도 이미지를 브라우저 Image 객체로 바꾼다.
+ * 이미지 로드가 끝날 때까지 기다려야 naturalWidth/naturalHeight를 이용해
+ * 지도 비율을 정확히 계산할 수 있다.
+ */
+function loadHerdingMapImage(source) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener('load', () => resolve(image), {once : true});
+    image.addEventListener('error',
+                           () => reject(new Error('Replay 지도 이미지 로드 실패')),
+                           {once : true});
+    image.src = source;
+  });
+}
+
+/**
+ * Replay의 map 좌표(m)를 쥐몰이 Canvas 좌표(px)로 바꾸는 함수를 만든다.
+ * real_map_frames.json의 지도는 90도 회전돼 있어 이미지 가로축이 map의 y축과
+ * 대응한다. 이미지와 좌표 범위의 비율을 비교해 회전 여부를 자동 판단한다.
+ * 내장 지도가 없는 JSON도 사용할 수 있도록 전체 경로에서 좌표 범위를 구하는
+ * 대체 방식도 함께 제공한다.
+ */
+function createHerdingProjection(record, width, height) {
+  const frame = record.photo_frame || {};
+  const xLow = Number(frame.x_low), xHigh = Number(frame.x_high);
+  const yLow = Number(frame.y_low), yHigh = Number(frame.y_high);
+  const xSpan = xHigh - xLow, ySpan = yHigh - yLow;
+  const hasPhotoFrame = [ xLow, xHigh, yLow, yHigh ].every(Number.isFinite) &&
+      xSpan > 0 && ySpan > 0;
+
+  if (herdingHistoryMapImage && hasPhotoFrame) {
+    const padding = 18;
+    const imageWidth = herdingHistoryMapImage.naturalWidth;
+    const imageHeight = herdingHistoryMapImage.naturalHeight;
+    const scale = Math.min((width - padding * 2) / imageWidth,
+                           (height - padding * 2) / imageHeight);
+    const drawWidth = imageWidth * scale;
+    const drawHeight = imageHeight * scale;
+    const left = (width - drawWidth) / 2;
+    const top = (height - drawHeight) / 2;
+    const imageAspect = imageWidth / imageHeight;
+    const normalDifference = Math.abs(imageAspect - xSpan / ySpan);
+    const rotatedDifference = Math.abs(imageAspect - ySpan / xSpan);
+    const rotated = rotatedDifference < normalDifference;
+
+    return {
+      imageRect : {x : left, y : top, width : drawWidth, height : drawHeight},
+      toCanvas : (point) => rotated
+          ? {
+              x : left + ((yHigh - Number(point[1])) / ySpan) * drawWidth,
+              y : top + ((xHigh - Number(point[0])) / xSpan) * drawHeight
+            }
+          : {
+              x : left + ((Number(point[0]) - xLow) / xSpan) * drawWidth,
+              y : top + ((yHigh - Number(point[1])) / ySpan) * drawHeight
+            }
+    };
+  }
+
+  const points = [];
+  const frames = record.trial?.frames || [];
+  frames.forEach(item => {
+    [ 'target', 'driver', 'blocker', 'driver_goal', 'blocker_goal' ]
+        .forEach(key => {
+          if (isHerdingPoint(item[key]))
+            points.push(item[key]);
+        });
+  });
+  Object.values(record.traps || {}).forEach(point => {
+    if (isHerdingPoint(point))
+      points.push(point);
+  });
+  const xs = points.map(point => Number(point[0]));
+  const ys = points.map(point => Number(point[1]));
+  const minX = xs.length ? Math.min(...xs) : -1;
+  const maxX = xs.length ? Math.max(...xs) : 1;
+  const minY = ys.length ? Math.min(...ys) : -1;
+  const maxY = ys.length ? Math.max(...ys) : 1;
+  const paddingX = Math.max(.25, (maxX - minX) * .08);
+  const paddingY = Math.max(.25, (maxY - minY) * .08);
+  const drawLeft = 35, drawTop = 35;
+  const drawWidth = Math.max(1, width - drawLeft * 2);
+  const drawHeight = Math.max(1, height - drawTop * 2);
+  const rangeX = Math.max(.5, maxX - minX + paddingX * 2);
+  const rangeY = Math.max(.5, maxY - minY + paddingY * 2);
+  return {
+    imageRect : null,
+    toCanvas : point => ({
+      x : drawLeft + ((Number(point[0]) - minX + paddingX) / rangeX) * drawWidth,
+      y : drawTop + ((maxY + paddingY - Number(point[1])) / rangeY) * drawHeight
+    })
+  };
+}
+
+/** 프레임 배열에서 지정한 좌표만 이어 하나의 이동 경로 선을 그린다. */
+function drawHerdingPath(ctx, frames, key, toCanvas, options) {
+  const points = frames.map(frame => frame[key]).filter(isHerdingPoint);
+  if (points.length < 2)
+    return;
+  ctx.save();
+  ctx.strokeStyle = options.color;
+  ctx.globalAlpha = options.alpha ?? 1;
+  ctx.lineWidth = options.width ?? 2;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.setLineDash(options.dash || []);
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    const pixel = toCanvas(point);
+    index ? ctx.lineTo(pixel.x, pixel.y) : ctx.moveTo(pixel.x, pixel.y);
+  });
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** 경로의 출발 위치를 속이 빈 작은 원으로 표시한다. */
+function drawHerdingStartPoint(ctx, frames, key, color, toCanvas) {
+  const points = frames.map(frame => frame[key]).filter(isHerdingPoint);
+  if (!points.length)
+    return;
+  const start = toCanvas(points[0]);
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = '#0d141b';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(start.x, start.y, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * 현재 위치를 색상뿐 아니라 서로 다른 모양으로 그린다.
+ * Driver는 이동 방향 삼각형, Blocker는 방패, 쥐는 귀가 있는 원을 사용한다.
+ */
+function drawHerdingActorMarker(ctx, frames, key, actor, color, toCanvas,
+                                endpointLabel) {
+  const points = frames.map(frame => frame[key]).filter(isHerdingPoint);
+  if (!points.length)
+    return;
+  const current = toCanvas(points[points.length - 1]);
+  const previous = toCanvas(points[Math.max(0, points.length - 2)]);
+  const angle = Math.atan2(current.y - previous.y, current.x - previous.x);
+
+  ctx.save();
+  ctx.translate(current.x, current.y);
+  ctx.strokeStyle = '#f5f5f7';
+  ctx.fillStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.shadowColor = 'rgba(0,0,0,.8)';
+  ctx.shadowBlur = 5;
+  if (actor === 'driver') {
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo(10, 0);
+    ctx.lineTo(-7, -7);
+    ctx.lineTo(-4, 0);
+    ctx.lineTo(-7, 7);
+    ctx.closePath();
+  } else if (actor === 'blocker') {
+    ctx.beginPath();
+    ctx.moveTo(-8, -7);
+    ctx.lineTo(8, -7);
+    ctx.lineTo(7, 3);
+    ctx.lineTo(0, 10);
+    ctx.lineTo(-7, 3);
+    ctx.closePath();
+  } else {
+    // 작은 두 귀와 몸통 원으로 쥐를 표현한다.
+    ctx.beginPath();
+    ctx.arc(-4, -6, 3, 0, Math.PI * 2);
+    ctx.moveTo(7, -6);
+    ctx.arc(4, -6, 3, 0, Math.PI * 2);
+    ctx.moveTo(8, 0);
+    ctx.arc(0, 0, 8, 0, Math.PI * 2);
+  }
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  const label = actor === 'driver' ? 'Driver' : actor === 'blocker' ? 'Blocker' : '쥐';
+  ctx.save();
+  ctx.font = 'bold 11px Arial';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(0,0,0,.9)';
+  ctx.strokeText(`${label} ${endpointLabel}`, current.x + 11, current.y - 10);
+  ctx.fillStyle = color;
+  ctx.fillText(`${label} ${endpointLabel}`, current.x + 11, current.y - 10);
+  ctx.restore();
+}
+
+/** 포획 지점을 초록색 조준선 모양으로 표시한다. */
+function drawHerdingTrapMarker(ctx, name, point, toCanvas) {
+  const pixel = toCanvas(point);
+  ctx.save();
+  ctx.strokeStyle = '#32d74b';
+  ctx.fillStyle = 'rgba(50,215,75,.12)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(pixel.x, pixel.y, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(pixel.x - 12, pixel.y);
+  ctx.lineTo(pixel.x + 12, pixel.y);
+  ctx.moveTo(pixel.x, pixel.y - 12);
+  ctx.lineTo(pixel.x, pixel.y + 12);
+  ctx.stroke();
+  ctx.font = 'bold 10px Arial';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(0,0,0,.9)';
+  ctx.strokeText(`포획 지점 ${name}`, pixel.x + 13, pixel.y + 4);
+  ctx.fillStyle = '#7df294';
+  ctx.fillText(`포획 지점 ${name}`, pixel.x + 13, pixel.y + 4);
+  ctx.restore();
+}
+
+/**
+ * 선택된 시험을 현재 프레임까지 잘라 배경 지도와 다섯 종류의 경로를 그린다.
+ * 마지막 프레임을 전달하면 2단계에서 만든 전체 경로와 같은 결과가 된다.
+ */
+function drawHerdingHistoryMap(record, frameIndex = null) {
+  const canvas = $('#herding-history-map-canvas');
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0)
+    return;
+  const scale = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(rect.width * scale));
+  canvas.height = Math.max(1, Math.round(rect.height * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  const projection = createHerdingProjection(record, rect.width, rect.height);
+  const toCanvas = projection.toCanvas;
+
+  if (projection.imageRect && herdingHistoryMapImage) {
+    const area = projection.imageRect;
+    ctx.save();
+    ctx.globalAlpha = .7;
+    ctx.filter = 'brightness(.7) contrast(1.2)';
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(herdingHistoryMapImage, area.x, area.y, area.width, area.height);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(152,152,157,.5)';
+    ctx.strokeRect(area.x, area.y, area.width, area.height);
+  }
+
+  const allFrames = record.trial.frames;
+  const lastIndex = allFrames.length - 1;
+  const visibleIndex = frameIndex == null
+      ? lastIndex
+      : Math.max(0, Math.min(lastIndex, Math.floor(frameIndex)));
+  const frames = allFrames.slice(0, visibleIndex + 1);
+  const futureFrames = allFrames.slice(visibleIndex);
+
+  // 아직 지나지 않은 구간은 매우 흐린 점선으로 먼저 그린다. 사용자는 전체
+  // 방향을 참고할 수 있지만 현재까지 지나온 진한 실선과 혼동하지 않는다.
+  if (herdingLayerVisibility.future && visibleIndex < lastIndex) {
+    if (herdingLayerVisibility.target)
+      drawHerdingPath(ctx, futureFrames, 'target', toCanvas,
+                      {color : '#ff453a', alpha : .14, width : 1.4, dash : [ 3, 6 ]});
+    if (herdingLayerVisibility.driver)
+      drawHerdingPath(ctx, futureFrames, 'driver', toCanvas,
+                      {color : '#2997ff', alpha : .14, width : 1.4, dash : [ 3, 6 ]});
+    if (herdingLayerVisibility.blocker)
+      drawHerdingPath(ctx, futureFrames, 'blocker', toCanvas,
+                      {color : '#ff9f0a', alpha : .14, width : 1.4, dash : [ 3, 6 ]});
+  }
+
+  // 점선은 알고리즘이 계산한 목표, 실선은 실제로 움직인 위치다. 목표선을 먼저
+  // 그려 실제 경로가 위에 보이도록 한다.
+  if (herdingLayerVisibility.driver_goal)
+    drawHerdingPath(ctx, frames, 'driver_goal', toCanvas,
+                    {color : '#2997ff', alpha : .64, width : 1.5, dash : [ 6, 6 ]});
+  if (herdingLayerVisibility.blocker_goal)
+    drawHerdingPath(ctx, frames, 'blocker_goal', toCanvas,
+                    {color : '#ff9f0a', alpha : .64, width : 1.5, dash : [ 6, 6 ]});
+  if (herdingLayerVisibility.target)
+    drawHerdingPath(ctx, frames, 'target', toCanvas,
+                    {color : '#ff453a', alpha : .9, width : 2.5});
+  if (herdingLayerVisibility.driver)
+    drawHerdingPath(ctx, frames, 'driver', toCanvas,
+                    {color : '#2997ff', alpha : .95, width : 2.5});
+  if (herdingLayerVisibility.blocker)
+    drawHerdingPath(ctx, frames, 'blocker', toCanvas,
+                    {color : '#ff9f0a', alpha : .95, width : 2.5});
+
+  if (herdingLayerVisibility.traps)
+    Object.entries(record.traps || {}).forEach(([ name, point ]) => {
+      if (isHerdingPoint(point))
+        drawHerdingTrapMarker(ctx, name, point, toCanvas);
+    });
+
+  const endpointLabel = visibleIndex === lastIndex ? '종료' : '현재';
+  if (herdingLayerVisibility.target)
+    drawHerdingStartPoint(ctx, allFrames, 'target', '#ff453a', toCanvas);
+  if (herdingLayerVisibility.driver)
+    drawHerdingStartPoint(ctx, allFrames, 'driver', '#2997ff', toCanvas);
+  if (herdingLayerVisibility.blocker)
+    drawHerdingStartPoint(ctx, allFrames, 'blocker', '#ff9f0a', toCanvas);
+  // 경로 토글을 꺼도 현재 역할 위치는 항상 남겨 관제 맥락을 잃지 않게 한다.
+  drawHerdingActorMarker(ctx, frames, 'target', 'target', '#ff453a', toCanvas,
+                         endpointLabel);
+  drawHerdingActorMarker(ctx, frames, 'driver', 'driver', '#2997ff', toCanvas,
+                         endpointLabel);
+  drawHerdingActorMarker(ctx, frames, 'blocker', 'blocker', '#ff9f0a', toCanvas,
+                         endpointLabel);
+}
+
+/**
+ * 프레임의 상태 변화에서 발표·분석에 필요한 주요 사건을 뽑는다.
+ * Replay에 별도 역할 배정 이벤트가 없으므로 최초 discovered 시점을
+ * "쥐 탐지·역할 배정"으로 표시한다.
+ */
+function extractHerdingTimelineEvents(frames) {
+  const eventsByFrame = new Map();
+  const add = (index, label, kind) => {
+    if (!eventsByFrame.has(index))
+      eventsByFrame.set(index, {index, labels : [], kind});
+    const event = eventsByFrame.get(index);
+    if (!event.labels.includes(label))
+      event.labels.push(label);
+    if (kind === 'captured')
+      event.kind = kind;
+  };
+  add(0, '시작', 'start');
+  let discovered = Boolean(frames[0]?.discovered);
+  let previousState = String(frames[0]?.state || 'IDLE').toUpperCase();
+  if (discovered)
+    add(0, '쥐 탐지·역할 배정', 'detected');
+
+  frames.forEach((frame, index) => {
+    const state = String(frame.state || 'IDLE').toUpperCase();
+    const newlyDiscovered = Boolean(frame.discovered) && !discovered;
+    if (newlyDiscovered) {
+      add(index, '쥐 탐지·역할 배정', 'detected');
+      discovered = true;
+    }
+    if (index > 0 && state !== previousState) {
+      const eventLabels = {
+        TRACK : '추적 시작',
+        HERD : '몰이 시작',
+        CORNER : '포획 지점 접근',
+        LOST : '대상 유실',
+        CAPTURED : '포획 완료'
+      };
+      // TRACK 전환과 최초 탐지가 같은 프레임이면 같은 뜻을 두 번 쓰지 않는다.
+      if (eventLabels[state] && !(state === 'TRACK' && newlyDiscovered))
+        add(index, eventLabels[state], state.toLowerCase());
+    }
+    previousState = state;
+  });
+  return [...eventsByFrame.values()].sort((a, b) => a.index - b.index);
+}
+
+/** 주요 사건을 클릭 가능한 시간축 마커로 만든다. */
+function renderHerdingEventTimeline(frames) {
+  const container = $('#herding-event-timeline');
+  container.replaceChildren();
+  const finalTime = Math.max(.001, Number(frames[frames.length - 1]?.t || 0));
+  extractHerdingTimelineEvents(frames).forEach(eventData => {
+    const frame = frames[eventData.index];
+    const ratio = Math.max(0, Math.min(1, Number(frame.t || 0) / finalTime));
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `herding-event-marker event-${eventData.kind}`;
+    if (ratio < .04)
+      button.classList.add('edge-start');
+    else if (ratio > .96)
+      button.classList.add('edge-end');
+    button.style.left = `${ratio * 100}%`;
+    button.dataset.frameIndex = String(eventData.index);
+    button.textContent = eventData.labels.join(' · ');
+    button.title = `${Number(frame.t || 0).toFixed(1)}초 · ${button.textContent}`;
+    button.setAttribute('aria-label', button.title + '으로 이동');
+    container.appendChild(button);
+  });
+}
+
+/** 현재 프레임을 기준으로 지나온 사건과 가장 최근 사건을 강조한다. */
+function updateHerdingEventTimeline(frameIndex) {
+  const markers = [...document.querySelectorAll('.herding-event-marker')];
+  const passed = markers.filter(marker => Number(marker.dataset.frameIndex) <= frameIndex);
+  markers.forEach(marker => {
+    marker.classList.toggle('passed', Number(marker.dataset.frameIndex) <= frameIndex);
+    marker.classList.remove('current');
+  });
+  passed[passed.length - 1]?.classList.add('current');
+}
+
+/**
+ * 한 프레임의 시간·FSM 상태·포획 진행률을 표시하고 그 시점까지 지도를 그린다.
+ * syncClock이 true면 사용자가 슬라이더로 이동한 시각을 재생 시계에도 반영한다.
+ */
+function renderHerdingPlaybackFrame(frameIndex, syncClock = true) {
+  const frames = herdingHistoryRecord?.trial?.frames || [];
+  if (!frames.length)
+    return;
+  const index = Math.max(0, Math.min(frames.length - 1, Math.floor(frameIndex)));
+  const frame = frames[index];
+  const currentTime = Number(frame.t || 0);
+  const durationValue = Number(herdingHistoryRecord.trial.duration);
+  const duration = Number.isFinite(durationValue)
+      ? durationValue
+      : Number(frames[frames.length - 1].t || 0);
+  const rawProgress = Number(frame.capture_progress || 0);
+  const progress = Math.round(Math.max(0, Math.min(1, rawProgress)) * 100);
+  const rawState = String(frame.state || 'IDLE').toUpperCase();
+  const stateLabel = HERDING_STATE_LABELS[rawState] || rawState;
+
+  herdingPlaybackFrameIndex = index;
+  if (syncClock)
+    herdingPlaybackTime = currentTime;
+  $('#herding-playback-time').textContent =
+      `${n(currentTime, 1)} / ${n(duration, 1)}초`;
+  const state = $('#herding-playback-state');
+  state.textContent = `${stateLabel} (${rawState})`;
+  state.className = `herding-playback-state state-${rawState.toLowerCase()}`;
+  $('#herding-playback-state-description').textContent =
+      HERDING_STATE_DESCRIPTIONS[rawState] || '기록된 알고리즘 상태';
+  $('#herding-playback-progress-text').textContent = `${progress}%`;
+  $('#herding-playback-progress').value = progress;
+  $('#herding-playback-progress').title =
+      `Replay JSON의 capture_progress 값: ${progress}%`;
+  const goalPoint = herdingHistoryRecord.traps?.[herdingHistoryRecord.trial.goal_name];
+  if (isHerdingPoint(frame.target) && isHerdingPoint(goalPoint)) {
+    const distance = Math.hypot(Number(frame.target[0]) - Number(goalPoint[0]),
+                                Number(frame.target[1]) - Number(goalPoint[1]));
+    $('#herding-capture-distance').textContent =
+        `쥐 → ${HERDING_GOAL_LABELS[herdingHistoryRecord.trial.goal_name] || '포획 지점'} 거리 ${distance.toFixed(2)}m`;
+  } else {
+    $('#herding-capture-distance').textContent = '포획 지점 거리 정보 없음';
+  }
+  $('#herding-playback-frame').textContent = `${index + 1} / ${frames.length}`;
+  const slider = $('#herding-playback-slider');
+  slider.value = index;
+  slider.setAttribute(
+      'aria-valuetext',
+      `${currentTime.toFixed(1)}초, ${stateLabel}, ${index + 1}번째 프레임`);
+  updateHerdingEventTimeline(index);
+  drawHerdingHistoryMap(herdingHistoryRecord, index);
+}
+
+/** 재생 버튼 표시와 requestAnimationFrame 실행 여부를 한곳에서 관리한다. */
+function setHerdingPlaybackPlaying(playing) {
+  herdingPlaybackPlaying = Boolean(playing && herdingHistoryRecord);
+  const button = $('#herding-playback-toggle');
+  button.textContent = herdingPlaybackPlaying ? '일시정지' : '재생';
+  button.setAttribute('aria-pressed', String(herdingPlaybackPlaying));
+  button.classList.toggle('playing', herdingPlaybackPlaying);
+
+  if (herdingPlaybackAnimationId != null)
+    cancelAnimationFrame(herdingPlaybackAnimationId);
+  herdingPlaybackAnimationId = null;
+  herdingPlaybackLastTimestamp = null;
+  if (herdingPlaybackPlaying)
+    herdingPlaybackAnimationId = requestAnimationFrame(runHerdingPlaybackFrame);
+}
+
+/**
+ * 브라우저가 화면을 그려도 되는 시점마다 실제 경과 시간을 누적한다.
+ * 프레임 번호를 일정하게 더하지 않고 JSON의 `t`와 비교하므로 기록 간격이
+ * 달라도 재생 속도가 맞는다.
+ */
+function runHerdingPlaybackFrame(timestamp) {
+  if (!herdingPlaybackPlaying || !herdingHistoryRecord)
+    return;
+  const frames = herdingHistoryRecord.trial.frames;
+  if (herdingPlaybackLastTimestamp == null) {
+    herdingPlaybackLastTimestamp = timestamp;
+  } else {
+    const elapsed = Math.max(0, (timestamp - herdingPlaybackLastTimestamp) / 1000);
+    herdingPlaybackLastTimestamp = timestamp;
+    herdingPlaybackTime += elapsed * herdingPlaybackSpeed;
+  }
+
+  let nextIndex = herdingPlaybackFrameIndex;
+  while (nextIndex + 1 < frames.length &&
+         Number(frames[nextIndex + 1].t) <= herdingPlaybackTime) {
+    nextIndex += 1;
+  }
+  if (nextIndex !== herdingPlaybackFrameIndex)
+    renderHerdingPlaybackFrame(nextIndex, false);
+
+  const finalTime = Number(frames[frames.length - 1].t || 0);
+  if (herdingPlaybackTime >= finalTime) {
+    renderHerdingPlaybackFrame(frames.length - 1, false);
+    setHerdingPlaybackPlaying(false);
+    return;
+  }
+  herdingPlaybackAnimationId = requestAnimationFrame(runHerdingPlaybackFrame);
+}
+
+/** API가 제공한 시험 요약 목록으로 선택 상자와 현재 시험 설명을 채운다. */
+function renderHerdingTrialSelector(record) {
+  const select = $('#herding-trial-select');
+  select.replaceChildren();
+  (record.trial_options || []).forEach(optionData => {
+    const option = document.createElement('option');
+    option.value = String(optionData.index);
+    const result = optionData.success ? '성공' : '실패';
+    const duration = Number.isFinite(Number(optionData.duration))
+        ? `${Number(optionData.duration).toFixed(1)}초`
+        : '시간 없음';
+    const goal = HERDING_GOAL_LABELS[optionData.goal_name] ||
+        optionData.goal_name || '포획 지점 없음';
+    option.textContent =
+        `시험 ${optionData.index + 1} · ${optionData.model || '모델 없음'} · ${result} · ${duration} · ${goal}`;
+    select.appendChild(option);
+  });
+  select.value = String(record.selected_trial_index);
+
+  const selected = (record.trial_options || [])
+                       .find(option => option.index === record.selected_trial_index);
+  if (!selected) {
+    $('#herding-trial-detail').textContent = '선택된 시험 정보가 없습니다.';
+    return;
+  }
+  const result = selected.success ? '성공' : '실패';
+  const goal = HERDING_GOAL_LABELS[selected.goal_name] ||
+      selected.goal_name || '포획 지점 없음';
+  const seed = selected.seed == null ? '시드 없음' : `시드 ${selected.seed}`;
+  $('#herding-trial-detail').textContent =
+      `시험 ${selected.index + 1}/${record.trial_count} · ${result} · ${goal} · ${seed}`;
+}
+
+/** 선택한 시험의 API 응답으로 요약 카드, 재생 제어와 지도를 초기화한다. */
+async function loadHerdingHistory(trialIndex = selectedHerdingTrialIndex) {
+  setHerdingPlaybackPlaying(false);
+  const requestId = ++herdingHistoryRequestId;
+  const select = $('#herding-trial-select');
+  select.disabled = true;
+  if (!herdingHistoryRecord) {
+    showHerdingHistoryMessage('쥐몰이 기록을 불러오는 중입니다',
+                              'Replay JSON을 확인하고 있습니다.');
+  } else {
+    $('#herding-trial-detail').textContent = '선택한 시험 기록을 불러오는 중입니다.';
+  }
+  try {
+    const query = trialIndex == null
+        ? ''
+        : `?trial_index=${encodeURIComponent(trialIndex)}`;
+    const record = await request(`/api/history/herding${query}`);
+    if (requestId !== herdingHistoryRequestId)
+      return;
+    const frames = record.trial?.frames || [];
+    if (!record.available || !record.trial || !frames.length) {
+      herdingHistoryRecord = null;
+      herdingHistoryMapImage = null;
+      selectedHerdingTrialIndex = null;
+      showHerdingHistoryMessage(
+          '표시할 쥐몰이 기록이 없습니다',
+          'Driver와 Blocker 로봇 2대가 설정되어 있고 Replay JSON 파일을 읽을 수 있는지 확인해 주세요.');
+      return;
+    }
+
+    selectedHerdingTrialIndex = Number(record.selected_trial_index);
+    herdingHistoryRecord = record;
+    herdingHistoryMapImage = null;
+    if (record.map_image) {
+      try {
+        herdingHistoryMapImage = await loadHerdingMapImage(record.map_image);
+      } catch (error) {
+        // 배경 이미지만 실패해도 좌표 데이터로 경로 자체는 그릴 수 있다.
+        console.warn(error);
+      }
+    }
+
+    const trial = record.trial;
+    const duration = Number.isFinite(Number(trial.duration))
+        ? Number(trial.duration)
+        : Number(frames[frames.length - 1].t || 0);
+    const result = $('#herding-summary-result');
+    result.textContent = trial.success ? '성공' : '실패';
+    result.classList.toggle('success', Boolean(trial.success));
+    result.classList.toggle('failure', !trial.success);
+    $('#herding-summary-duration').textContent = `${n(duration, 1)}초`;
+    $('#herding-summary-model').textContent = trial.model || '—';
+    $('#herding-summary-frames').textContent = `${frames.length.toLocaleString()}개`;
+    $('#herding-summary-driver').textContent = record.driver_id || '—';
+    $('#herding-summary-blocker').textContent = record.blocker_id || '—';
+    $('#herding-history-source').textContent =
+        `${record.source_name || 'Replay JSON'} · 시험 ${selectedHerdingTrialIndex + 1}/${record.trial_count} · ${record.map_frame || 'map'} 좌표계`;
+
+    $('#herding-history-empty').classList.add('hidden');
+    $('#herding-history-content').classList.remove('hidden');
+    renderHerdingTrialSelector(record);
+    renderHerdingEventTimeline(frames);
+    const slider = $('#herding-playback-slider');
+    slider.max = String(frames.length - 1);
+    // 처음 열었을 때는 마지막 프레임을 선택해 2단계의 "전체 경로"를 그대로
+    // 보여준다. 재생 버튼을 누르면 자동으로 첫 프레임부터 시작한다.
+    renderHerdingPlaybackFrame(frames.length - 1);
+  } catch (error) {
+    if (requestId !== herdingHistoryRequestId)
+      return;
+    herdingHistoryRecord = null;
+    herdingHistoryMapImage = null;
+    showHerdingHistoryMessage('쥐몰이 기록을 불러오지 못했습니다', error.message);
+    toast('쥐몰이 기록을 불러오지 못했습니다: ' + error.message, 'error');
+  } finally {
+    if (requestId === herdingHistoryRequestId)
+      select.disabled = false;
+  }
+}
 
 /**
  * 기록 자체가(필터와 무관하게) 하나도 없을 때 보여줄 안내 문구다.
@@ -1099,7 +1833,11 @@ function drawHistoryMap(detections, trail, totalEmpty = false) {
   detections.forEach(det => {
     if (det.map_x == null || det.map_y == null)
       return;
-    drawDetectionMarker(ctx, det.object_type, toCanvas(det.map_x, det.map_y), 5, .85);
+    const point = toCanvas(det.map_x, det.map_y);
+    drawDetectionMarker(ctx, det.object_type, point, 5, .85);
+    const trapPresentation = trapInstallationPresentation(det);
+    if (trapPresentation)
+      drawHistoryTrapIndicator(ctx, point, trapPresentation);
   });
 
   const hasData = detections.length > 0 || trail.length > 0;
@@ -1132,11 +1870,12 @@ function renderHistoryDetectionList(detections, totalEmpty = false) {
                           const thumb = det.image_url
                               ? `<img src="${det.image_url}" alt="${label} 증거 이미지" loading="lazy">`
                               : '<div class="no-image">사진<br>없음</div>';
-                          const coords = (det.map_x != null && det.map_y != null)
-                              ? `(${n(det.map_x, 2)}, ${n(det.map_y, 2)})`
-                              : '좌표 없음';
-                          const confidence = det.confidence != null
-                              ? ` · 신뢰도 ${Math.round(det.confidence * 100)}%`
+                          const trapPresentation =
+                              trapInstallationPresentation(det);
+                          const trapBadge = trapPresentation
+                              ? `<span class="trap-installation-badge ${
+                                    trapPresentation.className}">${
+                                    trapPresentation.label}</span>`
                               : '';
                           return `<button type="button" class="history-card${
                               det.id === selectedHistoryDetectionId ? ' selected' : ''}"
@@ -1145,10 +1884,10 @@ function renderHistoryDetectionList(detections, totalEmpty = false) {
                               <div class="history-card-body">
                                 <div class="history-card-title">${escapeHtml(label)}
                                   ${det.is_dummy ? '<span class="dummy-badge">DUMMY</span>' : ''}
+                                  ${trapBadge}
                                 </div>
                                 <div class="history-card-meta">
-                                  ${formatTime(det.timestamp)} · ${escapeHtml(det.robot_id || '—')}<br>
-                                  ${coords}${confidence}
+                                  ${formatTime(det.timestamp)} · ${escapeHtml(det.robot_id || '—')}
                                 </div>
                               </div>
                             </button>`;
@@ -1157,48 +1896,10 @@ function renderHistoryDetectionList(detections, totalEmpty = false) {
 }
 
 /**
- * 필터된 시간 범위 안에서 탐지가 언제 일어났는지 점으로 찍어 보여준다.
- * 입력: 탐지 배열과 타임라인 시작 시각(초, epoch)이다 — 끝은 항상 지금이다.
- * 출력: 없음. `#history-timeline`을 다시 채운다.
- * 사용: `loadHistory()`가 목록·지도와 함께 호출한다.
- */
-function renderHistoryTimeline(detections, windowStart, totalEmpty = false) {
-  const container = $('#history-timeline');
-  const empty = $('#history-timeline-empty');
-  container.querySelectorAll('.timeline-tick').forEach(tick => tick.remove());
-  empty.classList.toggle('hidden', detections.length > 0);
-  if (!detections.length) {
-    empty.innerHTML = totalEmpty
-        ? HISTORY_SEED_HINT_HTML
-        : '이 필터 조건에 해당하는 기록이 없습니다.';
-    return;
-  }
-
-  const now = Date.now() / 1000;
-  const start = windowStart != null
-      ? windowStart
-      : Math.min(...detections.map(det => det.timestamp));
-  const span = Math.max(1, now - start);
-
-  detections.forEach(det => {
-    const ratio = Math.min(1, Math.max(0, (det.timestamp - start) / span));
-    const tick = document.createElement('button');
-    tick.type = 'button';
-    tick.className = `timeline-tick type-${(det.object_type || '').toLowerCase()}${
-        det.id === selectedHistoryDetectionId ? ' selected' : ''}`;
-    tick.style.left = `${ratio * 100}%`;
-    tick.dataset.detectionId = det.id;
-    const label = objectLabels[det.object_type] || det.object_type || '대상';
-    tick.title = `${formatTime(det.timestamp)} · ${label} · ${det.robot_id || '—'}`;
-    container.appendChild(tick);
-  });
-}
-
-/**
  * 탐지 하나를 "선택 상태"로 만들어 큰 사진·상세 정보를 보여준다.
  * 입력: 선택할 탐지의 id다(목록/타임라인 어느 쪽에서 눌렀든 동일하게 처리).
- * 출력: 없음. 상세 패널, 목록 카드, 타임라인 점의 선택 표시를 모두 갱신한다.
- * 사용: 타임라인 점 클릭, 목록 카드 클릭 핸들러에서 호출한다.
+ * 출력: 없음. 상세 패널과 목록 카드의 선택 표시를 함께 갱신한다.
+ * 사용: 목록 카드 클릭 핸들러에서 호출한다.
  */
 function selectHistoryDetection(detectionId) {
   const detection = historyDetections.find(det => det.id === detectionId);
@@ -1209,10 +1910,6 @@ function selectHistoryDetection(detectionId) {
   document.querySelectorAll('.history-card').forEach(card => {
     card.classList.toggle('selected', Number(card.dataset.detectionId) === detectionId);
   });
-  document.querySelectorAll('.timeline-tick').forEach(tick => {
-    tick.classList.toggle('selected', Number(tick.dataset.detectionId) === detectionId);
-  });
-
   const label = objectLabels[detection.object_type] || detection.object_type || '대상';
   $('#history-detail-photo').innerHTML = detection.image_url
       ? `<img src="${detection.image_url}" alt="${escapeHtml(label)} 증거 이미지">`
@@ -1224,6 +1921,13 @@ function selectHistoryDetection(detectionId) {
   const confidence = detection.confidence != null
       ? `${Math.round(detection.confidence * 100)}%`
       : '—';
+  const trapPresentation = trapInstallationPresentation(detection);
+  const openingDetails = trapPresentation ? `
+    <dt>Opening ID</dt><dd>${escapeHtml(detection.opening_id || '—')}</dd>
+    <dt>트랩 설치 여부</dt><dd><span class="trap-installation-badge ${
+        trapPresentation.className}">${trapPresentation.label}</span></dd>
+    <dt>Trap ID</dt><dd>${escapeHtml(detection.trap_id || '—')}</dd>
+  ` : '';
   $('#history-detail-meta').innerHTML = `
     <dt>시각</dt><dd>${formatTime(detection.timestamp)}${
         detection.is_dummy ? ' <span class="dummy-badge">DUMMY</span>' : ''}</dd>
@@ -1231,6 +1935,7 @@ function selectHistoryDetection(detectionId) {
     <dt>로봇</dt><dd>${escapeHtml(detection.robot_id || '—')}</dd>
     <dt>좌표</dt><dd>${coords}</dd>
     <dt>신뢰도</dt><dd>${confidence}</dd>
+    ${openingDetails}
   `;
 }
 
@@ -1243,6 +1948,7 @@ function selectHistoryDetection(detectionId) {
 async function loadHistory() {
   const objectType = $('#history-filter-object-type').value;
   const robotId = $('#history-filter-robot').value;
+  const trapStatus = $('#history-filter-trap-status').value;
   const windowSec = Number($('#history-filter-window').value) || 0;
   const since = windowSec > 0 ? (Date.now() / 1000 - windowSec) : null;
 
@@ -1251,22 +1957,29 @@ async function loadHistory() {
     params.set('object_type', objectType);
   if (robotId)
     params.set('robot_id', robotId);
+  if (trapStatus)
+    params.set('trap_installation_status', trapStatus);
   if (since != null)
     params.set('since', String(since));
 
   const trailParams = new URLSearchParams(params);
   try {
     const [ summary, detections, trail ] = await Promise.all([
-      request('/api/history/summary'),
+      request(`/api/history/summary?${params.toString()}`),
       request(`/api/history/detections?${params.toString()}`),
       request(`/api/history/trail?${trailParams.toString()}`)
     ]);
     $('#history-summary').querySelector('strong').textContent =
-        `탐지 ${summary.detections}건 · 경로 ${summary.trail_points}개 기록됨`;
+        `필터 결과 탐지 ${summary.detections}건`;
 
     const robotSelect = $('#history-filter-robot');
     if (robotSelect.options.length <= 1) {
-      const robotIds = [...new Set(trail.map(point => point.robot_id))].sort();
+      const robotIds = [
+        ...new Set([
+          ...detections.map(item => item.robot_id),
+          ...trail.map(point => point.robot_id)
+        ].filter(Boolean))
+      ].sort();
       robotIds.forEach(id => {
         const option = document.createElement('option');
         option.value = id;
@@ -1281,7 +1994,6 @@ async function loadHistory() {
       selectedHistoryDetectionId = detections[0]?.id ?? null;
 
     renderHistoryDetectionList(detections, totalEmpty);
-    renderHistoryTimeline(detections, since, totalEmpty);
     drawHistoryMap(detections, trail, totalEmpty);
     if (selectedHistoryDetectionId != null) {
       selectHistoryDetection(selectedHistoryDetectionId);
@@ -1434,24 +2146,106 @@ document.querySelectorAll('.view-tab').forEach(tab => tab.addEventListener('clic
   document.documentElement.style.height = isHistory ? 'auto' : '';
   document.body.style.overflow = isHistory ? 'auto' : '';
   document.body.style.height = isHistory ? 'auto' : '';
-  if (isHistory)
-    loadHistory();
+  if (!isHistory)
+    setHerdingPlaybackPlaying(false);
+  if (isHistory) {
+    if (activeHistorySubview === 'activity')
+      loadHistory();
+    else
+      loadHerdingHistory();
+  }
 }));
-[ 'history-filter-object-type', 'history-filter-robot', 'history-filter-window' ]
+document.querySelectorAll('[data-history-view]').forEach(tab => {
+  tab.addEventListener('click', () => switchHistorySubview(tab.dataset.historyView));
+});
+[ 'history-filter-robot', 'history-filter-window' ]
     .forEach(id => $(`#${id}`).addEventListener('change', loadHistory));
+$('#history-filter-object-type').addEventListener('change', event => {
+  if (event.currentTarget.value !== 'ENTRY_POINT')
+    $('#history-filter-trap-status').value = '';
+  loadHistory();
+});
+$('#history-filter-trap-status').addEventListener('change', event => {
+  if (event.currentTarget.value)
+    $('#history-filter-object-type').value = 'ENTRY_POINT';
+  loadHistory();
+});
 $('#history-refresh').addEventListener('click', loadHistory);
 
-// 목록 카드/타임라인 점은 loadHistory()가 매번 innerHTML을 새로 채우므로
-// 위임(delegation)으로 한 번만 걸어 둔다.
+$('#herding-trial-select').addEventListener('change', event => {
+  const trialIndex = Number(event.currentTarget.value);
+  if (Number.isInteger(trialIndex))
+    loadHerdingHistory(trialIndex);
+});
+$('#herding-playback-toggle').addEventListener('click', () => {
+  if (herdingPlaybackPlaying) {
+    setHerdingPlaybackPlaying(false);
+    return;
+  }
+  const frames = herdingHistoryRecord?.trial?.frames || [];
+  if (!frames.length)
+    return;
+  // 끝까지 본 뒤 재생을 누르면 사용자가 별도로 슬라이더를 옮기지 않아도
+  // 자연스럽게 처음부터 다시 시작한다.
+  if (herdingPlaybackFrameIndex >= frames.length - 1)
+    renderHerdingPlaybackFrame(0);
+  setHerdingPlaybackPlaying(true);
+});
+$('#herding-playback-restart').addEventListener('click', () => {
+  if (!herdingHistoryRecord)
+    return;
+  setHerdingPlaybackPlaying(false);
+  renderHerdingPlaybackFrame(0);
+});
+$('#herding-playback-slider').addEventListener('input', event => {
+  if (!herdingHistoryRecord)
+    return;
+  setHerdingPlaybackPlaying(false);
+  renderHerdingPlaybackFrame(Number(event.currentTarget.value));
+});
+$('#herding-event-timeline').addEventListener('click', event => {
+  const marker = event.target.closest('.herding-event-marker');
+  if (!marker || !herdingHistoryRecord)
+    return;
+  setHerdingPlaybackPlaying(false);
+  renderHerdingPlaybackFrame(Number(marker.dataset.frameIndex));
+});
+document.querySelectorAll('[data-herding-speed]').forEach(button => {
+  button.addEventListener('click', () => {
+    herdingPlaybackSpeed = Number(button.dataset.herdingSpeed) || 1;
+    document.querySelectorAll('[data-herding-speed]').forEach(item => {
+      const active = item === button;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+  });
+});
+document.querySelectorAll('[data-herding-layer]').forEach(input => {
+  input.addEventListener('change', () => {
+    herdingLayerVisibility[input.dataset.herdingLayer] = input.checked;
+    if (herdingHistoryRecord)
+      drawHerdingHistoryMap(herdingHistoryRecord, herdingPlaybackFrameIndex);
+  });
+});
+
+// 목록 카드는 loadHistory()가 매번 innerHTML을 새로 채우므로 이벤트 위임으로
+// 클릭 핸들러를 한 번만 걸어 둔다.
 $('#history-detection-list').addEventListener('click', event => {
   const card = event.target.closest('.history-card');
   if (card)
     selectHistoryDetection(Number(card.dataset.detectionId));
 });
-$('#history-timeline').addEventListener('click', event => {
-  const tick = event.target.closest('.timeline-tick');
-  if (tick)
-    selectHistoryDetection(Number(tick.dataset.detectionId));
+
+// Canvas는 CSS 크기가 바뀌어도 내부 픽셀 크기가 자동으로 맞춰지지 않는다.
+// 창 크기 변경이 끝난 뒤 현재 쥐몰이 경로를 한 번 다시 그려 흐려짐과 위치
+// 어긋남을 방지한다.
+let herdingResizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(herdingResizeTimer);
+  herdingResizeTimer = setTimeout(() => {
+    if (activeHistorySubview === 'herding' && herdingHistoryRecord)
+      drawHerdingHistoryMap(herdingHistoryRecord, herdingPlaybackFrameIndex);
+  }, 120);
 });
 
 loadMap();

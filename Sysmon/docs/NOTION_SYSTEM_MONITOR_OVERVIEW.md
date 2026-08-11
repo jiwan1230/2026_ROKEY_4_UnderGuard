@@ -2,7 +2,7 @@
 
 ## 목적
 
-두 대의 AMR에서 들어오는 실시간 상태와 사건을 운영자가 한 화면에서 판단할 수 있게 한다. System Monitor는 로봇 제어·탐지 알고리즘이나 영구 데이터 저장소를 소유하지 않는다.
+두 대의 AMR에서 들어오는 실시간 상태와 사건을 운영자가 한 화면에서 판단할 수 있게 한다. System Monitor는 로봇 제어·탐지 알고리즘과 운영 MySQL DB는 소유하지 않지만, 탐지 증거와 map 좌표 이동 경로는 기록 조회용 로컬 SQLite에 보관한다.
 
 ## 데이터 흐름
 
@@ -20,12 +20,17 @@ flowchart TD
     C --> D
     D --> E["Flask JSON API"]
     E --> F[관제 화면]
+    B --> G["HistoryStore SQLite<br/>탐지·map 이동 경로"]
+    G --> H["기록 조회 API"]
+    H --> F
 ```
 
 (Mock/ROS는 `MONITOR_MODE`에 따라 둘 중 하나만 동시에 실행되며, 어느 쪽이든
 결과는 같은 StateManager 메모리로 모인다.)
 
-수신된 탐지·사건·덫 정보는 현재 서버 실행 중에만 유지되고 재시작 시 사라진다.
+현재 로봇 상태·임무·이벤트·지도 마커는 서버 메모리에 유지되어 재시작 시 사라진다.
+ROS 탐지와 map frame 이동 지점은 `HistoryStore`에 별도로 저장되어 기록 화면에서
+재조회할 수 있다.
 
 ## 화면 구성
 
@@ -33,6 +38,7 @@ flowchart TD
 - 중앙: 정적 SLAM 맵, 위치·방향·이동 경로, 현재 세션 마커
 - 오른쪽: 로봇별 카메라 상태와 현재 탐지
 - 이벤트: 현재 세션에서 받은 상태 변화·탐지·경고
+- 기록: 기간·종류·로봇 필터, 탐지/이동 지도, 탐지 목록과 증거 이미지
 
 ## 위험신호
 
@@ -52,8 +58,8 @@ flowchart TD
 ## 의도적으로 제외한 기능
 
 - 사용자 인증과 권한
-- 로컬 영구 저장소
-- 과거 탐지·사건 조회와 검색
+- Incident·Opening·Trap·Mission 운영 DB의 직접 소유
+- 기록 수정·삭제와 범용 검색
 - 탐지 검토·메모·보고서
 - 운영 데이터 초기화
 - 로봇 명령 발행과 제어 화면
@@ -70,6 +76,7 @@ flowchart TD
 | `detection_service.py` | 탐지와 경고의 공통 상태 변환 |
 | `mock_manager.py` | Mock 이동·사건 시나리오 |
 | `ros_bridge.py` | ROS/Fleet 상태·사건 구독과 화면 상태 변환 |
+| `history_store.py` | 탐지 증거와 map 이동 경로 SQLite 저장·조회 |
 | `map_service.py` | PGM/YAML 로딩과 좌표 메타데이터 |
 | `dashboard.html/js/css` | 실시간 관제 화면 |
 
@@ -80,6 +87,7 @@ flowchart TD
 3. `/fleet/event`의 로봇 귀속과 필드 확장 합의
 4. Offline·대상 유실·저전압 시험
 5. 실제 카메라 영상 연결
-6. `central_node`의 제어 결과를 표시할 상태 계약 확정
+6. 실제 탐지·map 이동 데이터가 기록 화면에 누적되는지 확인
+7. `central_node`의 제어 결과를 표시할 상태 계약 확정
 
 상세 개발 기준은 `SYSTEM_MONITOR_SCOPE.md`, 토픽 계약은 `ROS_INTERFACE_SPEC.md`를 따른다.

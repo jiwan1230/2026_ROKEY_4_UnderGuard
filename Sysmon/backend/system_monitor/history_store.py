@@ -43,9 +43,29 @@ class HistoryStore:
                     map_y REAL,
                     confidence REAL,
                     image_path TEXT,
+                    opening_id TEXT,
+                    trap_id TEXT,
+                    trap_installation_status TEXT,
                     is_dummy INTEGER NOT NULL DEFAULT 0
                 )"""
             )
+            # 기존 history.db를 지우지 않고 새 필드를 추가한다. 운영 MySQL의
+            # opening/trap 조회 API가 연결되기 전까지 이 필드는 UI 계약과 더미
+            # 데이터 확인에 사용하며, API 연결 후에도 같은 응답 이름을 유지한다.
+            detection_columns = {
+                row[1]
+                for row in self._conn.execute("PRAGMA table_info(detections)")
+            }
+            for column, definition in (
+                ("opening_id", "TEXT"),
+                ("trap_id", "TEXT"),
+                ("trap_installation_status", "TEXT"),
+            ):
+                if column not in detection_columns:
+                    self._conn.execute(
+                        "ALTER TABLE detections ADD COLUMN "
+                        f"{column} {definition}"
+                    )
             self._conn.execute(
                 """CREATE TABLE IF NOT EXISTS trail_points (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,6 +92,9 @@ class HistoryStore:
         map_x: float | None,
         map_y: float | None,
         confidence: float | None = None,
+        opening_id: str | None = None,
+        trap_id: str | None = None,
+        trap_installation_status: str | None = None,
         timestamp: float | None = None,
         image_bytes: bytes | None = None,
         image_ext: str = "jpg",
@@ -86,12 +109,41 @@ class HistoryStore:
         """
 
         ts = time.time() if timestamp is None else timestamp
+        is_opening = object_type == "ENTRY_POINT"
+        if is_opening:
+            normalized_trap_status = (
+                trap_installation_status or "UNKNOWN"
+            ).strip().upper()
+            if normalized_trap_status not in {
+                "INSTALLED",
+                "NOT_INSTALLED",
+                "UNKNOWN",
+            }:
+                raise ValueError("지원하지 않는 트랩 설치 상태입니다.")
+        else:
+            opening_id = None
+            trap_id = None
+            normalized_trap_status = None
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO detections "
-                "(timestamp, robot_id, object_type, map_x, map_y, confidence, image_path, is_dummy) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (ts, robot_id, object_type, map_x, map_y, confidence, None, int(is_dummy)),
+                "(timestamp, robot_id, object_type, map_x, map_y, confidence, "
+                "image_path, "
+                "opening_id, trap_id, trap_installation_status, is_dummy) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    ts,
+                    robot_id,
+                    object_type,
+                    map_x,
+                    map_y,
+                    confidence,
+                    None,
+                    opening_id,
+                    trap_id,
+                    normalized_trap_status,
+                    int(is_dummy),
+                ),
             )
             detection_id = cur.lastrowid
             if image_bytes is not None:
@@ -132,12 +184,14 @@ class HistoryStore:
         until: float | None = None,
         object_type: str | None = None,
         robot_id: str | None = None,
+        trap_installation_status: str | None = None,
     ) -> list[dict[str, Any]]:
         """최신순으로 탐지 기록을 반환한다. 필터는 전부 선택 사항이다."""
 
         query = (
             "SELECT id, timestamp, robot_id, object_type, map_x, map_y, "
-            "confidence, image_path, is_dummy FROM detections"
+            "confidence, image_path, opening_id, trap_id, "
+            "trap_installation_status, is_dummy FROM detections"
         )
         clauses: list[str] = []
         params: list[Any] = []
@@ -153,6 +207,12 @@ class HistoryStore:
         if robot_id is not None:
             clauses.append("robot_id = ?")
             params.append(robot_id)
+        if trap_installation_status is not None:
+            clauses.append(
+                "object_type = 'ENTRY_POINT' AND "
+                "COALESCE(trap_installation_status, 'UNKNOWN') = ?"
+            )
+            params.append(trap_installation_status)
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY timestamp DESC LIMIT ?"
@@ -170,7 +230,14 @@ class HistoryStore:
                 "map_y": row[5],
                 "confidence": row[6],
                 "image_url": f"/api/history/detections/{row[0]}/image" if row[7] else None,
-                "is_dummy": bool(row[8]),
+                "opening_id": row[8],
+                "trap_id": row[9],
+                "trap_installation_status": (
+                    row[10] or "UNKNOWN"
+                    if row[3] == "ENTRY_POINT"
+                    else None
+                ),
+                "is_dummy": bool(row[11]),
             }
             for row in rows
         ]
@@ -221,10 +288,55 @@ class HistoryStore:
         path = self.image_dir / row[0]
         return path if path.is_file() else None
 
-    def summary(self) -> dict[str, int]:
-        """조회 탭 헤더 등에 쓸 전체 건수 요약이다."""
+    def summary(
+        self,
+        *,
+        since: float | None = None,
+        until: float | None = None,
+        object_type: str | None = None,
+        robot_id: str | None = None,
+        trap_installation_status: str | None = None,
+    ) -> dict[str, int]:
+        """현재 기록 화면 필터에 해당하는 탐지·경로 건수를 반환한다."""
+
+        detection_clauses: list[str] = []
+        detection_params: list[Any] = []
+        trail_clauses: list[str] = []
+        trail_params: list[Any] = []
+
+        for clause, value in (
+            ("timestamp >= ?", since),
+            ("timestamp <= ?", until),
+            ("robot_id = ?", robot_id),
+        ):
+            if value is None:
+                continue
+            detection_clauses.append(clause)
+            detection_params.append(value)
+            trail_clauses.append(clause)
+            trail_params.append(value)
+        if object_type is not None:
+            detection_clauses.append("object_type = ?")
+            detection_params.append(object_type)
+        if trap_installation_status is not None:
+            detection_clauses.append(
+                "object_type = 'ENTRY_POINT' AND "
+                "COALESCE(trap_installation_status, 'UNKNOWN') = ?"
+            )
+            detection_params.append(trap_installation_status)
+
+        detection_query = "SELECT COUNT(*) FROM detections"
+        trail_query = "SELECT COUNT(*) FROM trail_points"
+        if detection_clauses:
+            detection_query += " WHERE " + " AND ".join(detection_clauses)
+        if trail_clauses:
+            trail_query += " WHERE " + " AND ".join(trail_clauses)
 
         with self._lock:
-            detections = self._conn.execute("SELECT COUNT(*) FROM detections").fetchone()[0]
-            trail_points = self._conn.execute("SELECT COUNT(*) FROM trail_points").fetchone()[0]
+            detections = self._conn.execute(
+                detection_query, detection_params
+            ).fetchone()[0]
+            trail_points = self._conn.execute(
+                trail_query, trail_params
+            ).fetchone()[0]
         return {"detections": detections, "trail_points": trail_points}
