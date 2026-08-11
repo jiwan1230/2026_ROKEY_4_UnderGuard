@@ -12,8 +12,11 @@ from std_msgs.msg import String
 from turtle_project import fleet_msg
 
 # 로봇 A가 이 상태로 바뀌면 로봇 B에게 보낼 명령 (순찰 교대 핵심 전이).
+# UNDOCK이 아니라 PATROL을 보낸다 — robot_agent가 도킹 중이면 언도킹부터,
+# 이미 필드 위(IDLE)면 바로 순찰로 알아서 분기한다(robot_agent.command_cb).
+# UNDOCK을 보내면 이미 언도킹된 로봇도 undock 액션을 또 타서 문제.
 _TRANSITIONS = {
-    'DOCKED': 'UNDOCK',     # A가 도킹 완료 -> B undock (교대 시작)
+    'DOCKED': 'PATROL',     # A가 도킹 완료 -> B 순찰 투입 (교대 시작)
 }
 
 # UNDOCK 보낸 로봇이 이 시간 안에 순찰을 시작 못 하면 waking을 풀어 재시도 허용
@@ -135,7 +138,8 @@ class CentralNode(Node):
             self.waking = None
         r = coverage_action(self.robots, self.waking)
         if r:
-            self.send(r, 'UNDOCK')
+            # PATROL 하나로 충분 — 도킹 여부 분기는 robot_agent가 한다(_TRANSITIONS 주석).
+            self.send(r, 'PATROL')
             self.waking = (r, self._now())
             self.get_logger().info(f'커버리지 확보 — {r} 순찰 시작')
 
@@ -250,7 +254,7 @@ def _self_check():
     assert next_patroller('robot4', 'robot6', 'DOCKED') == 'robot4'   # 남이 도킹 → 유지
     assert next_patroller('robot4', 'robot6', 'PATROLLING') == 'robot6'  # 교대
 
-    assert next_command('DOCKED') == 'UNDOCK'   # 교대 핵심 전이
+    assert next_command('DOCKED') == 'PATROL'   # 교대 핵심 전이 (도킹 분기는 로봇이)
     assert next_command('PATROLLING') is None    # 순찰 중엔 교대 명령 없음
     assert next_command('RETURNING') is None
 
