@@ -16,6 +16,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, String
 
+from turtle_interfaces.srv import ListHoles
 from turtle_project.herding_dual.grid_map import GridMap
 from turtle_project.herding_dual.herding_core import HerdingConfig, HerdingCore, HerdingOutput, Observation
 from turtle_project.herding_dual.state_machine import FSMState
@@ -212,6 +213,20 @@ class HerdingNode(Node):
         self._last_cycle_sec: float | None = None              # 직전 주기의 벽시계 시각
         self._elapsed_sec = 0.0                                 # HerdingCore에 넘길 누적 경과시간
 
+        # --- 동적 nearest-trap capture zone ---
+        # DB(/db/list_holes)의 덫 목록을 받아, 쥐 위치 기준 가장 가까운 덫으로
+        # goal을 갱신한다. 진동 방지: 현재 goal보다 switch_margin(m) 이상
+        # 가까워질 때만 전환. DB가 없거나 비었으면 정적 capture_zone 파라미터 유지.
+        self._dynamic_zone = self.declare_parameter(
+            "dynamic_capture_zone", True).value
+        self._switch_margin = self.declare_parameter(
+            "capture_zone_switch_margin_m", 0.5).value
+        self._capture_zones = None      # (N,2) — DB 응답 오기 전엔 None
+        self._zones_inflight = False
+        if self._dynamic_zone:
+            self._holes_cli = self.create_client(ListHoles, "/db/list_holes")
+            self._zones_timer = self.create_timer(2.0, self._request_zones)
+
         map_qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(PoseStamped, "~/target_pose", self._on_target_pose, 10)
         self.create_subscription(PoseStamped, "~/robot1_pose", self._on_robot1_pose, 10)
@@ -238,6 +253,48 @@ class HerdingNode(Node):
     def _on_target_pose(self, msg: PoseStamped) -> None:
         self._target_pos = np.array([msg.pose.position.x, msg.pose.position.y])
         self._target_pose_is_fresh = True
+        self._update_capture_zone()
+
+    # --- 동적 nearest-trap capture zone ---
+
+    def _request_zones(self) -> None:
+        """DB에서 덫(구멍) 목록을 받을 때까지 2초마다 재시도. 받으면 타이머 종료."""
+        if self._zones_inflight or not self._holes_cli.service_is_ready():
+            return
+        self._zones_inflight = True
+        self._holes_cli.call_async(ListHoles.Request()).add_done_callback(
+            self._zones_done)
+
+    def _zones_done(self, fut) -> None:
+        self._zones_inflight = False
+        try:
+            resp = fut.result()
+        except Exception as exc:  # noqa: BLE001 — 서비스 실패는 재시도로 흡수
+            self.get_logger().warn(f"덫 목록 조회 실패 ({exc}) — 재시도")
+            return
+        if not resp.xs:
+            self.get_logger().warn("DB 덫 목록 비어있음 — 정적 capture zone 유지, 재시도")
+            return
+        self._capture_zones = np.column_stack(
+            [np.asarray(resp.xs), np.asarray(resp.ys)])
+        self._zones_timer.cancel()
+        self.get_logger().info(
+            f"덫 목록 {len(resp.xs)}개 수신 — 동적 capture zone 활성: "
+            + ", ".join(f"({x:.2f}, {y:.2f})" for x, y in self._capture_zones))
+
+    def _update_capture_zone(self) -> None:
+        """쥐 위치 기준 가장 가까운 덫으로 goal 전환 (switch_margin 히스테리시스)."""
+        if self._capture_zones is None:
+            return
+        dists = np.linalg.norm(self._capture_zones - self._target_pos, axis=1)
+        best = int(np.argmin(dists))
+        current = float(np.linalg.norm(self.core.goal_pos - self._target_pos))
+        if dists[best] + self._switch_margin >= current:
+            return          # 지금 goal보다 확실히 가깝지 않음 — 유지 (진동 방지)
+        bx, by = self._capture_zones[best]
+        self.core.set_goal(float(bx), float(by))
+        self.get_logger().info(
+            f"capture zone 전환 → ({bx:.2f}, {by:.2f}) (쥐와 {dists[best]:.2f}m)")
 
     def _on_robot1_pose(self, msg: PoseStamped) -> None:
         self._robot1_pos = np.array([msg.pose.position.x, msg.pose.position.y])

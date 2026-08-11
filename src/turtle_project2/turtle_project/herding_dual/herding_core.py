@@ -334,6 +334,20 @@ class HerdingCore:
         self._geodesic_field = GeodesicField(self.grid_map, goal_row, goal_col)
         self._geodesic_ready = True
 
+    def set_goal(self, x: float, y: float) -> None:
+        """capture zone(덫) 변경 — 동적 nearest-trap 선택용 (herding_node가 호출).
+
+        geodesic field는 goal 기준 1회 캐시라(_ensure_geodesic_field), goal이
+        바뀌면 무효화해 다음 step에서 새 덫 기준으로 재계산되게 한다. 같은
+        좌표면 no-op — 매 관측마다 불려도 재계산 폭주가 없다.
+        """
+        new_goal = np.array([x, y], dtype=float)
+        if np.allclose(new_goal, self.goal_pos):
+            return
+        self.goal_pos = new_goal
+        self._geodesic_field = None
+        self._geodesic_ready = False
+
     def _ensure_clearance_field(self):
         """"각 칸에서 가장 가까운 벽까지 거리"를 담은 지도를, 실제 지도가 온 뒤 한 번만 계산한다.
 
