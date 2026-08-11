@@ -1,0 +1,4 @@
+Flask==3.1.1
+Pillow>=9,<13
+PyYAML>=5.4,<7
+# ROS 모드는 Ubuntu 22.04 / ROS 2 Humble 환경의 rclpy 및 ROS 메시지 패키지를 사용합니다.
