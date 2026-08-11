@@ -9,24 +9,23 @@
 > `__ns:=/robot4`를 걸면 양쪽 다 `/robot4/...`가 되어 붙는다. robot_agent는
 > `__ns`를 **반드시** 걸어야 한다(안 걸면 토픽이 `/target_pose`로 떠서 안 맞음).
 
-## 로봇 PC (robot4 기준 — robot6은 /robot4→/robot6, robot4.yaml→robot6.yaml)
+## 로봇 PC (robot4 기준 — robot6은 /robot4→/robot6, robot4.yaml→robot6.yaml,
+## bringup에 `namespace:=/robot6` 추가)
 
 ```bash
 # 0) Nav2 기반 (localization + nav2 + RViz). 뜨면 RViz 2D Pose Estimate로 초기위치.
 ros2 launch turtle_project robot_bringup.launch.py
 
-# 1) 카메라 sync (TF 안 씀)
-ros2 run turtle_project camera_node --ros-args -r __ns:=/robot4
-
-# 2) 감지 (best.pt 자동, TF 씀 → /tf remap 필수)
+# 1) 감지 (best.pt 자동, TF 씀 → /tf remap 필수).
+#    oakd rgb·depth 카메라 sync도 여기 포함 — 별도 camera_node는 없다(통합·삭제됨).
 ros2 run turtle_project detector_node --ros-args \
   -r __ns:=/robot4 -r /tf:=tf -r /tf_static:=tf_static
 
-# 3) trap 점검 (TF 씀 → /tf remap 필수)
+# 2) trap 점검 (TF 씀 → /tf remap 필수)
 ros2 run turtle_project trap_check_node --ros-args \
   -r __ns:=/robot4 -r /tf:=tf -r /tf_static:=tf_static
 
-# 4) 로봇 주행 (__ns + params-file 둘 다: __ns=토픽정렬, params=dock좌표·식별)
+# 3) 로봇 주행 (__ns + params-file 둘 다: __ns=토픽정렬, params=dock좌표·식별)
 ros2 run turtle_project robot_agent --ros-args \
   -r __ns:=/robot4 --params-file src/turtle_project/config/robot4.yaml
 ```
@@ -47,6 +46,10 @@ ros2 launch turtle_project central_pc.launch.py
 
 central을 띄우면 전원 도킹 상태에서 **자동으로 한 대를 UNDOCK시켜 순찰을 시작**한다
 (부트스트랩). 이후 배터리<임계로 A가 도킹하면 B를 깨워 교대, 쥐 감지 시 역할배정.
+부트스트랩이 로봇 상태 보고를 기다리므로 **로봇 노드(특히 robot_agent)를 먼저 다
+띄우고 central을 마지막에** 띄우는 게 안전하다. 먼저 띄웠으면 로봇이 올라온 뒤
+`ros2 topic pub --once /fleet/command std_msgs/msg/String "{data: 'robot4:UNDOCK'}"`
+로 수동 시작해도 된다.
 
 ## 왜 `/tf` remap이 필요한가
 `tf2_ros`의 TransformListener는 네임스페이스를 무시하고 절대경로 `/tf`를 구독한다.
