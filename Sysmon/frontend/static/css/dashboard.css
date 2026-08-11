@@ -257,3 +257,11 @@ button:disabled{cursor:not-allowed;opacity:.4}
    해당 규칙들을 명시적으로 무효화한다(view-tab 클릭 시 dashboard.js가 토글). */
 body.history-mode{overflow:auto!important;height:auto!important}
 body.history-mode #view-history{height:auto!important;overflow:visible!important}
+
+/* 시스템 시작/정지 — 로봇 상태 패널 하단 제어 버튼 (Sysmon 유일의 쓰기 동작) */
+.system-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:0 14px 14px}
+.system-button{border:1px solid var(--line);border-radius:11px;padding:12px 10px;font-size:13px;font-weight:700;cursor:pointer;background:var(--surface2);color:var(--text);transition:.2s}
+.system-button.start{border-color:rgba(50,215,75,.5);color:var(--ok)}
+.system-button.start:hover{background:rgba(50,215,75,.12)}
+.system-button.stop{border-color:rgba(255,69,58,.5);color:var(--danger)}
+.system-button.stop:hover{background:rgba(255,69,58,.12)}

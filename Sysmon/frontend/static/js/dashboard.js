@@ -1336,6 +1336,23 @@ document.querySelectorAll('[data-event]')
       }
     }));
 
+// 시스템 시작/정지 — central의 대기 모드를 풀거나(START: 순찰 개시)
+// 전 로봇 STOP + 대기 복귀(STOP)를 지시한다. ROS 모드에서만 동작한다.
+document.querySelectorAll('.system-controls [data-action]')
+    .forEach(button => button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        await request(`/api/system/${button.dataset.action}`, {method : 'POST'});
+        toast(button.dataset.action === 'start'
+                  ? '시스템 시작 — 순찰을 개시합니다.'
+                  : '시스템 정지 — 전 로봇을 정지시킵니다.');
+      } catch (error) {
+        toast(error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    }));
+
 document.querySelectorAll('[data-mobile-target]')
     .forEach(button => button.addEventListener('click', () => {
       document.querySelectorAll('[data-mobile-target]')

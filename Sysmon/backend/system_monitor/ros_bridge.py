@@ -116,6 +116,9 @@ class RosBridge:
         # db_node의 기록 조회 서비스 클라이언트 — spin 스레드에서 만들고
         # Flask 요청 스레드에서 호출한다(query_db 참고).
         self._db_client = None
+        # 시스템 시작/정지 버튼용 /fleet/command 발행자 — Sysmon의 유일한 쓰기
+        # 경로. spin 스레드에서 만들고 Flask 요청 스레드에서 publish한다.
+        self._cmd_pub = None
         # 여러 ROS 콜백이 역할 배정·경고 상태를 동시에 바꾸지 않도록 보호한다.
         self._data_lock = threading.RLock()
         self._last_live_rodent_at: dict[str, float] = {}
@@ -197,6 +200,9 @@ class RosBridge:
                     bridge._db_client = self.create_client(
                         DbQuery, bridge.interface.db_query_service
                     )
+                bridge._cmd_pub = self.create_publisher(
+                    String, bridge.interface.fleet_command_topic, 10
+                )
                 for robot in bridge.robots:
                     rid = robot.robot_id
                     # 기본 인자로 rid를 고정해 모든 lambda가 마지막 로봇을
@@ -367,6 +373,20 @@ class RosBridge:
         if meta is not None and time.monotonic() - meta[2] <= 5.0:
             return meta[0], meta[1]
         return self._event_robot_id(), None
+
+    def publish_command(self, data: str) -> str | None:
+        """/fleet/command로 명령 1회 발행 — 성공이면 None, 실패면 사유 문자열.
+
+        시스템 시작/정지 버튼 전용(Sysmon의 유일한 쓰기). publisher는 spin
+        스레드가 만들지만 publish 자체는 스레드 안전해 Flask 스레드에서 불러도
+        된다.
+        """
+        if String is None or self._cmd_pub is None or not self.running:
+            return "ros_unavailable"
+        msg = String()
+        msg.data = data
+        self._cmd_pub.publish(msg)
+        return None
 
     def query_db(
         self,

@@ -48,6 +48,8 @@ class RosInterfaceConfig:
     # /fleet/event(name:x:y)에는 없는 robot_id·confidence가 실려 오는 상세 탐지
     # 토픽이다. 이게 붙으면 "최근 활동 로봇으로 추측"하지 않고 실제 값을 쓴다.
     fleet_detection_topic: str = "/fleet/detection"
+    # 시스템 시작/정지 버튼이 central로 보내는 명령 토픽 — Sysmon의 유일한 쓰기.
+    fleet_command_topic: str = "/fleet/command"
     # db_node가 여는 기록 조회 서비스(읽기 전용). UI는 MySQL에 직접 붙지 않는다.
     db_query_service: str = "/db/query"
     webcam_detections_topic: str = "webcam/detections"
@@ -141,6 +143,9 @@ def load_settings() -> Settings:
             fleet_event_topic=os.getenv("ROS_FLEET_EVENT_TOPIC", "/fleet/event"),
             fleet_detection_topic=os.getenv(
                 "ROS_FLEET_DETECTION_TOPIC", "/fleet/detection"
+            ),
+            fleet_command_topic=os.getenv(
+                "ROS_FLEET_COMMAND_TOPIC", "/fleet/command"
             ),
             db_query_service=os.getenv("ROS_DB_QUERY_SERVICE", "/db/query"),
             webcam_detections_topic=os.getenv(

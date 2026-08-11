@@ -96,13 +96,42 @@ class CentralNode(Node):
         self.rat_mode = False   # 쥐대응 모드 (중복 트리거 방지)
         self.rat_roles = None   # 쥐대응 중인 (A, B) — 종료 시 복귀 명령에 사용
         self.rat_caught = False  # 마지막 쥐대응 결과 표출 (포획 성공 여부)
+        # UI(Sysmon) '시스템 시작' 버튼으로 켜지는 스위치. False면 모든 조율
+        # (순찰 투입·교대·쥐대응)을 보류하고 status/event 기록만 한다.
+        self.started = False
 
         self.cmd_pub = self.create_publisher(String, '/fleet/command', 10)
         self.create_subscription(String, '/fleet/status', self.status_cb, 10)
         self.create_subscription(String, '/fleet/event', self.event_cb, 10)
+        # system:START/STOP 수신용 — 자기가 발행한 로봇 명령도 같이 들어오므로
+        # fleet_cmd_cb가 'system' 대상만 골라 처리한다.
+        self.create_subscription(String, '/fleet/command', self.fleet_cmd_cb, 10)
         # 죽은 로봇 청소 — status가 끊긴 로봇을 제거해 커버리지 오판 방지.
         self.create_timer(10.0, self._prune_stale)
-        self.get_logger().info('중앙 노드 시작 — status/event 대기')
+        self.get_logger().info('중앙 노드 시작 — 대기 모드 (system:START 수신 시 순찰 개시)')
+
+    def fleet_cmd_cb(self, msg):
+        """UI(또는 수동 topic pub)의 시스템 제어 — system:START / system:STOP.
+
+        START: 대기 해제 + 즉시 커버리지 확보(한 대 순찰 투입).
+        STOP: 전 로봇 STOP 발행 + 대기 모드 복귀. started를 안 끄면 커버리지
+        로직이 몇 초 뒤 IDLE 로봇을 도로 순찰 투입시키므로 반드시 같이 끈다.
+        """
+        robot, cmd = fleet_msg.parse_command(msg.data)
+        if robot != 'system':
+            return                      # 로봇 개별 명령 (자기 발행 echo 포함) — 무시
+        if cmd == 'START' and not self.started:
+            self.started = True
+            self.get_logger().info('시스템 시작 — 조율 개시')
+            self._ensure_coverage()
+        elif cmd == 'STOP' and self.started:
+            self.started = False
+            self.rat_mode = False
+            self.rat_roles = None
+            self.waking = None
+            for r in self.robots:
+                self.send(r, 'STOP')
+            self.get_logger().info('시스템 정지 — 전 로봇 STOP, 대기 모드 복귀')
 
     def status_cb(self, msg):
         robot, state, battery = fleet_msg.parse_status(msg.data)
@@ -113,6 +142,8 @@ class CentralNode(Node):
         if state == 'PATROLLING':
             if self.waking and self.waking[0] == robot:
                 self.waking = None      # 깨우라던 로봇이 순찰 시작 — 대기 해제
+        if not self.started:
+            return                      # 시스템 시작 전 — 기록만, 조율 보류
         if self.rat_mode:
             return                      # 쥐대응 중엔 역할 고정 — 조율 개입 안 함
         # 교대: 순찰하던 A가 DOCKED로 '전이'하면 B를 깨운다. prev is None(첫 status)은
@@ -131,6 +162,8 @@ class CentralNode(Node):
 
     def _ensure_coverage(self):
         """항상 최소 1대 순찰하도록 보장 (부트스트랩/복구). 판단은 coverage_action."""
+        if not self.started:
+            return                      # 시스템 시작 전 (_prune_stale 경유 호출 방어)
         if self.waking and self._now() - self.waking[1] > WAKE_TIMEOUT:
             self.get_logger().warn(
                 f'{self.waking[0]} 깨웠지만 {WAKE_TIMEOUT:.0f}초째 순찰 시작 '
@@ -166,6 +199,8 @@ class CentralNode(Node):
     def event_cb(self, msg):
         name, x, y = fleet_msg.parse_event(msg.data)
         self.get_logger().info(f'이벤트 {name} at ({x:.2f}, {y:.2f})')
+        if not self.started:
+            return                      # 시스템 시작 전 — 쥐대응 등 조율 보류
         if name == 'rat_detected':
             self._on_rat()
         elif name == 'rat_captured':

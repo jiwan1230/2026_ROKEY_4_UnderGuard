@@ -1,5 +1,27 @@
 # 실행 명령 — 네임스페이스 정렬 기준
 
+## 원터치 실행 (PC별 런치 하나 + UI 시작 버튼)
+
+```bash
+# PC1 (중앙 + robot4)
+export MYSQL_PASSWORD='...'
+ros2 launch turtle_project pc1.launch.py
+
+# PC2 (robot6)
+ros2 launch turtle_project pc2.launch.py
+
+# UI (PC1, 별도 터미널 — ROS 환경 source 후)
+~/turtlebot4_ws/Sysmon/backend/run_ros.sh    # http://localhost:5000
+```
+
+각 PC의 RViz에서 2D Pose Estimate로 초기위치를 잡은 뒤, UI 로봇 상태 패널의
+**시스템 시작** 버튼을 누르면 central이 대기 모드를 풀고 순찰을 투입한다
+(= `/fleet/command`에 `system:START`). **시스템 정지**는 전 로봇 STOP + 대기
+복귀다. 버튼 없이 터미널로도 가능:
+`ros2 topic pub --once /fleet/command std_msgs/msg/String "{data: 'system:START'}"`
+
+아래는 노드를 개별 터미널로 띄울 때의 원본 명령들이다 (디버깅용).
+
 모든 로봇 노드는 **`__ns:=/robotX` + 상대토픽** 한 방식으로 통일했다. TF를 직접
 쓰는 노드(detector·trap_check)만 `/tf` remap을 추가한다. db_node·central은
 `/fleet/*` 절대토픽만 쓰므로 네임스페이스 없이 중앙에서 한 번만 띄운다.

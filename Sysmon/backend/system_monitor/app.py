@@ -292,6 +292,20 @@ def create_app(settings: Settings | None = None) -> Flask:
             return jsonify({"error": error}), status
         return jsonify(result)
 
+    # 시스템 시작/정지 — Sysmon의 유일한 쓰기 라우트. central_node의 대기 모드를
+    # 풀거나(START: 순찰 투입) 전 로봇 STOP + 대기 복귀(STOP)를 지시한다.
+    # 실제 조율·명령 분배는 central_node가 한다 — 여기는 스위치만 누른다.
+    @app.post("/api/system/<action>")
+    def system_control(action: str):
+        if action not in ("start", "stop"):
+            return jsonify({"error": "unknown_action"}), 404
+        if settings.mode != "ros":
+            return jsonify({"error": "ros_mode_only"}), 409
+        error = ros.publish_command(f"system:{action.upper()}")
+        if error is not None:
+            return jsonify({"error": error}), 503
+        return jsonify({"ok": True, "action": action})
+
     @app.post("/api/mock/events")
     def mock_event():
         """Mock 모드에서 실시간 UI 검증용 사건을 발생시킨다."""
