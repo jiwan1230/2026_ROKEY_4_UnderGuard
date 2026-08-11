@@ -45,12 +45,19 @@ class RosInterfaceConfig:
 
     fleet_status_topic: str = "/fleet/status"
     fleet_event_topic: str = "/fleet/event"
+    # /fleet/event(name:x:y)에는 없는 robot_id·confidence가 실려 오는 상세 탐지
+    # 토픽이다. 이게 붙으면 "최근 활동 로봇으로 추측"하지 않고 실제 값을 쓴다.
+    fleet_detection_topic: str = "/fleet/detection"
+    # db_node가 여는 기록 조회 서비스(읽기 전용). UI는 MySQL에 직접 붙지 않는다.
+    db_query_service: str = "/db/query"
     webcam_detections_topic: str = "webcam/detections"
     oakd_detections_topic: str = "oakd/detections"
     odometry_topic: str = "odom"
     battery_topic: str = "battery_state"
-    # camera_node.py가 실제로 발행하는 상대 토픽(로봇 namespace 하위)이다.
-    camera_frame_topic: str = "synced/rgb"
+    # OAK-D 원본 압축 RGB 토픽(로봇 namespace 하위). 예전에는 camera_node가
+    # synced/rgb로 재발행했지만 detector_node에 통합·삭제되어 그 토픽은 더 이상
+    # 발행되지 않는다 — 원본을 직접 구독한다.
+    camera_frame_topic: str = "oakd/rgb/image_raw/compressed"
     map_frame: str = "map"
 
 
@@ -132,6 +139,10 @@ def load_settings() -> Settings:
         ros_interface=RosInterfaceConfig(
             fleet_status_topic=os.getenv("ROS_FLEET_STATUS_TOPIC", "/fleet/status"),
             fleet_event_topic=os.getenv("ROS_FLEET_EVENT_TOPIC", "/fleet/event"),
+            fleet_detection_topic=os.getenv(
+                "ROS_FLEET_DETECTION_TOPIC", "/fleet/detection"
+            ),
+            db_query_service=os.getenv("ROS_DB_QUERY_SERVICE", "/db/query"),
             webcam_detections_topic=os.getenv(
                 "ROS_WEBCAM_DETECTIONS_TOPIC", "webcam/detections"
             ),
@@ -140,7 +151,9 @@ def load_settings() -> Settings:
             ),
             odometry_topic=os.getenv("ROS_ODOMETRY_TOPIC", "odom"),
             battery_topic=os.getenv("ROS_BATTERY_TOPIC", "battery_state"),
-            camera_frame_topic=os.getenv("ROS_CAMERA_FRAME_TOPIC", "synced/rgb"),
+            camera_frame_topic=os.getenv(
+                "ROS_CAMERA_FRAME_TOPIC", "oakd/rgb/image_raw/compressed"
+            ),
             map_frame=os.getenv("ROS_MAP_FRAME", "map").strip("/") or "map",
         ),
     )

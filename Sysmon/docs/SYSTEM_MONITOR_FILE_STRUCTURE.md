@@ -66,7 +66,7 @@ run_mock.sh / run_ros.sh / run_replay.sh
 | 파일 | 역할 |
 |---|---|
 | `__init__.py` | `system_monitor`를 Python 패키지로 선언한다. |
-| `app.py` | Flask 앱의 조립과 실행 진입점이다. 설정, 상태, 지도, 카메라, 기록 저장소와 현재 런타임을 생성하고 화면·상태·지도·카메라·이력 API를 제공한다. |
+| `app.py` | Flask 앱의 조립과 실행 진입점이다. 설정, 상태, 지도, 카메라, 기록 저장소와 현재 런타임을 생성하고 화면·상태·지도·카메라·이력 API 및 읽기 전용 DB 조회 API를 제공한다. |
 | `config.py` | 환경변수를 검증된 `Settings`, `RobotConfig`, `RosInterfaceConfig` 객체로 변환하고 로봇별 ROS 토픽 이름을 만든다. |
 | `state_manager.py` | 로봇, 현재 위치, 역할, 표적, 실시간 탐지·덫·이벤트와 전체 임무 상태를 메모리 스냅샷으로 관리한다. Offline 판정과 최초 탐지 역할 배정도 수행한다. |
 | `detection_service.py` | Mock과 ROS에서 들어온 탐지, 대상 유실, 저전압·복구, Trap 확인 이벤트를 공통 상태 변경 순서로 처리한다. |
@@ -76,7 +76,7 @@ run_mock.sh / run_ros.sh / run_replay.sh
 | `history_store.py` | SQLite의 `detections`, `trail_points` 테이블과 탐지 이미지 파일을 생성·저장·조회한다. 쥐구멍 탐지에는 Opening/Trap ID와 설치 상태를 선택적으로 보관한다. |
 | `runtime_service.py` | Mock, ROS, Replay 구현이 따라야 하는 `available`, `running`, `status`, `start`, `stop` 공통 Protocol을 정의한다. |
 | `mock_manager.py` | 장비 없이 로봇 이동, 탐지, 역할 배정, 배터리 경고와 Trap 확인 흐름을 재현하는 Mock 런타임이다. |
-| `ros_bridge.py` | Fleet String, Detection3DArray, Odometry, BatteryState, CompressedImage를 공통 관제 상태로 변환한다. 탐지와 map 좌표 odom은 HistoryStore에도 주기 제한으로 저장한다. |
+| `ros_bridge.py` | Fleet String, DetectionEvent, Detection3DArray, Odometry, BatteryState, CompressedImage를 공통 관제 상태로 변환한다. 탐지와 map 좌표 odom은 HistoryStore에도 주기 제한으로 저장하며, DbQuery Service를 통해 운영 DB를 읽기 전용으로 조회한다. |
 | `replay_manager.py` | 쥐몰이 검증 JSON의 Driver, Blocker, 표적 궤적과 FSM 상태를 실시간처럼 재생하고 기록 화면용 시험 데이터도 제공한다. |
 | `rosbag_converter.py` | rosbag 메시지를 시간순 이벤트로 바꾸고 샘플링해 Replay trial/document를 만드는 변환 핵심 로직이다. |
 

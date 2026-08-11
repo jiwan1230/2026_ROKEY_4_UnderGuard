@@ -1,33 +1,37 @@
-# Python
+# ROS 2 워크스페이스 산출물 — 우리 소스(src/turtle_project, src/turtle_interfaces)만 추적한다.
+/build/
+/install/
+/log/
+
+# 워크스페이스 루트 잡동사니 (모델·homography 등 대용량 바이너리)
+/*.pt
+/*.npy
+*.db
+
+# src 안에서 우리 패키지 2개만 남기고 나머지 워크스페이스 패키지 제외
+/src/*
+!/src/turtle_project/
+!/src/turtle_interfaces/
+
+
+# 파이썬/빌드 산출물
 __pycache__/
-*.py[cod]
+*.pyc
 .pytest_cache/
 .coverage
 htmlcov/
+diagrams/
 
-# Virtual environments
+# 로컬 개발 환경과 실행 산출물
 .venv/
 venv/
-
-# Local configuration
 .env
 .env.local
-
-# Runtime databases and logs
-system_monitor.db
-*.db
 *.sqlite
 *.sqlite3
 *.log
-
-# 기록 조회 탭의 더미/실제 저장소 (HistoryStore) — DB는 위 *.db로도 걸리지만
-# 캡처 이미지(data/captures/*.jpg)는 별도 패턴이 필요하다.
 Sysmon/backend/data/
-
-# IDE
 .vscode/
 .idea/
-
-# OS files
 .DS_Store
 Thumbs.db

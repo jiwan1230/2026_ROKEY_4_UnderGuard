@@ -2,7 +2,7 @@
 
 최초 작성일: 2026-08-11
 
-현재 상태: 쥐구멍 탐지의 Trap 설치 여부 1차 구현 완료, 운영 DB 연동 대기
+현재 상태: DB 브랜치 병합 및 운영 DB 읽기 전용 조회 연결 완료, 기록 UI 전환 대기
 
 ## 1. 문서 목적
 
@@ -42,6 +42,7 @@ System Monitor의 기존 기능과 겹치지 않는 데이터 화면을 선정�
 | 7 | 단위·통합·화면 검증 | 완료(실물 연동 제외) |
 | 8 | 문서 정리와 완료 판정 | 대기 |
 | 9 | 기존 탐지·이동 기록 저장 배선과 UI 단순화 | 완료(실물 연동 제외) |
+| 10 | DB 브랜치 병합과 System Monitor 조회 계약 결합 | 완료(실제 MySQL 검증 제외) |
 
 ## 4. 단계별 작업 기록
 
@@ -375,6 +376,38 @@ GET /api/history/detections?trap_installation_status=INSTALLED
 - 필터 Summary 테스트와 기존 기능 회귀 테스트 통과
 - 실물 TurtleBot과 실제 map 위치 토픽 검증은 남아 있다.
 
+### 단계 10. DB 브랜치 병합과 System Monitor 조회 계약 결합
+
+상태: 완료(실제 MySQL 검증 제외)
+
+작업일: 2026-08-11
+
+#### 병합 기준
+
+- `src/`의 MySQL 스키마, DB 노드, ROS 메시지·서비스와 로봇 코드는
+  `origin/DB` 최신 내용을 기준으로 반영했다.
+- `Sysmon/` 충돌은 현재 HistoryStore, Replay, 기록 UI를 유지하면서 DB 브랜치의
+  읽기 전용 조회 기능을 결합했다.
+
+#### 결합 결과
+
+- `/fleet/detection`의 실제 `robot_id`와 `confidence`를 `/fleet/event` 탐지에
+  보강한다. 보강 메시지가 없거나 5초 이상 오래되면 기존 로봇 추정으로 되돌아간다.
+- System Monitor는 MySQL에 직접 접속하지 않고 `DbQuery` ROS Service를 호출한다.
+- `/api/db/detections`, `/api/db/missions`, `/api/db/traps`, `/api/db/report`만
+  읽기 전용으로 노출한다.
+- DB 조회 장애는 해당 API만 실패하게 하고 실시간 관제와 로컬 HistoryStore 기록은
+  계속 동작하도록 분리했다.
+- 기존 쥐몰이 Replay 이력 API와 ROS 탐지·map 이동 경로 저장을 모두 보존했다.
+
+#### 검증 결과
+
+- System Monitor Python 전체 단위 테스트 85개 통과
+- DB 조회 허용 목록, 쓰기 차단, DB 장애 격리 테스트 통과
+- `/fleet/detection` 로봇·confidence 보강과 fallback 테스트 통과
+- DB·로봇 Python 소스 문법 컴파일 검사 통과
+- 실제 ROS 2 Service와 MySQL을 함께 실행한 end-to-end 검증은 남아 있다.
+
 ## 5. 결정 이력
 
 ### 2026-08-11: 전체 8개 분류를 한 번에 구현하지 않음
@@ -410,6 +443,12 @@ GET /api/history/detections?trap_installation_status=INSTALLED
 새 분석 화면을 추가하기 전에 실제 ROS 입력이 HistoryStore까지 도달하도록
 배선하고, 중복 타임라인과 불일치 Summary를 정리했다. 이 변경은 운영 DB 확장과
 별개로 현재 탐지·이동 기록 기능 자체를 완성하기 위한 작업이다.
+
+### 2026-08-11: 최신 DB 브랜치를 현재 관제 구현과 병합
+
+DB 브랜치에 `DbQuery` 조회 계약이 추가되어 이전의 계약 확인 단계에서 실제 병합
+단계로 진행했다. DB·Robot 소스는 DB 브랜치를 기준으로 하고, System Monitor는
+기존 HistoryStore·Replay·기록 UI를 유지한 채 읽기 전용 운영 DB 조회만 결합했다.
 
 ## 6. 작업 변경 목록
 
@@ -452,12 +491,22 @@ GET /api/history/detections?trap_installation_status=INSTALLED
 - 테스트: Python 전체 단위 테스트 77개 통과
 - 미검증: 실물 Robot Detection/odom과 실제 지도 좌표계 end-to-end
 
+### 2026-08-11 — DB 브랜치 병합
+
+- 병합: `origin/DB` 최신 `afb499e`
+- 추가: `turtle_interfaces/msg/DetectionEvent`, `srv/DbQuery` 등 DB 계약
+- 추가: `backend/tests/test_db_query.py`
+- 수정: `backend/system_monitor/app.py`, `config.py`, `ros_bridge.py`
+- 수정: `docs/ROS_INTERFACE_SPEC.md`, `SYSTEM_MONITOR_FILE_STRUCTURE.md`
+- 테스트: System Monitor Python 전체 단위 테스트 85개 통과
+- 문법 검사: DB·Robot Python 소스 전체 통과
+- 미검증: 실제 ROS 2 `/db/query`와 MySQL end-to-end
+
 ## 7. 다음 작업
 
-다음 단계는 **운영 DB 조회 계약 연결**이다.
+다음 단계는 **운영 DB 조회 결과를 현재 기록 UI에 선택적으로 연결하는 것**이다.
 
-DB 담당자에게 전체 Opening/Trap 조회 API 또는 ROS Service를 받아
-`opening_id`, `trap_id`, 최신 `trap.status`를 현재 API 계약으로 변환한다. 특히
-`MOVED`를 단순 미설치로 처리하지 않도록 설치 여부와 상태를 분리한 응답 계약을
-확정하고, DB의 `OPENING` 객체명을 UI의 `ENTRY_POINT`로 정규화해야 한다. 연동 후
-실제 데이터로 목록·상세·지도와 재시작 복원을 검증하면 단계 8을 완료한다.
+현재 `/api/db/detections`와 `/api/db/traps`까지 백엔드 계약은 연결됐다. 다음에는
+DB의 `OPENING`을 UI의 `ENTRY_POINT`로 정규화하고, `trap_installed`와 실제
+`trap.status`를 구분해 목록·상세·지도에 반영해야 한다. 그 뒤 실제 ROS 2 Service와
+MySQL 데이터로 재시작 복원과 장애 fallback을 검증하면 단계 8을 완료한다.

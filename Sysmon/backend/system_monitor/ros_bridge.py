@@ -14,6 +14,7 @@ ROS에서 메시지가 도착하면 해당 토픽에 등록된 ``_on_*`` 콜백�
 
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 import threading
@@ -44,6 +45,8 @@ if TYPE_CHECKING:
     from std_msgs.msg import String
     from vision_msgs.msg import Detection3DArray
 
+    from turtle_interfaces.msg import DetectionEvent
+    from turtle_interfaces.srv import DbQuery
     from turtle_project.turtle_project import fleet_msg
 else:
     try:
@@ -73,6 +76,13 @@ else:
         from vision_msgs.msg import Detection3DArray
     except ImportError:
         Detection3DArray = None
+
+    try:  # main의 커스텀 인터페이스 — 기록 조회(DbQuery)와 상세 탐지(DetectionEvent).
+        from turtle_interfaces.msg import DetectionEvent
+        from turtle_interfaces.srv import DbQuery
+    except ImportError:
+        DetectionEvent = None
+        DbQuery = None
 
     try:  # colcon 설치 환경과 저장소에서 직접 실행하는 환경을 모두 지원한다.
         from turtle_project import fleet_msg
@@ -134,6 +144,9 @@ class RosBridge:
         self.trail_record_interval_sec = max(0.0, trail_record_interval_sec)
         self._thread: threading.Thread | None = None
         self._node = None
+        # db_node의 기록 조회 서비스 클라이언트 — spin 스레드에서 만들고
+        # Flask 요청 스레드에서 호출한다(query_db 참고).
+        self._db_client = None
         # 타이머와 여러 콜백이 역할 배정·경고 기록을 동시에 바꾸지 않도록
         # 공유 데이터를 잠근다. RLock은 잠금 안에서 다른 잠금 코드를 다시
         # 호출해도 같은 스레드라면 교착 상태가 나지 않는 재진입 잠금이다.
@@ -146,6 +159,9 @@ class RosBridge:
         self._last_active_robot_id: str | None = None
         self._last_detection_recorded_at: dict[tuple[str, str], float] = {}
         self._last_trail_recorded_at: dict[str, float] = {}
+        # /fleet/detection에서 받아 둔 최근 값 — object_type -> (robot_id,
+        # confidence, 수신시각). robot_id 추측을 실제 값으로 대체하는 데 쓴다.
+        self._last_detection_meta: dict[str, tuple[str, float, float]] = {}
 
     @property
     def available(self) -> bool:
@@ -228,6 +244,18 @@ class RosBridge:
                     bridge._on_fleet_event,
                     10,
                 )
+                if DetectionEvent is not None:
+                    # robot_id·confidence가 실제로 실려 오는 상세 탐지.
+                    self.create_subscription(
+                        DetectionEvent,
+                        bridge.interface.fleet_detection_topic,
+                        bridge._on_fleet_detection,
+                        10,
+                    )
+                if DbQuery is not None:
+                    bridge._db_client = self.create_client(
+                        DbQuery, bridge.interface.db_query_service
+                    )
                 for robot in bridge.robots:
                     # 현재 로봇의 ID 저장
                     rid = robot.robot_id
@@ -352,8 +380,9 @@ class RosBridge:
         except (AttributeError, TypeError, ValueError):
             return
         name = name.lower()
-        # 그래서 가장 최근에 움직였던 로봇을 사건의 표시 대상으로 선택한다.
-        robot_id = self._event_robot_id()
+        # 상세 탐지 메타데이터가 있으면 실제 탐지 로봇과 confidence를 쓰고,
+        # 없으면 가장 최근에 움직인 로봇으로 안전하게 되돌아간다.
+        robot_id, confidence = self._detection_meta(name)
 
         with self._data_lock:
             if name in {"rat_detected", "opening_confirmed"}:
@@ -366,7 +395,7 @@ class RosBridge:
                     {
                         "robot_id": robot_id,
                         "object_type": object_type,
-                        "confidence": None,
+                        "confidence": confidence,
                         "distance": None,
                         "map_x": map_x,
                         "map_y": map_y,
@@ -401,7 +430,79 @@ class RosBridge:
             return self._last_active_robot_id
         return self.robots[0].robot_id
 
-    # 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 ## 중요 #
+    def _on_fleet_detection(self, msg: Any) -> None:
+        """/fleet/detection — 화면 갱신은 /fleet/event가 그대로 담당하고, 여기서는
+        거기에 실을 수 없는 robot_id·confidence만 받아 둔다.
+
+        두 토픽은 같은 탐지에 대해 함께 오므로 여기서도 process_detection을 부르면
+        같은 사건이 두 번 쌓인다. 그래서 보강만 하고 화면 흐름은 건드리지 않는다.
+        """
+
+        try:
+            object_type = str(msg.object_type).upper()
+            robot_id = str(msg.robot_id).strip()
+            confidence = float(msg.confidence)
+        except (AttributeError, TypeError, ValueError):
+            return
+        if not robot_id:
+            return
+        with self._data_lock:
+            self._last_detection_meta[object_type] = (
+                robot_id,
+                confidence,
+                time.monotonic(),
+            )
+
+    def _detection_meta(self, event_name: str) -> tuple[str, float | None]:
+        """Fleet event에 붙일 robot_id·confidence. /fleet/detection이 안 붙어 있거나
+        값이 오래됐으면 기존처럼 최근 활동 로봇으로 되돌아간다."""
+
+        key = {"rat_detected": "RAT", "opening_confirmed": "OPENING"}.get(event_name)
+        meta = self._last_detection_meta.get(key) if key else None
+        if meta is not None and time.monotonic() - meta[2] <= 5.0:
+            return meta[0], meta[1]
+        return self._event_robot_id(), None
+
+    def query_db(
+        self,
+        query_name: str,
+        params: dict[str, Any] | None = None,
+        timeout_sec: float = 3.0,
+    ) -> tuple[Any, str | None]:
+        """db_node의 기록 조회 서비스를 호출한다 — 읽기 전용, (결과, 오류) 반환.
+
+        Flask 요청 스레드에서 부르고 응답은 ROS spin 스레드가 채우므로 future를
+        폴링으로 기다린다. DB가 없거나 느려도 여기서만 실패하고 실시간 화면은
+        그대로 돈다 — 관제 화면이 DB에 묶이지 않게 하려는 것이다.
+        """
+
+        if DbQuery is None or self._db_client is None:
+            return None, "ros_unavailable"
+        if not self._db_client.service_is_ready():
+            return None, "db_node_unavailable"
+
+        request = DbQuery.Request()
+        request.query_name = query_name
+        request.params_json = json.dumps(params or {})
+        future = self._db_client.call_async(request)
+
+        deadline = time.monotonic() + timeout_sec
+        while not future.done() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if not future.done():
+            future.cancel()
+            return None, "timeout"
+
+        response = future.result()
+        if response is None:
+            return None, "no_response"
+        if not response.ok:
+            return None, response.error or "query_failed"
+        try:
+            return json.loads(response.result_json), None
+        except ValueError as exc:
+            return None, f"bad_json: {exc}"
+
     def _on_detection(self, robot_id: str, source: str, msg: Any) -> None:
         """카메라의 Detection3DArray 안에 든 탐지를 하나씩 처리한다."""
 

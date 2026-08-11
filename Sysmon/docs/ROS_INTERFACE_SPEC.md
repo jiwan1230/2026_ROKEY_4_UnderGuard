@@ -28,10 +28,19 @@ main 사건은 `rat_detected` → `LIVE_RODENT`, `opening_confirmed` →
 
 ### 현재 계약 제약
 
-`/fleet/event` 포맷에는 `robot_id`, 신뢰도, 거리, 이미지 경로가 없다. 따라서
-System Monitor는 가장 최근에 활동 상태를 보낸 로봇을 사건 소유자로 사용하고,
-그 정보도 없으면 설정된 첫 로봇을 사용한다. 정확한 다중 로봇 사건 귀속이 필요하면
-main 계약을 `robot:event:x:y` 또는 커스텀 메시지로 확장해야 한다.
+`/fleet/event` 포맷에는 `robot_id`, 신뢰도, 거리, 이미지 경로가 없다. 그래서
+main이 `/fleet/detection` (`turtle_interfaces/msg/DetectionEvent`)을 따로 두었고,
+여기에 `robot_id`와 `confidence`가 실제 값으로 실려 온다 — System Monitor는 이
+토픽을 구독해 사건 귀속에 쓴다.
+
+| 토픽 | 타입 | 용도 |
+|---|---|---|
+| `/fleet/detection` | `turtle_interfaces/msg/DetectionEvent` | `object_type`(RAT/OPENING), x, y, `confidence`, `robot_id` |
+
+화면 갱신은 `/fleet/event`가 그대로 담당하고 이 토픽은 보강만 한다 — 두 토픽이 같은
+탐지에 대해 함께 오므로, 양쪽에서 탐지를 기록하면 같은 사건이 두 번 쌓인다.
+이 토픽이 안 붙어 있거나 값이 5초보다 오래되면 기존처럼 최근 활동 로봇으로 되돌아간다.
+거리·이미지 경로는 아직 계약에 없다.
 
 System Monitor는 `/fleet/command`를 발행하지 않는다. 로봇 제어는
 `central_node`와 로봇 노드의 책임이며 관제 화면은 `/fleet/status`로 확인된 결과만
@@ -63,8 +72,27 @@ bool trap_installed
 ```
 
 현재 이 서비스는 `db_node`와 `detector_node` 사이의 로봇 동작용 계약이다.
-System Monitor는 이 DB를 만들거나 직접 공유하지 않는다. 로봇 DB 조회가 필요해지면
-파일 접근이 아니라 별도의 Service/API 계약과 데이터 소유권을 먼저 확정한다.
+System Monitor는 이 서비스를 쓰지 않는다.
+
+### `/db/query` — 기록 조회 (`turtle_interfaces/srv/DbQuery`)
+
+System Monitor는 MySQL에 직접 붙지 않고 이 서비스만 거친다. 예고했던
+"별도의 Service 계약"이 이것이며, DB 소유권은 `db_node`에 그대로 남는다.
+
+```text
+string query_name    # detections | missions | traps | report
+string params_json   # {"limit":50}
+---
+bool ok
+string result_json
+string error
+```
+
+`/api/db/<query_name>`으로 노출된다. 조회 전용이며 쓰기/삭제 라우트는 없다 —
+관제 화면의 read-only 원칙을 이 계층에도 유지한다.
+
+db_node가 없으면 이 요청만 503으로 실패하고 실시간 화면(`/api/snapshot`)과
+기존 기록 화면은 그대로 동작한다. 관제 화면이 DB에 묶이지 않게 하려는 것이다.
 
 ## 환경변수
 

@@ -93,7 +93,9 @@ flowchart TD
   `RosBridge` → `camera_service.py`(메모리 캐시) → `/api/camera/<robot_id>/frame`로
   바로 내려갑니다(원본 바이트가 `/api/snapshot`의 JSON 직렬화를 무겁게 하지 않도록).
 - Opening, Trap, Incident와 Robot Mission의 운영 MySQL은 로봇 측 DB가 소유하며,
-  별도 조회 계약이 확정된 뒤 필요한 값만 연결합니다.
+  System Monitor가 직접 접속하거나 수정하지 않습니다. 필요한 기록은 ROS 2
+  `/db/query` Service를 거쳐 `/api/db/detections|missions|traps|report`로
+  읽기 전용 조회합니다.
 - 기록 보고서 생성과 기록 수정·삭제는 현재 개발 범위가 아닙니다.
 
 ## Mock/ROS 공통 계약
