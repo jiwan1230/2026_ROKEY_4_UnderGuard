@@ -23,14 +23,16 @@ flowchart TD
 - `/api/health`, `/api/snapshot`, `/api/map`
 - 탐지·map 이동 경로 기록과 `/api/history/*` 조회
 
-로그인, 기록 수정·삭제, 데이터 초기화 API와 로봇 명령 API는 두 모드 모두 없다.
+로그인, 개별 기록 수정·삭제와 로봇 명령 API는 두 모드 모두 없다. 확인 모달을
+거치는 로컬 HistoryStore 전체 초기화는 공통으로 제공하며 운영 MySQL은 건드리지
+않는다.
 
 ## 의도적인 차이
 
 | 항목 | 이유 |
 |---|---|
 | Mock 테스트 버튼 | ROS 화면에 가짜 사건이 섞이지 않도록 Mock에서만 표시 |
-| 실제 영상 | 전송 계약 확정 전까지 두 모드 모두 상태 UI만 표시 |
+| 실제 영상 | Mock은 영상 없음 상태를 표시하고 ROS는 압축 카메라 프레임을 표시 |
 | 기록 입력 | Mock은 더미 시드로 검증하고 ROS는 실제 탐지와 map frame odom을 자동 저장 |
 
 ROS의 odom 좌표는 TF 변환 전까지 map 위치로 가장하지 않는다. 탐지와 트랩 좌표도 설정된 map frame임이 확인된 경우만 지도에 표시한다.
@@ -38,10 +40,20 @@ ROS의 odom 좌표는 TF 변환 전까지 map 위치로 가장하지 않는다. 
 ## 검증
 
 ```bash
-cd backend
+cd Sysmon/backend
 python3 -m unittest discover -s tests -v
 ./run_mock.sh
 ./run_ros.sh
+```
+
+`run_ros.sh`는 `/opt/ros/humble/setup.bash`와 저장소 루트의 `install/setup.bash`를
+자동으로 source하고, 존재하지 않는 Fast DDS 프로필 환경변수 두 종류를 모두
+정리한다. Mock·ROS·더미 시드는 기본적으로 같은 `room_map.yaml`을 사용한다.
+`install/setup.bash`가 없으면 저장소 루트에서 먼저 다음을 실행한다.
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --packages-select turtle_interfaces turtle_project
 ```
 
 실제 ROS 시험 전에는 `ros2 topic list -t`로 namespace와 메시지 타입을 확인한다.

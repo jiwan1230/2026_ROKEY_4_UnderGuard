@@ -2,7 +2,7 @@
 
 최초 작성일: 2026-08-11
 
-현재 상태: DB 브랜치 병합 및 운영 DB 읽기 전용 조회 연결 완료, 기록 UI 전환 대기
+현재 상태: 로컬 기록 초기화 UI·API 완료, 실물 토픽 검증 대기
 
 ## 1. 문서 목적
 
@@ -43,6 +43,16 @@ System Monitor의 기존 기능과 겹치지 않는 데이터 화면을 선정�
 | 8 | 문서 정리와 완료 판정 | 대기 |
 | 9 | 기존 탐지·이동 기록 저장 배선과 UI 단순화 | 완료(실물 연동 제외) |
 | 10 | DB 브랜치 병합과 System Monitor 조회 계약 결합 | 완료(실제 MySQL 검증 제외) |
+| 11 | ROS 모드 빌드·실행 경로 정상화 | 완료(실물 토픽 검증 제외) |
+| 12 | 기록 지도를 이동·탐지 분석 지도로 개편 | 완료 |
+| 13 | 트랩 설치 여부를 O/X 이진 표시로 정리 | 완료 |
+| 14 | 분석 지도의 탐지 중심 시각 계층 강화 | 완료 |
+| 15 | 더미 데이터 전체 사이클 검증 | 완료(단계 17에서 결함 수정) |
+| 16 | 쥐몰이 Replay 화면을 운영자 중심 UI로 개편 | 완료 |
+| 17 | ROS 모드 지도·Fast DDS·카메라 오류 수정 | 완료(실물 토픽 제외) |
+| 18 | Replay 지도 구조 가독성과 이동구간 Auto-fit 개선 | 완료 |
+| 19 | ROS 로컬 기록 초기화·더미 재시드·화면 검증 | 완료 |
+| 20 | 사용자 확인 기반 로컬 기록 초기화 UI·API | 완료 |
 
 ## 4. 단계별 작업 기록
 
@@ -408,6 +418,299 @@ GET /api/history/detections?trap_installation_status=INSTALLED
 - DB·로봇 Python 소스 문법 컴파일 검사 통과
 - 실제 ROS 2 Service와 MySQL을 함께 실행한 end-to-end 검증은 남아 있다.
 
+### 단계 11. ROS 모드 빌드·실행 경로 정상화
+
+상태: 완료(실물 토픽 검증 제외)
+
+작업일: 2026-08-11
+
+#### 변경 내용
+
+- `run_ros.sh`가 ROS Humble과 현재 저장소의 `install/setup.bash`를 자동으로
+  source하도록 변경했다.
+- 워크스페이스가 빌드되지 않았거나 `DetectionEvent`, `DbQuery`를 import하지
+  못하면 실행 전에 정확한 빌드 명령을 안내하고 중단한다.
+- 별도 설정이 없으면 DB 브랜치에 포함된 `room_map.yaml`을 사용한다.
+- 사라진 Fast DDS 프로필 경로가 환경변수에 남아 있으면 해당 값만 무시한다.
+- ROS 종료 시 발생하는 `ExternalShutdownException` traceback을 정상 종료로 처리한다.
+- Opening 상세 탐지를 Fleet event보다 먼저 발행해 robot ID와 confidence 보강
+  순서를 RAT 탐지와 통일했다.
+
+#### 검증 결과
+
+- `turtle_interfaces`, `turtle_project` colcon 빌드 성공
+- `DetectionEvent`, `DbQuery` import 성공
+- `run_ros.sh` 실제 기동 성공
+- `/api/health`: ROS available/running true 확인
+- 운영 지도 로딩과 `/fleet/detection` 구독 확인
+- 실제 DDS로 Fleet 상태·상세 탐지·Fleet event·map odometry를 발행해 robot6의
+  ONLINE/TRACKING 상태, confidence 0.91 탐지와 SQLite 이동 경로 저장을 확인
+- DB 노드 미기동 시 `/api/db/report`만 503이고 실시간 관제는 정상 동작
+- 전체 System Monitor 단위 테스트 85개 통과
+- 실제 Robot 토픽과 MySQL 데이터 수신 검증은 남아 있다.
+
+### 단계 12. 기록 지도를 이동·탐지 분석 지도로 개편
+
+상태: 완료
+
+작업일: 2026-08-11
+
+#### 변경 내용
+
+- 실시간 SLAM 지도와 구분되도록 격자를 제거하고 occupancy 배경의 색·명암을
+  낮춰 기록 데이터를 중심으로 보이게 했다.
+- `이동 경로`와 `탐지 밀도` 두 분석 보기를 추가했다.
+- 로봇별 경로에 시간 순서에 따른 투명도, 방향 화살표, START/END를 표시한다.
+- 쥐·쥐구멍·배설물·트랩과 Robot 경로 범례를 지도 위에 고정했다.
+- 선택한 탐지를 흰색 halo로 강조하고 지도 마커 클릭으로 상세 기록을 선택한다.
+- map 영역 밖 좌표는 그리지 않고 제외 개수를 표시해 좌표계 오류를 숨기지 않는다.
+- 우측 기록 영역을 넓히고 건수 표시와 저강도 DUMMY 배지를 적용했다.
+- `?view=history&history_map=density` 형식의 화면 검증용 deep link를 지원한다.
+
+#### 검증 결과
+
+- 이동 경로·탐지 밀도 두 화면을 Chrome Headless로 실제 렌더링 확인
+- 더미 탐지 12건, 이동 지점 120개로 지도·목록·범례 확인
+- JavaScript 런타임 오류 없음
+- System Monitor 전체 단위 테스트 85개 통과
+
+### 단계 13. 트랩 설치 여부를 O/X 이진 표시로 정리
+
+상태: 완료
+
+작업일: 2026-08-11
+
+#### 표시 규칙
+
+- `INSTALLED`는 초록색 `트랩 O`로 표시한다.
+- `NOT_INSTALLED`, `UNKNOWN`과 누락값은 빨간색 `트랩 X`로 표시한다.
+- 저장소에는 기존 원본 상태를 유지하고 UI 표시와 필터만 이진화한다.
+- `미설치 X` 필터는 `NOT_INSTALLED`와 `UNKNOWN`을 함께 조회한다.
+
+#### 변경 영역
+
+- 지도 쥐구멍 보조 마커의 체크·대시·물음표를 `O / X`로 교체했다.
+- 지도 범례, 필터, 탐지 카드와 선택 상세의 문구를 같은 규칙으로 통일했다.
+- X는 빨간색, O는 초록색으로 색상과 문자 양쪽에서 구분한다.
+
+### 단계 14. 분석 지도의 탐지 중심 시각 계층 강화
+
+상태: 완료
+
+작업일: 2026-08-11
+
+#### 변경 내용
+
+- 맵 바닥과 occupancy 이미지의 밝기·opacity를 더 낮췄다.
+- 탐지 종류를 단순 도형 대신 쥐 실루엣, 아치형 침입구, 배설물 pellet 아이콘과
+  색상으로 함께 구분하고 19~23px halo를 적용했다.
+- 선택되지 않은 탐지는 opacity 0.25로 낮추고 선택 탐지는 1.0과 glow로 강조한다.
+- 비선택 Robot 경로는 2px·낮은 opacity, 선택 탐지 Robot 경로는
+  3.5px·높은 opacity와 shadow로 구분한다.
+- START/END 문자열 대신 선택 경로에만 작은 S/E 표시를 사용한다.
+- 지도 위 선택 정보 카드에 종류, 시간, Robot, confidence, 좌표를 표시한다.
+- `증거 이미지 보기`를 누르면 하단 선택 증거 영역으로 이동한다.
+- 범례를 제목 없는 한 줄형으로 축소했다.
+
+### 단계 15. 더미 데이터 전체 사이클 검증
+
+상태: 부분 완료(지도 경계 결함 확인)
+
+작업일: 2026-08-11
+
+#### 검증 범위
+
+- 운영 데이터와 분리한 임시 SQLite DB에 탐지 12건과 이동 경로 120점을 생성했다.
+- Mock 사건으로 쥐·쥐구멍·배설물 탐지, 저전력·복구, 대상 유실,
+  트랩 확인 완료 흐름을 순서대로 발생시켰다.
+- 기록 Summary, 탐지 목록, 이동 경로, 트랩 O/X 필터, 증거 이미지,
+  쥐몰이 Replay JSON 조회를 API로 확인했다.
+- Chrome Headless에서 이동 경로 지도와 탐지 밀도 지도를 각각 렌더링했다.
+- Python 전체 단위 테스트 85개를 다시 실행했다.
+
+#### 결과
+
+- Mock 런타임과 모든 대상 API는 정상 응답했고 단위 테스트 85개가 통과했다.
+- 트랩 O/X 필터 결과의 합은 전체 쥐구멍 기록 수와 일치했다.
+- Replay JSON의 시험 4개와 선택 시험의 frame 484개를 정상 조회했다.
+- 브라우저 JavaScript 오류는 없었다. VAAPI 경고는 Headless Chrome의 GPU 환경
+  경고이며 화면 기능과 무관하다.
+- 지도용으로 회전한 이미지의 가로·세로와 물리 좌표 범위를 같은 방향으로
+  사용해, 무작위 더미 탐지 12건 중 2건이 지도 밖으로 생성되는 결함을 확인했다.
+  화면의 `지도 범위 밖 2개 제외` 경고가 정상적으로 결함을 드러냈다.
+- Mock 모드에서 `/api/db/*`가 503 `ros_unavailable`인 것은 설계된 경계다.
+  운영 DB 전체 사이클은 ROS 모드와 db_node/MySQL이 함께 떠 있을 때 별도 검증한다.
+
+### 단계 16. 쥐몰이 Replay 화면을 운영자 중심 UI로 개편
+
+상태: 완료
+
+작업일: 2026-08-11
+
+#### 변경 내용
+
+- 보라색 Replay 지도 원본을 grayscale·brightness·contrast 조합으로 재색상화해
+  이동 가능 공간과 벽을 Dark Gray 계열로 낮췄다.
+- 지나온 전체 경로는 opacity를 낮추고 현재 시점 기준 최근 3초 경로만 굵기와
+  glow를 높여 시간 흐름이 보이도록 했다.
+- Driver와 Blocker 현재 위치를 역할 색 원, 방향 화살표, halo로 강조했다.
+- 쥐와 포획 지점을 포함한 지도 위 상시 텍스트를 제거하고 hover/click 시에만
+  시각·좌표를 보여주는 Tooltip으로 교체했다.
+- 큰 경로 설정 패널을 헤더의 Driver·Blocker·쥐·포획지점 pill로 축소했다.
+- 계산 목표와 미래 경로는 기본으로 숨기고 `상세 표시`에서만 켤 수 있게 했다.
+- 결과 요약은 `CAPTURED/FAILED`, 총 소요 시간, Driver, Blocker 중심으로 줄였다.
+- 처음·재생·시간·Slider·배속을 한 줄형 Replay Player로 통합하고 frame 정보는
+  작은 보조 텍스트로 낮췄다.
+- Timeline에서 TRACK/HERD 내부 상태는 숨기고 가까운 주요 사건은 한 마커로
+  묶어 라벨 겹침을 제거했다. 마커 클릭 시간 이동 기능은 유지했다.
+- `?view=history&history_view=herding` 직접 접근 경로를 추가했다.
+
+#### 검증 결과
+
+- Python 전체 단위 테스트 85개가 통과했다.
+- Chrome Headless 1840px 화면과 760px 화면에서 Replay JSON 조회, 레이아웃,
+  Dark Map, 경로와 주요 사건 렌더링을 확인했다.
+- 두 화면 크기 모두 JavaScript 콘솔 오류가 없었다.
+
+### 단계 17. ROS 모드 지도·Fast DDS·카메라 오류 수정
+
+상태: 완료(실물 토픽 제외)
+
+작업일: 2026-08-11
+
+#### 원인
+
+- 화면용 맵 PNG를 90도 회전한 뒤 회전된 width/height를 ROS world 좌표의
+  X/Y 물리 범위로 사용해 두 축이 뒤바뀌었다.
+- 이전 잘못된 범위로 생성된 더미 데이터가 시드 반복 실행으로 누적됐다.
+- 존재하지 않는 Fast DDS 프로필이 두 환경변수 이름으로 남았지만 실행 스크립트는
+  `FASTRTPS_DEFAULT_PROFILES_FILE` 하나만 정리했다.
+- ROS 모드에서는 실제 카메라 프레임 존재 여부와 관계없이 매 poll마다 이미지
+  URL을 요청해 프레임 연결 전 404가 반복됐다.
+
+#### 수정
+
+- MapService의 physical bounds는 회전 전 원본 PGM의 width/height로 계산하고,
+  화면용 PNG와 world 좌표 범위를 분리했다.
+- Mock·ROS·더미 시드의 기본 지도를 현재 workspace의 같은 `room_map.yaml`로
+  통일했다.
+- `seed_dummy_history.py --replace-dummy`를 추가해 실제 기록은 보존하고 기존 더미
+  행과 이미지 만 교체할 수 있게 했다.
+- `run_ros.sh`가 `FASTRTPS_DEFAULT_PROFILES_FILE`과
+  `FASTDDS_DEFAULT_PROFILES_FILE`의 유효성을 모두 검사하도록 수정했다.
+- Snapshot에 `camera_image_url`을 추가하고 실제 프레임이 있을 때만 브라우저가
+  카메라 API를 요청하도록 수정했다.
+
+#### 검증 결과
+
+- 새 임시 DB의 탐지 12건과 이동 경로 120점이 모두 지도 안에 표시됐다.
+- 더미 교체 후에도 12건/120점만 유지되고 실제 기록 보존 단위 테스트가 통과했다.
+- ROS Runtime과 `/api/health`가 `available=true`, `running=true`, `status=ok`로
+  기동했고 Fast DDS XMLPARSER 오류가 재발하지 않았다.
+- ROS 모드 브라우저 화면에서 지도 밖 제외 경고와 카메라 404 반복이 사라졌다.
+- Python 전체 단위 테스트 86개가 통과했다.
+- 현재 ROS graph에는 실물 Robot/Fleet publisher가 없어 실제 토픽 수신은 미검증이다.
+
+### 단계 18. Replay 지도 구조 가독성과 이동구간 Auto-fit 개선
+
+상태: 완료
+
+작업일: 2026-08-11
+
+#### 변경 내용
+
+- Replay JSON 내장 지도의 픽셀을 명도와 외곽 연결 여부로 분석해 이동 가능 공간,
+  벽·장애물, unknown을 각각 `#2A333B`, `#111820`, `#06090D`로 재색상화했다.
+- 원본 Replay 지도에서는 보라색 저명도 픽셀이 free, 흰색 고명도 픽셀이
+  non-free라는 실제 데이터 계약을 브라우저 픽셀 검증으로 확인해 반영했다.
+- Canvas board를 `#0A1016`으로 분리하고 약한 border·inset shadow·3.5% Grid를
+  지도 구조 위, 이동 경로 아래 순서로 렌더링했다.
+- 쥐·Driver·Blocker 전체 경로와 포획지점 bounding box를 계산해 world 기준
+  12% 여백을 둔 source crop과 화면 auto-fit을 적용했다.
+- Driver·Blocker·쥐·포획지점 색상을 제안 팔레트로 조정하고 과거 경로 opacity를
+  40%, 최근 3초 경로를 100%와 glow로 유지했다.
+- 상단 Replay 패널과 보조 문구를 소폭 밝게 조정했다.
+- Timeline은 선택된 현재 사건만 강한 색으로 두고 나머지 사건과 점은 회색으로
+  낮췄다.
+
+#### 검증 결과
+
+- Chrome Headless 1840px와 760px 화면에서 free space가 이전보다 밝게 읽히고,
+  current marker·최근 경로가 최상위 시각 계층으로 유지되는 것을 확인했다.
+- 두 화면 모두 Replay JSON 로드와 JavaScript 렌더링 오류가 없었다.
+- Python 전체 단위 테스트 86개가 통과했다.
+
+### 단계 19. ROS 로컬 기록 초기화·더미 재시드·화면 검증
+
+상태: 완료
+
+작업일: 2026-08-11
+
+#### 초기화 범위와 복구 수단
+
+- 운영 MySQL은 변경하지 않고 System Monitor의 로컬 `HistoryStore`만 대상으로
+  삼았다.
+- 초기화 전 로컬 DB에는 탐지 24건, 이동 경로 240점이 있었으며 모두
+  `is_dummy=1`이었다.
+- 기존 `history.db`와 증거 이미지 12개는 삭제하지 않고
+  `backend/data/backups/20260811_1531_ros_reset/`로 이동해 복구 가능하게 했다.
+
+#### 새 테스트 데이터
+
+- `seed_dummy_history.py --replace-dummy`로 탐지 12건과 이동 경로 120점을 새로
+  생성했다.
+- 탐지 유형은 `LIVE_RODENT`, `ENTRY_POINT`, `DROPPINGS`, 이동 경로 Robot은
+  `robot4`, `robot6`으로 구성됐다.
+- 쥐구멍 기록에서 Trap 설치 여부 O/X와 증거 이미지가 함께 확인되도록 구성됐다.
+- 모든 탐지와 경로 좌표가 실제 `room_map` 물리 범위 안에 있으며 제외된 좌표는
+  0건이다.
+
+#### 검증 결과
+
+- ROS 모드 `/api/health`가 `status=ok`, `running=true`, `ros_available=true`를
+  반환했다.
+- `/api/history/summary`는 탐지 12건, 경로 120점을 반환했고 상세 API 결과와
+  일치했다.
+- Chrome Headless 기록 조회 화면에서 `ROS MODE`, 탐지 12건, 두 Robot 경로,
+  탐지 마커, Trap O/X, 선택 상세를 확인했다.
+- 실제 Robot/Fleet publisher가 연결되지 않은 상태이므로 실물 토픽 수신은 별도
+  검증 대상으로 남겼다.
+
+### 단계 20. 사용자 확인 기반 로컬 기록 초기화 UI·API
+
+상태: 완료
+
+작업일: 2026-08-11
+
+#### 배치와 안전 기준
+
+- 기록 조회 화면 우측 상단에서 현재 건수와 새로고침 다음에 `로컬 기록 초기화`
+  버튼을 배치했다. 자주 쓰는 조회 기능보다 시각 강도를 낮춘 위험 색상으로
+  표시했다.
+- 쥐몰이 Replay 화면에서는 관련 없는 기능이므로 상단 관리 영역과 함께 숨긴다.
+- 버튼을 누르는 즉시 삭제하지 않고, 삭제되는 데이터와 유지되는 데이터를
+  구분한 확인 모달을 표시한다.
+- 확인 체크박스를 선택하기 전에는 최종 초기화 버튼을 비활성화한다.
+
+#### 데이터 경계와 API
+
+- `POST /api/history/reset`은 `DELETE_LOCAL_HISTORY` 확인 값이 정확히 전달된
+  요청만 처리한다.
+- 삭제 대상은 로컬 `detections`, `trail_points`, 두 테이블에 연결된 증거
+  이미지다.
+- 운영 MySQL, 쥐몰이 Replay JSON, 현재 실시간 메모리 상태는 변경하지 않는다.
+- 초기화 완료 후 Robot 필터와 선택 기록을 비우고 기록 화면을 즉시 다시
+  조회해 빈 상태를 표시한다.
+
+#### 검증 결과
+
+- HistoryStore와 Flask API의 정상 초기화·잘못된 확인 값 거부 테스트를 추가했다.
+- 전체 Python 단위 테스트 88개가 통과했다.
+- 실행 중인 Mock 서버에서 잘못된 확인 요청이 400으로 거부되고 기존 탐지 12건,
+  경로 120점이 유지되는 것을 확인했다.
+- Chrome Headless 기록 조회 화면에서 버튼 위치·표현과 기존 기록 렌더링을
+  확인했다. 실제 기록은 화면 검증 중 삭제하지 않았다.
+
 ## 5. 결정 이력
 
 ### 2026-08-11: 전체 8개 분류를 한 번에 구현하지 않음
@@ -502,9 +805,100 @@ DB 브랜치에 `DbQuery` 조회 계약이 추가되어 이전의 계약 확인 
 - 문법 검사: DB·Robot Python 소스 전체 통과
 - 미검증: 실제 ROS 2 `/db/query`와 MySQL end-to-end
 
+### 2026-08-11 — ROS 모드 실행 정상화
+
+- 수정: `backend/run_ros.sh`
+- 수정: `backend/system_monitor/ros_bridge.py`
+- 수정: `src/turtle_project/turtle_project/detector_node.py`
+- 수정: `README.md`, `docs/MODE_PARITY.md`
+- 빌드: ROS 패키지 2개 성공
+- 테스트: Python 전체 단위 테스트 85개 통과
+- 실제 기동: ROS bridge node, 운영 지도, Fleet detection 구독 확인
+
+### 2026-08-11 — 기록 분석 지도 개편
+
+- 수정: `frontend/templates/dashboard.html`
+- 수정: `frontend/static/js/dashboard.js`
+- 수정: `frontend/static/css/dashboard.css`
+- 수정: `backend/tests/test_app.py`
+- 테스트: Python 전체 단위 테스트 85개 통과
+- 브라우저: 이동 경로·탐지 밀도 화면 렌더링과 오류 로그 확인
+
+### 2026-08-11 — 트랩 O/X 표시
+
+- 수정: `backend/system_monitor/history_store.py`, `app.py`
+- 수정: `frontend/templates/dashboard.html`, `dashboard.js`, `dashboard.css`
+- 수정: `backend/tests/test_history_store.py`, `test_app.py`
+- 원본 DB 상태는 유지하고 화면·필터 계약만 O/X로 통합
+
+### 2026-08-11 — 탐지 중심 지도 계층 강화
+
+- 수정: `frontend/templates/dashboard.html`, `dashboard.js`, `dashboard.css`
+- 수정: `backend/tests/test_app.py`
+- 탐지 선택 → 마커·Robot 경로 강조 → 지도 정보 카드 → 증거 이미지 이동 연결
+
+### 2026-08-11 — 더미 데이터 전체 사이클 검증
+
+- 임시 DB: 탐지 12건, 이동 경로 120점 생성 및 조회 성공
+- Mock 사건: 탐지 3종, 배터리 경고·복구, 대상 유실, 트랩 확인 완료 성공
+- 기록 UI: 이동 경로·탐지 밀도 지도, 트랩 O/X, 증거 이미지 렌더링 성공
+- Replay JSON: 시험 4개, 선택 시험 frame 484개 조회 성공
+- 테스트: Python 전체 단위 테스트 85개 통과
+- 확인된 결함: 회전 지도 물리 경계의 가로·세로가 뒤바뀌어 탐지 일부가
+  지도 밖으로 생성될 수 있음
+
+### 2026-08-11 — 쥐몰이 Replay 화면 시각 계층 개편
+
+- 수정: `frontend/templates/dashboard.html`
+- 수정: `frontend/static/js/dashboard.js`
+- 수정: `frontend/static/css/dashboard.css`
+- 수정: `backend/tests/test_app.py`
+- 운영자 기본 정보와 개발용 상세 정보를 분리하고 지도·Player·Timeline을 개편
+- 테스트: Python 전체 단위 테스트 85개 통과
+- 브라우저: 1840px·760px 화면 렌더링 및 JavaScript 오류 없음 확인
+
+### 2026-08-11 — ROS 모드 지도·실행 오류 수정
+
+- 수정: `backend/system_monitor/map_service.py`, `history_store.py`, `app.py`, `config.py`
+- 수정: `backend/seed_dummy_history.py`, `run_ros.sh`
+- 수정: `frontend/static/js/dashboard.js`
+- 수정: `backend/tests/test_map_service.py`, `test_history_store.py`, `test_app.py`
+- 검증: 새 더미 탐지 12건·경로 120점 지도 범위 밖 0건
+- 검증: ROS Runtime과 health 정상, Fast DDS XML 오류·카메라 404 반복 없음
+- 테스트: Python 전체 단위 테스트 86개 통과
+
+### 2026-08-11 — Replay 지도 가독성과 Auto-fit 개선
+
+- 수정: `frontend/static/js/dashboard.js`, `frontend/static/css/dashboard.css`
+- 지도 픽셀을 free/wall/unknown으로 재색상화하고 실제 이동 범위에 12% 여백 적용
+- 과거 경로 40%, 최근 3초 100%, 현재 Marker glow 시각 계층 유지
+- Timeline 비선택 사건 회색 처리, Replay 상단 패널 밝기 소폭 상향
+- 브라우저: 1840px·760px 렌더링 및 JavaScript 오류 없음 확인
+- 테스트: Python 전체 단위 테스트 86개 통과
+
+### 2026-08-11 — ROS 로컬 기록 초기화와 새 더미 사이클 검증
+
+- 백업: `backend/data/backups/20260811_1531_ros_reset/`
+- 초기 상태: 탐지 24건, 경로 240점, 증거 이미지 12개(모두 더미)
+- 새 상태: 탐지 12건, 경로 120점, 지도 범위 밖 0건
+- API: ROS health, summary, detections, trail, map 응답 확인
+- 브라우저: ROS 모드 기록 조회에서 경로·탐지·Trap O/X·상세 표시 확인
+
+### 2026-08-11 — 로컬 기록 초기화 버튼 구현
+
+- 수정: `backend/system_monitor/history_store.py`, `app.py`
+- 수정: `frontend/templates/dashboard.html`, `dashboard.js`, `dashboard.css`
+- 수정: `backend/tests/test_history_store.py`, `test_app.py`
+- 수정: `README.md`, `docs/MODE_PARITY.md`, `SYSTEM_MONITOR_SCOPE.md`
+- 안전 경계: 확인 모달·서버 확인 값 적용, 운영 MySQL과 Replay JSON 제외
+- 테스트: Python 전체 단위 테스트 88개 통과
+- 브라우저: Mock 기록 조회 헤더 배치와 기존 12건 보존 확인
+
 ## 7. 다음 작업
 
-다음 단계는 **운영 DB 조회 결과를 현재 기록 UI에 선택적으로 연결하는 것**이다.
+회전 지도 물리 경계 수정과 더미 전체 사이클 재검증은 단계 17·19에서 완료했다.
+다음 단계는 실물 Robot/Fleet publisher를 연결해 Detection·odom이 ROS bridge를
+거쳐 로컬 기록에 자동 저장되는지 확인하는 것이다.
 
 현재 `/api/db/detections`와 `/api/db/traps`까지 백엔드 계약은 연결됐다. 다음에는
 DB의 `OPENING`을 UI의 `ENTRY_POINT`로 정규화하고, `trap_installed`와 실제

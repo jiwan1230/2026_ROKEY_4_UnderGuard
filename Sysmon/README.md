@@ -4,8 +4,9 @@
 
 실시간 로봇·임무·이벤트 상태는 프로세스 메모리에서 관리하고, 탐지와 map
 좌표계의 로봇 이동 경로는 별도 `HistoryStore` SQLite에 저장합니다. 기록 화면은
-이 DB를 읽기 전용 API로 조회하며 로그인, 기록 수정·삭제와 데이터 초기화 기능은
-제공하지 않습니다.
+일반 기록 API는 읽기 전용이며 로그인과 개별 기록 수정·삭제는 제공하지 않습니다.
+기록 조회 화면에서 명시적인 확인을 거친 경우에만 이 로컬 DB와 연결된 증거
+이미지 전체를 초기화할 수 있고, 운영 MySQL에는 영향을 주지 않습니다.
 
 ## 초기 화면 설계와 마크업
 
@@ -96,7 +97,8 @@ flowchart TD
   System Monitor가 직접 접속하거나 수정하지 않습니다. 필요한 기록은 ROS 2
   `/db/query` Service를 거쳐 `/api/db/detections|missions|traps|report`로
   읽기 전용 조회합니다.
-- 기록 보고서 생성과 기록 수정·삭제는 현재 개발 범위가 아닙니다.
+- 기록 보고서 생성과 개별 기록 수정·삭제는 현재 개발 범위가 아닙니다. 로컬
+  HistoryStore 전체 초기화만 확인 모달을 거쳐 별도로 지원합니다.
 
 ## Mock/ROS 공통 계약
 
@@ -123,16 +125,30 @@ python3 -m pip install --user -r requirements.txt
 
 접속 주소는 `http://localhost:5000`입니다. 로그인 단계는 없습니다.
 
-ROS 모드는 ROS 2와 프로젝트 워크스페이스를 먼저 로드합니다.
+기록 화면의 더미 데이터가 반복 실행으로 누적됐거나 이전 지도 좌표로 생성됐다면
+실제 ROS 기록은 보존하고 더미 기록만 교체할 수 있습니다.
 
 ```bash
+cd backend
+python3 seed_dummy_history.py --replace-dummy
+```
+
+ROS 모드는 저장소 루트에서 인터페이스와 로봇 패키지를 한 번 빌드합니다.
+
+```bash
+cd /home/rokey/Desktop/Sysmon_inte
 source /opt/ros/humble/setup.bash
-source ~/turtlebot4_ws/install/setup.bash
+colcon build --packages-select turtle_interfaces turtle_project
+
 export ROBOT_NAMESPACES=robot4,robot6
 export ROBOT_ROLES=SCOUT,SCOUT
-cd backend
-./run_ros.sh
+./Sysmon/backend/run_ros.sh
 ```
+
+`run_ros.sh`가 ROS Humble과 현재 저장소의 `install/setup.bash`를 자동으로
+source하고 현재 운영 지도를 기본값으로 사용한다. 존재하지 않는 Fast DDS 프로필
+환경변수도 시작 전에 정리한다. 별도 터미널에서 ROS 노드를 직접 실행할 때만
+`source install/setup.bash`를 추가한다.
 
 실제 연결 전 `ros2 topic list -t`와 `ros2 topic echo /fleet/status`로 토픽 이름, 타입, 값이 main 계약과 맞는지 확인해야 합니다.
 
@@ -163,7 +179,7 @@ python3 convert_rosbag_to_replay.py \
 | `/<namespace>/odom` | 위치·방향·속도 입력. frame이 `map`일 때 이동 이력에도 저장 |
 | `/<namespace>/battery_state` | 배터리 보조 입력, 실제 토픽 확인 필요 |
 | `/<namespace>/*/detections` | 상세 탐지 입력을 현재 상태와 HistoryStore에 함께 저장 |
-| `/<namespace>/synced/rgb` | 카메라 프레임(`CompressedImage`) 캐시 후 `/api/camera/<robot_id>/frame`로 제공 |
+| `/<namespace>/oakd/rgb/image_raw/compressed` | 카메라 프레임(`CompressedImage`) 캐시 후 `/api/camera/<robot_id>/frame`로 제공 |
 
 ## 테스트
 

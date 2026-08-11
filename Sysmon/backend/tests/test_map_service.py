@@ -38,6 +38,13 @@ class MapServiceTest(unittest.TestCase):
         self.assertEqual((metadata["width"], metadata["height"]), (2, 3))
         self.assertEqual(metadata["resolution"], 0.5)
         self.assertEqual(metadata["origin"], [-1.0, -2.0, 0.0])
+        # bounds는 화면용 회전 이미지(2x3)가 아니라 ROS 원본 world 축
+        # (3x2)을 따라야 한다: local x=1.5m, local y=1.0m.
+        self.assertEqual(
+            metadata["bounds"],
+            {"local_width_m": 1.5, "local_height_m": 1.0},
+        )
+        self.assertEqual(service.bounds(), (-1.0, -2.0, 1.5, 1.0))
         self.assertTrue(service.png_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
 
     def test_world_coordinates_are_converted_with_90_degree_rotation(self):
@@ -51,6 +58,8 @@ class MapServiceTest(unittest.TestCase):
         # 자리를 바꿨는지"를 확인한다(대칭 케이스는 우연히 통과할 수 있음).
         self.assertEqual(service.world_to_pixel(-1.0, -1.5), (1.0, 3.0))
         self.assertEqual(service.world_to_pixel(-0.5, -2.0), (2.0, 2.0))
+        # world 물리 범위의 반대쪽 모서리는 회전된 이미지의 좌상단이다.
+        self.assertEqual(service.world_to_pixel(0.5, -1.0), (0.0, 0.0))
 
     def test_missing_map_returns_fallback_description(self):
         service = MapService(Path(self.temp.name) / "missing.yaml")

@@ -5,14 +5,16 @@
 _detect_rat이 TODO). 그게 끝날 때까지, 이 스크립트가 만든 가짜 기록으로
 history_store.py + 기록 조회 UI를 먼저 개발·시연할 수 있게 한다.
 
-몇 번을 실행해도 안전하다 — 매번 새 더미 데이터를 追加만 하며(is_dummy=1로
-표시), 지우거나 실제 기록을 건드리지 않는다. 지우고 싶으면 DB 파일 자체를
-삭제하면 된다(HISTORY_DB_PATH, 기본 data/history.db).
+기본 실행은 기존처럼 새 더미 데이터를 추가한다. ``--replace-dummy``를 사용하면
+실제 기록(is_dummy=0)은 보존하고 기존 더미 행·이미지만 제거한 뒤 다시 생성한다.
+반복 실행으로 더미 경로가 누적됐거나 지도 좌표 계약이 바뀐 경우에 사용한다.
 
 사용: cd Sysmon/backend && python3 seed_dummy_history.py
+교체: cd Sysmon/backend && python3 seed_dummy_history.py --replace-dummy
 """
 from __future__ import annotations
 
+import argparse
 import math
 import random
 import time
@@ -52,11 +54,19 @@ def _resolve(path: Path) -> Path:
     return path if path.is_absolute() else Path.cwd() / path
 
 
-def seed(detection_count: int = 12, trail_points_per_robot: int = 60) -> None:
+def seed(
+    detection_count: int = 12,
+    trail_points_per_robot: int = 60,
+    *,
+    replace_dummy: bool = False,
+) -> None:
     settings = load_settings()
     store = HistoryStore(
         _resolve(settings.history_db_path), _resolve(settings.history_image_dir)
     )
+    if replace_dummy:
+        removed = store.delete_dummy_records()
+        print("기존 더미 기록 제거:", removed)
 
     map_service = MapService(
         _resolve(settings.map_yaml_path), frame_id=settings.ros_interface.map_frame
@@ -133,4 +143,13 @@ def seed(detection_count: int = 12, trail_points_per_robot: int = 60) -> None:
 
 
 if __name__ == "__main__":
-    seed()
+    parser = argparse.ArgumentParser(
+        description="기록 조회 화면용 더미 탐지와 이동 경로를 생성합니다."
+    )
+    parser.add_argument(
+        "--replace-dummy",
+        action="store_true",
+        help="실제 기록은 보존하고 기존 더미 기록만 제거한 뒤 다시 생성합니다.",
+    )
+    args = parser.parse_args()
+    seed(replace_dummy=args.replace_dummy)

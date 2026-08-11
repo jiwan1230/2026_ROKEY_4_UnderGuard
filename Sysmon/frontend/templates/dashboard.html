@@ -111,6 +111,7 @@
       <div id="history-heading-actions" class="heading-actions">
         <span id="history-summary" class="fleet-connection-summary" title="현재 필터에 해당하는 탐지 건수"><span class="online"></span><strong>기록 불러오는 중…</strong></span>
         <button id="history-refresh" class="ghost-button" type="button">새로고침</button>
+        <button id="history-reset-open" class="history-reset-button" type="button">로컬 기록 초기화</button>
       </div>
     </section>
 
@@ -135,9 +136,8 @@
       <label>쥐구멍 트랩
         <select id="history-filter-trap-status">
           <option value="">전체</option>
-          <option value="INSTALLED">설치 확인</option>
-          <option value="NOT_INSTALLED">미설치</option>
-          <option value="UNKNOWN">확인 필요</option>
+          <option value="INSTALLED">설치 O</option>
+          <option value="NOT_INSTALLED_OR_UNKNOWN">미설치 X</option>
         </select>
       </label>
       <label>기간
@@ -153,15 +153,36 @@
 
     <section class="history-grid">
       <section class="panel history-map-panel">
-        <div class="panel-title"><div><p class="eyebrow">TRAIL</p><h2>기록된 이동 경로 · 탐지 위치</h2></div></div>
-        <div class="map-wrap">
+        <div class="panel-title history-map-heading">
+          <div><p class="eyebrow">ANALYSIS MAP</p><h2>이동·탐지 분석 지도</h2></div>
+          <div class="history-map-modes" role="group" aria-label="분석 지도 보기 방식">
+            <button class="active" type="button" data-history-map-mode="trail" aria-pressed="true">이동 경로</button>
+            <button type="button" data-history-map-mode="density" aria-pressed="false">탐지 밀도</button>
+          </div>
+        </div>
+        <div class="map-wrap history-analysis-map">
           <canvas id="history-map-canvas" aria-label="기록된 로봇 이동 경로와 탐지 위치 지도"></canvas>
+          <aside class="history-map-legend" aria-label="분석 지도 범례">
+            <span><i class="history-symbol rat"></i>쥐</span>
+            <span><i class="history-symbol opening"></i>쥐구멍</span>
+            <span><i class="history-symbol droppings"></i>배설물</span>
+            <span><i class="history-symbol trap-installed">O</i><i class="history-symbol trap-absent">X</i>트랩</span>
+            <div id="history-map-robot-legend" class="history-map-robot-legend"></div>
+          </aside>
+          <aside id="history-map-selection-card" class="history-map-selection-card hidden" aria-live="polite">
+            <strong id="history-map-selection-title">선택 탐지</strong>
+            <span id="history-map-selection-summary">—</span>
+            <span id="history-map-selection-confidence">—</span>
+            <span id="history-map-selection-coordinates">—</span>
+            <button id="history-map-open-evidence" type="button">증거 이미지 보기 →</button>
+          </aside>
+          <span id="history-map-status" class="history-map-status">기록 좌표 분석 중</span>
           <div id="history-map-empty" class="empty hidden">이 기간에 기록된 경로/탐지가 없습니다.</div>
         </div>
       </section>
 
       <aside class="panel history-list-panel">
-        <div class="panel-title"><h2>탐지 기록</h2></div>
+        <div class="panel-title"><div><p class="eyebrow">EVENTS</p><h2>탐지 기록</h2></div><span id="history-list-count" class="history-list-count">0건</span></div>
         <div id="history-detection-list" class="history-detection-list"></div>
       </aside>
     </section>
@@ -202,70 +223,72 @@
 
         <section class="panel herding-summary-panel" aria-label="쥐몰이 시험 요약">
           <div class="herding-summary-primary">
-            <small>시험 결과</small>
+            <small>임무 결과</small>
             <strong id="herding-summary-result">—</strong>
-            <span id="herding-summary-duration">—</span>
+            <span id="herding-summary-result-label">—</span>
           </div>
           <dl class="herding-summary-meta">
-            <div><dt>알고리즘</dt><dd id="herding-summary-model">—</dd></div>
-            <div><dt>기록</dt><dd id="herding-summary-frames">—</dd></div>
+            <div><dt>총 소요 시간</dt><dd id="herding-summary-duration">—</dd></div>
             <div><dt>Driver</dt><dd id="herding-summary-driver">—</dd></div>
             <div><dt>Blocker</dt><dd id="herding-summary-blocker">—</dd></div>
+            <div class="herding-summary-technical"><dt>알고리즘</dt><dd id="herding-summary-model">—</dd></div>
+            <div class="herding-summary-technical"><dt>기록 프레임</dt><dd id="herding-summary-frames">—</dd></div>
           </dl>
         </section>
 
         <section class="panel herding-playback-panel" aria-label="쥐몰이 기록 재생 제어">
           <div class="herding-playback-status" aria-live="polite">
-            <div><small>재생 시간</small><strong id="herding-playback-time">—</strong></div>
             <div class="herding-state-status">
-              <small>알고리즘 상태</small><strong id="herding-playback-state">—</strong>
+              <small>현재 상태</small><strong id="herding-playback-state">—</strong>
               <span id="herding-playback-state-description">—</span>
             </div>
             <div class="herding-progress-status">
-              <small>알고리즘 포획 진행률</small><strong id="herding-playback-progress-text">—</strong>
+              <div><small>포획 진행률</small><strong id="herding-playback-progress-text">—</strong></div>
               <progress id="herding-playback-progress" max="100" value="0" aria-label="포획 진행률"></progress>
               <span id="herding-capture-distance">포획 지점 거리 —</span>
             </div>
-            <div><small>현재 프레임</small><strong id="herding-playback-frame">—</strong></div>
           </div>
 
           <div class="herding-playback-controls">
-            <button id="herding-playback-restart" class="ghost-button" type="button">처음부터</button>
-            <button id="herding-playback-toggle" class="primary-button" type="button" aria-pressed="false">재생</button>
+            <button id="herding-playback-restart" class="herding-player-button" type="button" aria-label="처음부터 재생">↶ <span>처음</span></button>
+            <button id="herding-playback-toggle" class="herding-player-button primary" type="button" aria-pressed="false">▶ <span>재생</span></button>
+            <strong id="herding-playback-time" class="herding-playback-time">—</strong>
+            <input id="herding-playback-slider" type="range" min="0" max="0" step="1" value="0" aria-label="쥐몰이 기록 시간 이동">
             <div class="herding-speed-controls" role="group" aria-label="재생 속도">
-              <button type="button" data-herding-speed="0.5" aria-pressed="false">0.5배</button>
-              <button type="button" data-herding-speed="1" class="active" aria-pressed="true">1배</button>
-              <button type="button" data-herding-speed="2" aria-pressed="false">2배</button>
+              <button type="button" data-herding-speed="0.5" aria-pressed="false">0.5×</button>
+              <button type="button" data-herding-speed="1" class="active" aria-pressed="true">1×</button>
+              <button type="button" data-herding-speed="2" aria-pressed="false">2×</button>
             </div>
+            <small id="herding-playback-frame" class="herding-playback-frame">—</small>
           </div>
 
           <div class="herding-timeline-block">
             <div class="herding-timeline-heading"><span>주요 이벤트</span><small>마커를 누르면 해당 시점으로 이동합니다</small></div>
             <div id="herding-event-timeline" class="herding-event-timeline" aria-label="쥐몰이 주요 이벤트"></div>
-            <label class="herding-timeline-label" for="herding-playback-slider">
-              <span>시간 이동</span>
-              <input id="herding-playback-slider" type="range" min="0" max="0" step="1" value="0" aria-label="쥐몰이 기록 시간 이동">
-            </label>
           </div>
         </section>
 
         <section class="panel herding-history-map-panel">
           <div class="panel-title">
-            <div><p class="eyebrow">TRAIL REPLAY</p><h2>쥐·Driver·Blocker 시간별 경로</h2></div>
-            <span id="herding-history-source" class="muted">Replay JSON</span>
+            <div><p class="eyebrow">TRAIL REPLAY</p><h2>쥐·Driver·Blocker 시간별 경로</h2><span id="herding-history-source" class="muted">Replay JSON</span></div>
+            <div class="herding-map-toolbar" aria-label="기본 경로 표시 설정">
+              <span>표시</span>
+              <label><input type="checkbox" data-herding-layer="driver" checked><i class="herding-dot driver"></i>Driver</label>
+              <label><input type="checkbox" data-herding-layer="blocker" checked><i class="herding-dot blocker"></i>Blocker</label>
+              <label><input type="checkbox" data-herding-layer="target" checked><i class="herding-dot target"></i>쥐</label>
+              <label><input type="checkbox" data-herding-layer="traps" checked><i class="herding-dot traps"></i>포획지점</label>
+              <button id="herding-map-detail-toggle" type="button" aria-expanded="false" aria-controls="herding-map-details">상세 표시 ⚙</button>
+            </div>
           </div>
           <div class="map-wrap">
             <canvas id="herding-history-map-canvas" aria-label="쥐몰이 알고리즘 전체 경로 지도"></canvas>
-            <aside class="herding-map-legend" aria-label="쥐몰이 지도 표시 설정">
-              <strong>경로 표시</strong>
-              <label><input type="checkbox" data-herding-layer="target" checked><i class="herding-line target"></i>쥐 경로</label>
-              <label><input type="checkbox" data-herding-layer="driver" checked><i class="herding-line driver"></i>Driver 실제 경로</label>
-              <label><input type="checkbox" data-herding-layer="blocker" checked><i class="herding-line blocker"></i>Blocker 실제 경로</label>
+            <aside id="herding-map-details" class="herding-map-details hidden" aria-label="쥐몰이 지도 상세 표시 설정">
+              <strong>개발·분석 정보</strong>
               <label><input type="checkbox" data-herding-layer="driver_goal"><i class="herding-line driver-goal"></i>Driver 계산 목표</label>
               <label><input type="checkbox" data-herding-layer="blocker_goal"><i class="herding-line blocker-goal"></i>Blocker 계산 목표</label>
-              <label><input type="checkbox" data-herding-layer="traps" checked><i class="herding-trap-symbol"></i>포획 지점</label>
-              <label><input type="checkbox" data-herding-layer="future" checked><i class="herding-line future"></i>아직 지나지 않은 경로</label>
+              <label><input type="checkbox" data-herding-layer="future"><i class="herding-line future"></i>아직 지나지 않은 경로</label>
             </aside>
+            <div id="herding-map-tooltip" class="herding-map-tooltip hidden" role="status"></div>
           </div>
         </section>
       </div>
@@ -275,6 +298,28 @@
   <dialog id="event-dialog" class="event-dialog">
     <div class="dialog-heading"><div><p class="eyebrow">LIVE EVENT STREAM</p><h2>현재 세션 이벤트</h2><p class="muted">서버 실행 중 수신한 탐지·상태 변화·경고만 표시하며 재시작하면 사라집니다.</p></div><button id="close-event-dialog" class="ghost-button" type="button">닫기</button></div>
     <div id="event-dialog-list" class="dialog-event-list"></div>
+  </dialog>
+
+  <dialog id="history-reset-dialog" class="history-reset-dialog" aria-labelledby="history-reset-title" aria-describedby="history-reset-description">
+    <div class="history-reset-dialog-body">
+      <p class="eyebrow">LOCAL HISTORY RESET</p>
+      <h2 id="history-reset-title">저장된 로컬 기록을 초기화할까요?</h2>
+      <p id="history-reset-description" class="muted">System Monitor가 보관한 탐지 기록, 이동 경로와 연결된 증거 이미지를 모두 삭제합니다.</p>
+      <div class="history-reset-scope">
+        <strong>삭제되는 데이터</strong>
+        <span>탐지 기록 · 이동 경로 · 증거 이미지</span>
+        <strong>삭제되지 않는 데이터</strong>
+        <span>운영 MySQL · 쥐몰이 Replay JSON · 현재 실시간 상태</span>
+      </div>
+      <label class="history-reset-acknowledgement">
+        <input id="history-reset-acknowledge" type="checkbox">
+        <span>삭제 후 화면에서 복구할 수 없음을 확인했습니다.</span>
+      </label>
+      <div class="history-reset-actions">
+        <button id="history-reset-cancel" class="ghost-button" type="button">취소</button>
+        <button id="history-reset-confirm" class="history-reset-confirm" type="button" disabled>기록 초기화</button>
+      </div>
+    </div>
   </dialog>
 
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>

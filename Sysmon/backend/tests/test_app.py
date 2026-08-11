@@ -69,10 +69,19 @@ class AppTest(unittest.TestCase):
         self.assertIn(b'id="history-view-activity"', dashboard)
         self.assertIn(b'id="history-view-herding"', dashboard)
         self.assertIn(b'id="history-filter-trap-status"', dashboard)
+        self.assertIn(b'id="history-reset-open"', dashboard)
+        self.assertIn(b'id="history-reset-dialog"', dashboard)
         self.assertNotIn(b'id="history-timeline"', dashboard)
+        self.assertIn("이동·탐지 분석 지도".encode(), dashboard)
+        self.assertIn(b'data-history-map-mode="trail"', dashboard)
+        self.assertIn(b'data-history-map-mode="density"', dashboard)
+        self.assertIn(b'id="history-map-robot-legend"', dashboard)
+        self.assertIn(b'id="history-map-status"', dashboard)
+        self.assertIn(b'id="history-map-selection-card"', dashboard)
+        self.assertIn(b'id="history-map-open-evidence"', dashboard)
         self.assertIn("선택한 탐지 증거".encode(), dashboard)
-        self.assertIn("설치 확인".encode(), dashboard)
-        self.assertIn("확인 필요".encode(), dashboard)
+        self.assertIn("설치 O".encode(), dashboard)
+        self.assertIn("미설치 X".encode(), dashboard)
         self.assertIn(b'id="herding-summary-result"', dashboard)
         self.assertIn(b'id="herding-history-map-canvas"', dashboard)
         self.assertIn(b'id="herding-trial-select"', dashboard)
@@ -83,6 +92,10 @@ class AppTest(unittest.TestCase):
         self.assertIn(b'id="herding-playback-state-description"', dashboard)
         self.assertIn(b'id="herding-capture-distance"', dashboard)
         self.assertIn(b'id="herding-event-timeline"', dashboard)
+        self.assertIn(b'id="herding-summary-result-label"', dashboard)
+        self.assertIn(b'id="herding-map-detail-toggle"', dashboard)
+        self.assertIn(b'id="herding-map-details"', dashboard)
+        self.assertIn(b'id="herding-map-tooltip"', dashboard)
         self.assertIn(b'data-herding-layer="driver_goal"', dashboard)
         self.assertIn(b'data-herding-layer="future"', dashboard)
         self.assertIn(b'data-herding-speed="0.5"', dashboard)
@@ -158,10 +171,14 @@ class AppTest(unittest.TestCase):
 
         missing = client.get("/api/camera/robot4/frame")
         self.assertEqual(missing.status_code, 404)
+        robot = client.get("/api/snapshot").get_json()["robots"][0]
+        self.assertIsNone(robot["camera_image_url"])
 
         self.app.extensions["camera_frame_store"].update(
             "robot4", b"raw-jpeg-bytes", "jpeg"
         )
+        robot = client.get("/api/snapshot").get_json()["robots"][0]
+        self.assertEqual(robot["camera_image_url"], "/api/camera/robot4/frame")
         found = client.get("/api/camera/robot4/frame")
         self.assertEqual(found.status_code, 200)
         self.assertEqual(found.mimetype, "image/jpeg")
@@ -210,6 +227,11 @@ class AppTest(unittest.TestCase):
             "trap_installation_status=INSTALLED"
         ).get_json()
         self.assertEqual(filtered_summary["detections"], 1)
+        absent = client.get(
+            "/api/history/detections?"
+            "trap_installation_status=NOT_INSTALLED_OR_UNKNOWN"
+        ).get_json()
+        self.assertEqual(absent, [])
         self.assertEqual(
             client.get(
                 "/api/history/detections?trap_installation_status=MOVED"
@@ -231,6 +253,43 @@ class AppTest(unittest.TestCase):
         self.assertEqual(client.post("/api/history/detections", json={}).status_code, 405)
         self.assertEqual(
             client.delete(f"/api/history/detections/{detection_id}/image").status_code, 405
+        )
+
+    def test_history_reset_requires_confirmation_and_only_clears_local_store(self):
+        client = self.app.test_client()
+        store = self.app.extensions["history_store"]
+        detection_id = store.record_detection(
+            robot_id="robot4", object_type="LIVE_RODENT", map_x=1.0, map_y=2.0,
+            image_bytes=b"evidence",
+        )
+        store.record_trail_point(robot_id="robot4", map_x=1.0, map_y=2.0)
+
+        self.assertEqual(client.post("/api/history/reset", json={}).status_code, 400)
+        self.assertEqual(
+            client.post(
+                "/api/history/reset", json={"confirmation": "wrong"}
+            ).status_code,
+            400,
+        )
+        self.assertEqual(store.summary(), {"detections": 1, "trail_points": 1})
+
+        response = client.post(
+            "/api/history/reset",
+            json={"confirmation": "DELETE_LOCAL_HISTORY"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {
+            "status": "ok",
+            "scope": "local_history",
+            "removed": {"detections": 1, "trail_points": 1, "images": 1},
+        })
+        self.assertEqual(store.summary(), {"detections": 0, "trail_points": 0})
+        self.assertIsNone(store.image_path_for(detection_id))
+        # 제거된 운영 데이터 전체 초기화 API는 이번 로컬 기록 기능과 별개다.
+        self.assertEqual(
+            client.post("/api/admin/reset-operational-data", json={}).status_code,
+            404,
         )
 
     def test_herding_history_route_returns_replay_frames_for_two_robots(self):

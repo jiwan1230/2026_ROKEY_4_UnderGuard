@@ -146,6 +146,10 @@ class MapService:
         with Image.open(image_path) as source:
             # 이미지를 흑백 그레이스케일로 변환(통일 시킴)
             image = source.convert("L") #####
+        # ROS world 좌표의 local x/y 물리 범위는 회전 전 원본 이미지 축을
+        # 기준으로 한다. 화면용 PNG를 아래에서 90도 돌리더라도 이 값까지
+        # 뒤집으면 Mock/더미 좌표 생성 범위가 실제 지도와 어긋난다.
+        source_width, source_height = image.size
 
         # 중요 3#
         # YAML의 negate 설정을 확인합니다.
@@ -183,8 +187,8 @@ class MapService:
             "origin": origin,
             # 맵의 실제 물리적인 크기
             "bounds": {
-                "local_width_m": width * resolution,
-                "local_height_m": height * resolution,
+                "local_width_m": source_width * resolution,
+                "local_height_m": source_height * resolution,
             },
         }
 

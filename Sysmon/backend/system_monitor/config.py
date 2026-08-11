@@ -71,12 +71,11 @@ class Settings:
     poll_interval_ms: int
     target_loss_timeout_sec: float = 1.5
     low_battery_threshold: float = 15.0
-    # app.py가 Path.cwd() 기준으로 상대경로를 푸므로(run_mock.sh/run_ros.sh가
-    # cd하는 Sysmon/backend/ 기준), Desktop/minipjt까지 3단계 위로 올라간다.
-    # room_map.yaml은 main의 실제 로봇 실행 설정(robot_bringup.launch.py)과
-    # 쥐몰이 알고리즘이 참조하는 현재 맵이다(2026-08-06 실측). my_map.yaml은
-    # 이전 mini 프로젝트 때 쓰던 좌표계가 다른 옛 맵이라 대체했다.
-    map_yaml_path: Path = Path("../../../minipjt/mini_turtle4/resource/room_map.yaml")
+    # app.py가 Path.cwd() 기준으로 상대경로를 푼다. run_mock.sh/run_ros.sh가
+    # cd하는 Sysmon/backend/에서 두 단계 위가 현재 ROS workspace 루트다.
+    # Mock, ROS, 더미 시드가 모두 robot_bringup의 같은 room_map을 사용해야
+    # 기록 좌표가 모드에 따라 달라지지 않는다.
+    map_yaml_path: Path = Path("../../src/turtle_project/resource/room_map.yaml")
     ros_interface: RosInterfaceConfig = field(default_factory=RosInterfaceConfig)
     # MONITOR_MODE=replay 전용 — herding_controller_dual 검증 시뮬레이션이 남긴
     # 궤적(replay_manager.DEFAULT_FRAMES_PATH) 중 몇 번째 trial을 얼마나 빠르게
@@ -124,7 +123,7 @@ def load_settings() -> Settings:
         map_yaml_path=Path(
             os.getenv(
                 "MAP_YAML_PATH",
-                "../../../minipjt/mini_turtle4/resource/room_map.yaml",
+                "../../src/turtle_project/resource/room_map.yaml",
             )
         ),
         replay_frames_path=(

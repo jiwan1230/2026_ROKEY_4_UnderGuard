@@ -5,8 +5,9 @@
 이 저장소는 정반대로 "사용자가 자리를 비운 사이 무슨 일이 있었는지" 나중에
 조회하기 위한 기록용이다. 실시간 폴링(/api/snapshot)에는 관여하지 않는다.
 
-조회 전용(read-only) API만 노출한다 — 감시 대시보드의 "기록을 남기고 볼 수는
-있지만 지우거나 고칠 수는 없다"는 원칙을 이 계층에도 그대로 유지한다.
+일반 기록 API는 조회 전용으로 유지한다. 다만 사용자가 명시적으로 확인한 경우에
+한해 로컬 기록 전체를 비우는 관리 작업을 지원한다. 이 저장소는 운영 MySQL과
+분리돼 있으므로 해당 작업이 Robot DB 기록에는 영향을 주지 않는다.
 """
 
 from __future__ import annotations
@@ -208,11 +209,18 @@ class HistoryStore:
             clauses.append("robot_id = ?")
             params.append(robot_id)
         if trap_installation_status is not None:
-            clauses.append(
-                "object_type = 'ENTRY_POINT' AND "
-                "COALESCE(trap_installation_status, 'UNKNOWN') = ?"
-            )
-            params.append(trap_installation_status)
+            if trap_installation_status == "NOT_INSTALLED_OR_UNKNOWN":
+                clauses.append(
+                    "object_type = 'ENTRY_POINT' AND "
+                    "COALESCE(trap_installation_status, 'UNKNOWN') "
+                    "IN ('NOT_INSTALLED', 'UNKNOWN')"
+                )
+            else:
+                clauses.append(
+                    "object_type = 'ENTRY_POINT' AND "
+                    "COALESCE(trap_installation_status, 'UNKNOWN') = ?"
+                )
+                params.append(trap_installation_status)
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY timestamp DESC LIMIT ?"
@@ -288,6 +296,88 @@ class HistoryStore:
         path = self.image_dir / row[0]
         return path if path.is_file() else None
 
+    def delete_dummy_records(self) -> dict[str, int]:
+        """시연용 더미 행과 그 증거 이미지만 제거한다.
+
+        웹 API에는 연결하지 않고 ``seed_dummy_history.py --replace-dummy``에서만
+        사용한다. 실제 ROS 기록(``is_dummy=0``)은 건드리지 않는다.
+        """
+
+        with self._lock:
+            image_names = [
+                row[0]
+                for row in self._conn.execute(
+                    "SELECT image_path FROM detections "
+                    "WHERE is_dummy=1 AND image_path IS NOT NULL"
+                ).fetchall()
+            ]
+            detection_count = self._conn.execute(
+                "SELECT COUNT(*) FROM detections WHERE is_dummy=1"
+            ).fetchone()[0]
+            trail_count = self._conn.execute(
+                "SELECT COUNT(*) FROM trail_points WHERE is_dummy=1"
+            ).fetchone()[0]
+            self._conn.execute("DELETE FROM detections WHERE is_dummy=1")
+            self._conn.execute("DELETE FROM trail_points WHERE is_dummy=1")
+            self._conn.commit()
+
+        removed_images = 0
+        for image_name in image_names:
+            # record_detection()이 만든 basename만 허용해 오래된 DB 값이
+            # 이미지 폴더 밖의 파일을 가리키더라도 삭제하지 않는다.
+            if Path(image_name).name != image_name:
+                continue
+            image_path = self.image_dir / image_name
+            if image_path.is_file():
+                image_path.unlink()
+                removed_images += 1
+        return {
+            "detections": int(detection_count),
+            "trail_points": int(trail_count),
+            "images": removed_images,
+        }
+
+    def clear_records(self) -> dict[str, int]:
+        """로컬 탐지·이동 기록 전체와 연결된 증거 이미지를 제거한다.
+
+        운영 MySQL이나 Replay JSON에는 접근하지 않는다. 이미지 삭제는 DB에
+        저장된 안전한 basename만 대상으로 하고, 기록과 동시에 들어오는 ROS
+        콜백과 충돌하지 않도록 전체 작업 동안 같은 저장소 락을 유지한다.
+        """
+
+        with self._lock:
+            image_names = [
+                row[0]
+                for row in self._conn.execute(
+                    "SELECT image_path FROM detections "
+                    "WHERE image_path IS NOT NULL"
+                ).fetchall()
+            ]
+            detection_count = self._conn.execute(
+                "SELECT COUNT(*) FROM detections"
+            ).fetchone()[0]
+            trail_count = self._conn.execute(
+                "SELECT COUNT(*) FROM trail_points"
+            ).fetchone()[0]
+            self._conn.execute("DELETE FROM detections")
+            self._conn.execute("DELETE FROM trail_points")
+            self._conn.commit()
+
+            removed_images = 0
+            for image_name in image_names:
+                if Path(image_name).name != image_name:
+                    continue
+                image_path = self.image_dir / image_name
+                if image_path.is_file():
+                    image_path.unlink()
+                    removed_images += 1
+
+        return {
+            "detections": int(detection_count),
+            "trail_points": int(trail_count),
+            "images": removed_images,
+        }
+
     def summary(
         self,
         *,
@@ -319,11 +409,18 @@ class HistoryStore:
             detection_clauses.append("object_type = ?")
             detection_params.append(object_type)
         if trap_installation_status is not None:
-            detection_clauses.append(
-                "object_type = 'ENTRY_POINT' AND "
-                "COALESCE(trap_installation_status, 'UNKNOWN') = ?"
-            )
-            detection_params.append(trap_installation_status)
+            if trap_installation_status == "NOT_INSTALLED_OR_UNKNOWN":
+                detection_clauses.append(
+                    "object_type = 'ENTRY_POINT' AND "
+                    "COALESCE(trap_installation_status, 'UNKNOWN') "
+                    "IN ('NOT_INSTALLED', 'UNKNOWN')"
+                )
+            else:
+                detection_clauses.append(
+                    "object_type = 'ENTRY_POINT' AND "
+                    "COALESCE(trap_installation_status, 'UNKNOWN') = ?"
+                )
+                detection_params.append(trap_installation_status)
 
         detection_query = "SELECT COUNT(*) FROM detections"
         trail_query = "SELECT COUNT(*) FROM trail_points"

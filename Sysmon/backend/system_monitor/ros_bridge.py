@@ -319,6 +319,10 @@ class RosBridge:
         try:
             # 종료 요청이 들어올 때까지 대기하면서 등록된 콜백을 실행한다.
             rclpy.spin(self._node)
+        except rclpy.executors.ExternalShutdownException:
+            # Flask 종료 과정에서 stop()이 rclpy.shutdown()을 호출하면 정상적으로
+            # 발생하는 종료 신호다. 사용자에게 오류 traceback으로 보이지 않게 한다.
+            pass
         finally:
             # 예외가 발생해도 ROS 자원이 남지 않도록 반드시 정리한다.
             self._node.destroy_node()

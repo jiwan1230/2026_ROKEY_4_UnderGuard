@@ -787,9 +787,11 @@ class DetectorNode(Node):
     def _confirm_opening(self, gap, conf):
         """진짜 opening 확정 → db 저장(opening_confirmed) 후 최초 설치."""
         self.get_logger().info(f'진짜 opening 확인 (gap={gap:.3f}m) — 설치 지시')
+        # System Monitor가 event를 처리하기 전에 실제 robot_id와 confidence를
+        # 받을 수 있도록 RAT 탐지와 같은 순서로 상세 탐지를 먼저 발행한다.
+        self.detect_pub.publish(self._make_detection('OPENING', self.target, conf))
         self.event_pub.publish(String(data=fleet_msg.event(
             'opening_confirmed', *self.target)))
-        self.detect_pub.publish(self._make_detection('OPENING', self.target, conf))
         self.hole = self.target
         self.reinstall_count = 0
         self._send_install()

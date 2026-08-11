@@ -187,6 +187,13 @@ def create_app(settings: Settings | None = None) -> Flask:
     def snapshot():
         # StateManager에서 현재 로봇 상태, 임무 상태, 탐지·이벤트 같은 현재 관제 정보를 한 번에 가져옴
         result = state.snapshot()
+        # 카메라 프레임이 실제로 준비된 로봇만 URL을 제공한다. 프런트가 ROS
+        # 모드라는 이유만으로 매 poll마다 존재하지 않는 이미지를 요청하면
+        # 카메라 연결 전까지 404가 계속 쌓인다.
+        for robot in result["robots"]:
+            robot["camera_image_url"] = camera_frame_store.image_url_for(
+                robot["robot_id"]
+            )
         # 여기에 현재 ROS/Mock 실행 서비스의 상태도 추가
         result["runtime"] = runtime.status()
         # 최종 데이터를 JSON 형식으로 변환해서 웹 프론트엔드에 반환
@@ -238,9 +245,9 @@ def create_app(settings: Settings | None = None) -> Flask:
             max_age=0,
         )
 
-    # 기록 조회 탭 전용 — 전부 조회(GET)만 있고 쓰기/삭제 라우트는 없다.
-    # "기록을 남기고 볼 수는 있지만 지우거나 고칠 수는 없다"는 read-only
-    # 원칙을 이 저장소에도 그대로 유지한다.
+    # 기록 조회 탭 전용. 개별 기록 수정·삭제는 허용하지 않고, 아래의 명시적인
+    # 전체 초기화만 별도 확인 문자열과 함께 허용한다. 운영 MySQL에는 접근하지
+    # 않고 이 프로세스가 소유한 로컬 HistoryStore만 비운다.
     @app.get("/api/history/summary")
     def history_summary():
         args = request.args
@@ -252,7 +259,10 @@ def create_app(settings: Settings | None = None) -> Flask:
         trap_status = args.get("trap_installation_status") or None
         if trap_status is not None:
             trap_status = trap_status.strip().upper()
-            if trap_status not in {"INSTALLED", "NOT_INSTALLED", "UNKNOWN"}:
+            if trap_status not in {
+                "INSTALLED", "NOT_INSTALLED", "UNKNOWN",
+                "NOT_INSTALLED_OR_UNKNOWN",
+            }:
                 return jsonify({"error": "지원하지 않는 트랩 설치 상태입니다."}), 400
         return jsonify(
             history_store.summary(
@@ -276,7 +286,10 @@ def create_app(settings: Settings | None = None) -> Flask:
         trap_status = args.get("trap_installation_status") or None
         if trap_status is not None:
             trap_status = trap_status.strip().upper()
-            if trap_status not in {"INSTALLED", "NOT_INSTALLED", "UNKNOWN"}:
+            if trap_status not in {
+                "INSTALLED", "NOT_INSTALLED", "UNKNOWN",
+                "NOT_INSTALLED_OR_UNKNOWN",
+            }:
                 return jsonify({"error": "지원하지 않는 트랩 설치 상태입니다."}), 400
         return jsonify(
             history_store.list_detections(
@@ -313,6 +326,24 @@ def create_app(settings: Settings | None = None) -> Flask:
                 limit=limit,
             )
         )
+
+    @app.post("/api/history/reset")
+    def history_reset():
+        """사용자가 확인한 경우 로컬 탐지·이동 기록 전체를 초기화한다."""
+
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or payload.get("confirmation") != (
+            "DELETE_LOCAL_HISTORY"
+        ):
+            return jsonify({
+                "error": "로컬 기록 초기화 확인 값이 올바르지 않습니다."
+            }), 400
+        removed = history_store.clear_records()
+        return jsonify({
+            "status": "ok",
+            "scope": "local_history",
+            "removed": removed,
+        })
 
     @app.get("/api/history/herding")
     def history_herding():

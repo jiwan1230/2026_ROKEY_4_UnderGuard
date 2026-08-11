@@ -55,6 +55,55 @@ class HistoryStoreTest(unittest.TestCase):
         self.assertIsNone(self.store.image_path_for(detection_id))
         self.assertIsNone(self.store.image_path_for(99999))
 
+    def test_delete_dummy_records_preserves_real_history(self):
+        real_id = self.store.record_detection(
+            robot_id="robot4", object_type="LIVE_RODENT", map_x=1.0, map_y=2.0,
+            image_bytes=b"real-image",
+        )
+        dummy_id = self.store.record_detection(
+            robot_id="robot6", object_type="LIVE_RODENT", map_x=2.0, map_y=3.0,
+            image_bytes=b"dummy-image", is_dummy=True,
+        )
+        self.store.record_trail_point(robot_id="robot4", map_x=1.0, map_y=2.0)
+        self.store.record_trail_point(
+            robot_id="robot6", map_x=2.0, map_y=3.0, is_dummy=True
+        )
+
+        removed = self.store.delete_dummy_records()
+
+        self.assertEqual(
+            removed, {"detections": 1, "trail_points": 1, "images": 1}
+        )
+        self.assertEqual([row["id"] for row in self.store.list_detections()], [real_id])
+        self.assertEqual(len(self.store.get_trail()), 1)
+        self.assertIsNotNone(self.store.image_path_for(real_id))
+        self.assertIsNone(self.store.image_path_for(dummy_id))
+
+    def test_clear_records_removes_real_dummy_trails_and_linked_images(self):
+        real_id = self.store.record_detection(
+            robot_id="robot4", object_type="LIVE_RODENT", map_x=1.0, map_y=2.0,
+            image_bytes=b"real-image",
+        )
+        dummy_id = self.store.record_detection(
+            robot_id="robot6", object_type="ENTRY_POINT", map_x=2.0, map_y=3.0,
+            image_bytes=b"dummy-image", is_dummy=True,
+        )
+        self.store.record_trail_point(robot_id="robot4", map_x=1.0, map_y=2.0)
+        self.store.record_trail_point(
+            robot_id="robot6", map_x=2.0, map_y=3.0, is_dummy=True
+        )
+
+        removed = self.store.clear_records()
+
+        self.assertEqual(
+            removed, {"detections": 2, "trail_points": 2, "images": 2}
+        )
+        self.assertEqual(self.store.summary(), {"detections": 0, "trail_points": 0})
+        self.assertEqual(self.store.list_detections(), [])
+        self.assertEqual(self.store.get_trail(), [])
+        self.assertIsNone(self.store.image_path_for(real_id))
+        self.assertIsNone(self.store.image_path_for(dummy_id))
+
     def test_list_detections_filters_by_time_type_and_robot(self):
         self.store.record_detection(
             robot_id="robot4", object_type="LIVE_RODENT", map_x=0, map_y=0, timestamp=100.0
@@ -117,6 +166,18 @@ class HistoryStoreTest(unittest.TestCase):
         )
         self.assertEqual(
             self.store.summary(trap_installation_status="INSTALLED")["detections"],
+            1,
+        )
+        self.assertEqual(
+            [row["id"] for row in self.store.list_detections(
+                trap_installation_status="NOT_INSTALLED_OR_UNKNOWN"
+            )],
+            [unknown_id],
+        )
+        self.assertEqual(
+            self.store.summary(
+                trap_installation_status="NOT_INSTALLED_OR_UNKNOWN"
+            )["detections"],
             1,
         )
 

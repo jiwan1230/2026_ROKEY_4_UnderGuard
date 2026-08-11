@@ -595,6 +595,7 @@ function renderCameras(robots, serverTime) {
                                   : null;
             const source = target.source || '—';
             const isSelected = robot.robot_id === selectedRobot;
+            const cameraImageUrl = robot.camera_image_url || null;
             return `
       <article class="panel camera-card camera-${
                 index === 0 ? 'robot-primary' : 'robot-secondary'} ${
@@ -620,23 +621,21 @@ function renderCameras(robots, serverTime) {
                 updateAge == null ? '' : ` · ${updateAge.toFixed(1)}초`}</span>
         </header>
         <div class="camera-placeholder camera-frame">${
-                cfg.mode === 'mock'
-                    ? ''
-                    // ROS 모드: 실제 프레임을 시도한다. 아직 아무도 안
-                    // 보냈으면(Mock이거나 카메라 미연결) 404라 onerror로
-                    // 조용히 숨고, 아래 크로스헤어/라벨만 남는다.
-                    : `<img class="camera-live-feed" alt="${
+                cameraImageUrl
+                    ? `<img class="camera-live-feed" alt="${
                           escapeHtml(robot.robot_id)} 카메라" loading="lazy"
-                          src="/api/camera/${
-                          encodeURIComponent(robot.robot_id)}/frame?t=${
+                          src="${escapeHtml(cameraImageUrl)}?t=${
                           Date.now()}"
-                          onerror="this.style.display='none'">`}
+                          onerror="this.style.display='none'">`
+                    : ''}
           ${cfg.mode === 'mock' ? '<div class="scan-line"></div>' : ''}
           <div class="camera-crosshair"></div>
           <span class="camera-label">${
                 cfg.mode === 'mock'
                     ? 'MOCK VIDEO · 실제 영상 아님'
-                    : 'ROS CAMERA DATA · 영상 스트림 연결 시도 중'}</span>
+                    : (cameraImageUrl
+                           ? 'ROS CAMERA DATA · 최신 프레임'
+                           : 'ROS CAMERA DATA · 프레임 대기 중')}</span>
           <div class="detection-box ${targetClass}"><span><b>${
                 hasTarget ? `${escapeHtml(targetName)} 감지`
                           : '대상 대기 중'}</b>${
@@ -717,6 +716,9 @@ async function loadMap() {
     label.classList.add('hidden');
     if (lastSnapshot)
       drawMap(lastSnapshot);
+    if (!$('#view-history').classList.contains('hidden') &&
+        activeHistorySubview === 'activity')
+      drawHistoryMap(historyDetections, historyTrail, historyMapTotalEmpty);
   } catch (error) {
     mapMetadata = null;
     mapImage = null;
@@ -1013,8 +1015,12 @@ function drawMap(snapshot) {
 // StateManager가 아니라 history_store.py(SQLite)에서 조회하며, 사용자가
 // "기록 조회" 탭을 열 때만 불러온다(실시간 탭 폴링에는 관여하지 않는다).
 // ---------------------------------------------------------------------------
-const HISTORY_TRAIL_COLORS = [ '#2997ff', '#ff9f0a', '#bf5af2', '#32d74b' ];
+const HISTORY_TRAIL_COLORS = [ '#2d9cff', '#ffb020', '#c86bfa', '#48d597' ];
 let historyDetections = [];
+let historyTrail = [];
+let historyMapMode = 'trail';
+let historyMapTotalEmpty = false;
+let historyMapMarkerHits = [];
 let selectedHistoryDetectionId = null;
 let activeHistorySubview = 'activity';
 let herdingHistoryRecord = null;
@@ -1027,11 +1033,12 @@ let herdingPlaybackLastTimestamp = null;
 let herdingPlaybackTime = 0;
 let selectedHerdingTrialIndex = null;
 let herdingHistoryRequestId = 0;
+let herdingMapHitTargets = [];
 
 const TRAP_INSTALLATION_PRESENTATION = {
-  INSTALLED : {label : '트랩 설치 확인', className : 'installed'},
-  NOT_INSTALLED : {label : '트랩 미설치', className : 'not-installed'},
-  UNKNOWN : {label : '트랩 확인 필요', className : 'unknown'}
+  INSTALLED : {label : '트랩 O', className : 'installed'},
+  NOT_INSTALLED : {label : '트랩 X', className : 'not-installed'},
+  UNKNOWN : {label : '트랩 X', className : 'not-installed'}
 };
 
 /** 쥐구멍 탐지의 Trap 설치 상태를 안전한 화면 표시값으로 변환한다. */
@@ -1044,27 +1051,26 @@ function trapInstallationPresentation(detection) {
 }
 
 /** 기록 지도의 쥐구멍 마커 옆에 Trap 설치 여부를 작은 보조 기호로 표시한다. */
-function drawHistoryTrapIndicator(ctx, point, presentation) {
-  const center = {x : point.x + 9, y : point.y - 9};
+function drawHistoryTrapIndicator(ctx, point, presentation, alpha = 1) {
+  const center = {x : point.x + 14, y : point.y - 14};
   const colors = {
-    installed : '#32d74b',
-    'not-installed' : '#8e8e93',
-    unknown : '#ffd60a'
+    installed : '#48d597',
+    'not-installed' : '#ff453a'
   };
   ctx.save();
+  ctx.globalAlpha = alpha;
   ctx.fillStyle = '#111214';
   ctx.strokeStyle = colors[presentation.className];
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(center.x, center.y, 6, 0, Math.PI * 2);
+  ctx.arc(center.x, center.y, 7, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.fillStyle = colors[presentation.className];
-  ctx.font = 'bold 8px Arial';
+  ctx.font = 'bold 9px Arial';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(presentation.className === 'installed' ? '✓' :
-                   presentation.className === 'not-installed' ? '–' : '?',
+  ctx.fillText(presentation.className === 'installed' ? 'O' : 'X',
                center.x, center.y + .5);
   ctx.restore();
 }
@@ -1099,7 +1105,7 @@ const herdingLayerVisibility = {
   driver_goal : false,
   blocker_goal : false,
   traps : true,
-  future : true
+  future : false
 };
 
 /**
@@ -1144,15 +1150,98 @@ function isHerdingPoint(point) {
       Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1]));
 }
 
-/**
- * Replay JSON의 내장 지도 이미지를 브라우저 Image 객체로 바꾼다.
- * 이미지 로드가 끝날 때까지 기다려야 naturalWidth/naturalHeight를 이용해
- * 지도 비율을 정확히 계산할 수 있다.
- */
+/** Replay 원본 픽셀을 관제용 free/wall/unknown 색상으로 재분류한다. */
+function colorizeHerdingMapImage(image) {
+  const canvas = document.createElement('canvas');
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const ctx = canvas.getContext('2d', {willReadFrequently : true});
+  ctx.drawImage(image, 0, 0);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = imageData.data;
+  const pixelCount = canvas.width * canvas.height;
+  const free = new Uint8Array(pixelCount);
+  const exterior = new Uint8Array(pixelCount);
+
+  // 현재 Replay 지도는 보라색 저명도 픽셀이 free, 흰색 고명도 픽셀이
+  // non-free다. free를 먼저 나눈 뒤 외곽과 연결된 non-free를 unknown으로 본다.
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * 4;
+    const luminance = pixels[offset] * .2126 + pixels[offset + 1] * .7152 +
+        pixels[offset + 2] * .0722;
+    free[index] = luminance < 170 ? 1 : 0;
+  }
+  const queue = [];
+  const enqueueExterior = (x, y) => {
+    const index = y * canvas.width + x;
+    if (!free[index] && !exterior[index]) {
+      exterior[index] = 1;
+      queue.push(index);
+    }
+  };
+  for (let x = 0; x < canvas.width; x += 1) {
+    enqueueExterior(x, 0);
+    enqueueExterior(x, canvas.height - 1);
+  }
+  for (let y = 0; y < canvas.height; y += 1) {
+    enqueueExterior(0, y);
+    enqueueExterior(canvas.width - 1, y);
+  }
+  while (queue.length) {
+    const index = queue.pop();
+    const x = index % canvas.width;
+    const y = Math.floor(index / canvas.width);
+    if (x > 0)
+      enqueueExterior(x - 1, y);
+    if (x + 1 < canvas.width)
+      enqueueExterior(x + 1, y);
+    if (y > 0)
+      enqueueExterior(x, y - 1);
+    if (y + 1 < canvas.height)
+      enqueueExterior(x, y + 1);
+  }
+
+  const colors = {
+    free : [ 42, 51, 59 ],       // #2A333B
+    wall : [ 17, 24, 32 ],       // #111820
+    unknown : [ 6, 9, 13 ]       // #06090D
+  };
+  for (let index = 0; index < pixelCount; index += 1) {
+    const x = index % canvas.width;
+    const y = Math.floor(index / canvas.width);
+    let color = colors.free;
+    if (!free[index]) {
+      let bordersFree = false;
+      for (let dy = -1; dy <= 1 && !bordersFree; dy += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && nx < canvas.width && ny >= 0 && ny < canvas.height &&
+              free[ny * canvas.width + nx]) {
+            bordersFree = true;
+            break;
+          }
+        }
+      }
+      // 외부 unknown과 free 사이의 경계, 그리고 외부와 연결되지 않은 내부
+      // 장애물은 wall로 그린다.
+      color = !exterior[index] || bordersFree ? colors.wall : colors.unknown;
+    }
+    const offset = index * 4;
+    pixels[offset] = color[0];
+    pixels[offset + 1] = color[1];
+    pixels[offset + 2] = color[2];
+    pixels[offset + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+/** Replay JSON의 내장 지도를 불러와 관제용 색상 Canvas로 캐시한다. */
 function loadHerdingMapImage(source) {
   return new Promise((resolve, reject) => {
     const image = new Image();
-    image.addEventListener('load', () => resolve(image), {once : true});
+    image.addEventListener(
+        'load', () => resolve(colorizeHerdingMapImage(image)), {once : true});
     image.addEventListener('error',
                            () => reject(new Error('Replay 지도 이미지 로드 실패')),
                            {once : true});
@@ -1176,31 +1265,84 @@ function createHerdingProjection(record, width, height) {
       xSpan > 0 && ySpan > 0;
 
   if (herdingHistoryMapImage && hasPhotoFrame) {
-    const padding = 18;
-    const imageWidth = herdingHistoryMapImage.naturalWidth;
-    const imageHeight = herdingHistoryMapImage.naturalHeight;
-    const scale = Math.min((width - padding * 2) / imageWidth,
-                           (height - padding * 2) / imageHeight);
-    const drawWidth = imageWidth * scale;
-    const drawHeight = imageHeight * scale;
-    const left = (width - drawWidth) / 2;
-    const top = (height - drawHeight) / 2;
+    const padding = 22;
+    const imageWidth = herdingHistoryMapImage.naturalWidth ||
+        herdingHistoryMapImage.width;
+    const imageHeight = herdingHistoryMapImage.naturalHeight ||
+        herdingHistoryMapImage.height;
     const imageAspect = imageWidth / imageHeight;
     const normalDifference = Math.abs(imageAspect - xSpan / ySpan);
     const rotatedDifference = Math.abs(imageAspect - ySpan / xSpan);
     const rotated = rotatedDifference < normalDifference;
+    const toSource = point => rotated
+        ? {
+            x : ((yHigh - Number(point[1])) / ySpan) * imageWidth,
+            y : ((xHigh - Number(point[0])) / xSpan) * imageHeight
+          }
+        : {
+            x : ((Number(point[0]) - xLow) / xSpan) * imageWidth,
+            y : ((yHigh - Number(point[1])) / ySpan) * imageHeight
+          };
+
+    // 실제 쥐·로봇 경로와 포획지점의 bounding box에 world 기준 12% 여백을
+    // 두고 이미지 crop을 계산한다. 계산 목표는 기본 분석 화면의 확대 범위에
+    // 영향을 주지 않는다.
+    const actionPoints = [];
+    (record.trial?.frames || []).forEach(item => {
+      [ 'target', 'driver', 'blocker' ].forEach(key => {
+        if (isHerdingPoint(item[key]))
+          actionPoints.push(item[key]);
+      });
+    });
+    Object.values(record.traps || {}).forEach(point => {
+      if (isHerdingPoint(point))
+        actionPoints.push(point);
+    });
+    const actionXs = actionPoints.map(point => Number(point[0]));
+    const actionYs = actionPoints.map(point => Number(point[1]));
+    const actionMinX = actionXs.length ? Math.min(...actionXs) : xLow;
+    const actionMaxX = actionXs.length ? Math.max(...actionXs) : xHigh;
+    const actionMinY = actionYs.length ? Math.min(...actionYs) : yLow;
+    const actionMaxY = actionYs.length ? Math.max(...actionYs) : yHigh;
+    const fitPaddingX = Math.max(.12, (actionMaxX - actionMinX) * .12);
+    const fitPaddingY = Math.max(.12, (actionMaxY - actionMinY) * .12);
+    const fitMinX = Math.max(xLow, actionMinX - fitPaddingX);
+    const fitMaxX = Math.min(xHigh, actionMaxX + fitPaddingX);
+    const fitMinY = Math.max(yLow, actionMinY - fitPaddingY);
+    const fitMaxY = Math.min(yHigh, actionMaxY + fitPaddingY);
+    const cropCorners = [
+      [ fitMinX, fitMinY ], [ fitMinX, fitMaxY ],
+      [ fitMaxX, fitMinY ], [ fitMaxX, fitMaxY ]
+    ].map(toSource);
+    const sourceLeft = Math.max(0, Math.min(...cropCorners.map(point => point.x)));
+    const sourceRight = Math.min(
+        imageWidth, Math.max(...cropCorners.map(point => point.x)));
+    const sourceTop = Math.max(0, Math.min(...cropCorners.map(point => point.y)));
+    const sourceBottom = Math.min(
+        imageHeight, Math.max(...cropCorners.map(point => point.y)));
+    const sourceRect = {
+      x : sourceLeft,
+      y : sourceTop,
+      width : Math.max(1, sourceRight - sourceLeft),
+      height : Math.max(1, sourceBottom - sourceTop)
+    };
+    const scale = Math.min((width - padding * 2) / sourceRect.width,
+                           (height - padding * 2) / sourceRect.height);
+    const drawWidth = sourceRect.width * scale;
+    const drawHeight = sourceRect.height * scale;
+    const left = (width - drawWidth) / 2;
+    const top = (height - drawHeight) / 2;
 
     return {
       imageRect : {x : left, y : top, width : drawWidth, height : drawHeight},
-      toCanvas : (point) => rotated
-          ? {
-              x : left + ((yHigh - Number(point[1])) / ySpan) * drawWidth,
-              y : top + ((xHigh - Number(point[0])) / xSpan) * drawHeight
-            }
-          : {
-              x : left + ((Number(point[0]) - xLow) / xSpan) * drawWidth,
-              y : top + ((yHigh - Number(point[1])) / ySpan) * drawHeight
-            }
+      sourceRect,
+      toCanvas : point => {
+        const sourcePoint = toSource(point);
+        return {
+          x : left + ((sourcePoint.x - sourceRect.x) / sourceRect.width) * drawWidth,
+          y : top + ((sourcePoint.y - sourceRect.y) / sourceRect.height) * drawHeight
+        };
+      }
     };
   }
 
@@ -1223,8 +1365,8 @@ function createHerdingProjection(record, width, height) {
   const maxX = xs.length ? Math.max(...xs) : 1;
   const minY = ys.length ? Math.min(...ys) : -1;
   const maxY = ys.length ? Math.max(...ys) : 1;
-  const paddingX = Math.max(.25, (maxX - minX) * .08);
-  const paddingY = Math.max(.25, (maxY - minY) * .08);
+  const paddingX = Math.max(.25, (maxX - minX) * .12);
+  const paddingY = Math.max(.25, (maxY - minY) * .12);
   const drawLeft = 35, drawTop = 35;
   const drawWidth = Math.max(1, width - drawLeft * 2);
   const drawHeight = Math.max(1, height - drawTop * 2);
@@ -1250,6 +1392,8 @@ function drawHerdingPath(ctx, frames, key, toCanvas, options) {
   ctx.lineWidth = options.width ?? 2;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
+  ctx.shadowColor = options.shadowColor || 'transparent';
+  ctx.shadowBlur = options.shadowBlur || 0;
   ctx.setLineDash(options.dash || []);
   ctx.beginPath();
   points.forEach((point, index) => {
@@ -1258,6 +1402,27 @@ function drawHerdingPath(ctx, frames, key, toCanvas, options) {
   });
   ctx.stroke();
   ctx.restore();
+}
+
+/** 지나온 전체 경로는 낮추고 최근 3초 구간만 선명하게 그린다. */
+function drawHerdingTemporalPath(ctx, frames, key, toCanvas, color) {
+  if (frames.length < 2)
+    return;
+  const currentTime = Number(frames[frames.length - 1]?.t || 0);
+  const recentStartTime = currentTime - 3;
+  const recentStart = Math.max(
+      1, frames.findIndex(frame => Number(frame.t || 0) >= recentStartTime));
+  const pastFrames = frames.slice(0, recentStart + 1);
+  const recentFrames = frames.slice(Math.max(0, recentStart - 1));
+  drawHerdingPath(ctx, pastFrames, key, toCanvas,
+                  {color, alpha : .4, width : 2});
+  drawHerdingPath(ctx, recentFrames, key, toCanvas, {
+    color,
+    alpha : 1,
+    width : 3.2,
+    shadowColor : color,
+    shadowBlur : 7
+  });
 }
 
 /** 경로의 출발 위치를 속이 빈 작은 원으로 표시한다. */
@@ -1281,39 +1446,40 @@ function drawHerdingStartPoint(ctx, frames, key, color, toCanvas) {
  * 현재 위치를 색상뿐 아니라 서로 다른 모양으로 그린다.
  * Driver는 이동 방향 삼각형, Blocker는 방패, 쥐는 귀가 있는 원을 사용한다.
  */
-function drawHerdingActorMarker(ctx, frames, key, actor, color, toCanvas,
-                                endpointLabel) {
+function drawHerdingActorMarker(ctx, frames, key, actor, color, toCanvas) {
   const points = frames.map(frame => frame[key]).filter(isHerdingPoint);
   if (!points.length)
     return;
   const current = toCanvas(points[points.length - 1]);
   const previous = toCanvas(points[Math.max(0, points.length - 2)]);
   const angle = Math.atan2(current.y - previous.y, current.x - previous.x);
+  const rawPoint = points[points.length - 1];
+  const actorLabel = actor === 'driver' ? 'Driver' :
+      actor === 'blocker' ? 'Blocker' : '쥐';
+
+  herdingMapHitTargets.push({
+    x : current.x,
+    y : current.y,
+    radius : 18,
+    label : `${actorLabel} 현재 위치`,
+    time : Number(frames[frames.length - 1]?.t || 0),
+    point : rawPoint
+  });
 
   ctx.save();
   ctx.translate(current.x, current.y);
-  ctx.strokeStyle = '#f5f5f7';
   ctx.fillStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.shadowColor = 'rgba(0,0,0,.8)';
-  ctx.shadowBlur = 5;
-  if (actor === 'driver') {
-    ctx.rotate(angle);
-    ctx.beginPath();
-    ctx.moveTo(10, 0);
-    ctx.lineTo(-7, -7);
-    ctx.lineTo(-4, 0);
-    ctx.lineTo(-7, 7);
-    ctx.closePath();
-  } else if (actor === 'blocker') {
-    ctx.beginPath();
-    ctx.moveTo(-8, -7);
-    ctx.lineTo(8, -7);
-    ctx.lineTo(7, 3);
-    ctx.lineTo(0, 10);
-    ctx.lineTo(-7, 3);
-    ctx.closePath();
-  } else {
+  ctx.globalAlpha = .18;
+  ctx.beginPath();
+  ctx.arc(0, 0, actor === 'target' ? 18 : 20, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  if (actor === 'target') {
+    ctx.strokeStyle = '#fff';
+    ctx.fillStyle = color;
+    ctx.lineWidth = 1.5;
     // 작은 두 귀와 몸통 원으로 쥐를 표현한다.
     ctx.beginPath();
     ctx.arc(-4, -6, 3, 0, Math.PI * 2);
@@ -1321,28 +1487,44 @@ function drawHerdingActorMarker(ctx, frames, key, actor, color, toCanvas,
     ctx.arc(4, -6, 3, 0, Math.PI * 2);
     ctx.moveTo(8, 0);
     ctx.arc(0, 0, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = '#0a1117';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.rotate(angle);
+    ctx.fillStyle = '#f5f5f7';
+    ctx.strokeStyle = '#f5f5f7';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(7, 0);
+    ctx.lineTo(-4, -4.5);
+    ctx.lineTo(-2, 0);
+    ctx.lineTo(-4, 4.5);
+    ctx.closePath();
+    ctx.fill();
   }
-  ctx.fill();
-  ctx.stroke();
-  ctx.restore();
-
-  const label = actor === 'driver' ? 'Driver' : actor === 'blocker' ? 'Blocker' : '쥐';
-  ctx.save();
-  ctx.font = 'bold 11px Arial';
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = 'rgba(0,0,0,.9)';
-  ctx.strokeText(`${label} ${endpointLabel}`, current.x + 11, current.y - 10);
-  ctx.fillStyle = color;
-  ctx.fillText(`${label} ${endpointLabel}`, current.x + 11, current.y - 10);
   ctx.restore();
 }
 
 /** 포획 지점을 초록색 조준선 모양으로 표시한다. */
 function drawHerdingTrapMarker(ctx, name, point, toCanvas) {
   const pixel = toCanvas(point);
+  herdingMapHitTargets.push({
+    x : pixel.x,
+    y : pixel.y,
+    radius : 15,
+    label : `포획 지점 ${name}`,
+    point
+  });
   ctx.save();
-  ctx.strokeStyle = '#32d74b';
-  ctx.fillStyle = 'rgba(50,215,75,.12)';
+  ctx.strokeStyle = '#35e675';
+  ctx.fillStyle = 'rgba(53,230,117,.12)';
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(pixel.x, pixel.y, 8, 0, Math.PI * 2);
@@ -1354,12 +1536,6 @@ function drawHerdingTrapMarker(ctx, name, point, toCanvas) {
   ctx.moveTo(pixel.x, pixel.y - 12);
   ctx.lineTo(pixel.x, pixel.y + 12);
   ctx.stroke();
-  ctx.font = 'bold 10px Arial';
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = 'rgba(0,0,0,.9)';
-  ctx.strokeText(`포획 지점 ${name}`, pixel.x + 13, pixel.y + 4);
-  ctx.fillStyle = '#7df294';
-  ctx.fillText(`포획 지점 ${name}`, pixel.x + 13, pixel.y + 4);
   ctx.restore();
 }
 
@@ -1377,20 +1553,43 @@ function drawHerdingHistoryMap(record, frameIndex = null) {
   canvas.height = Math.max(1, Math.round(rect.height * scale));
   const ctx = canvas.getContext('2d');
   ctx.scale(scale, scale);
+  ctx.fillStyle = '#0a1016';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+  herdingMapHitTargets = [];
   const projection = createHerdingProjection(record, rect.width, rect.height);
   const toCanvas = projection.toCanvas;
 
   if (projection.imageRect && herdingHistoryMapImage) {
     const area = projection.imageRect;
+    const source = projection.sourceRect;
     ctx.save();
-    ctx.globalAlpha = .7;
-    ctx.filter = 'brightness(.7) contrast(1.2)';
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(herdingHistoryMapImage, area.x, area.y, area.width, area.height);
+    ctx.drawImage(herdingHistoryMapImage, source.x, source.y,
+                  source.width, source.height, area.x, area.y,
+                  area.width, area.height);
     ctx.restore();
-    ctx.strokeStyle = 'rgba(152,152,157,.5)';
+    ctx.strokeStyle = 'rgba(110,150,180,.15)';
     ctx.strokeRect(area.x, area.y, area.width, area.height);
   }
+
+  // Grid는 지도 구조 다음, 경로 이전에 그려 바닥 위에서는 읽히되 현재
+  // 객체보다 앞에 나오지 않도록 한다.
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,.035)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x <= rect.width; x += 32) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, rect.height);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= rect.height; y += 32) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(rect.width, y);
+    ctx.stroke();
+  }
+  ctx.restore();
 
   const allFrames = record.trial.frames;
   const lastIndex = allFrames.length - 1;
@@ -1405,32 +1604,29 @@ function drawHerdingHistoryMap(record, frameIndex = null) {
   if (herdingLayerVisibility.future && visibleIndex < lastIndex) {
     if (herdingLayerVisibility.target)
       drawHerdingPath(ctx, futureFrames, 'target', toCanvas,
-                      {color : '#ff453a', alpha : .14, width : 1.4, dash : [ 3, 6 ]});
+                      {color : '#ff4d4d', alpha : .14, width : 1.4, dash : [ 3, 6 ]});
     if (herdingLayerVisibility.driver)
       drawHerdingPath(ctx, futureFrames, 'driver', toCanvas,
-                      {color : '#2997ff', alpha : .14, width : 1.4, dash : [ 3, 6 ]});
+                      {color : '#2ea8ff', alpha : .14, width : 1.4, dash : [ 3, 6 ]});
     if (herdingLayerVisibility.blocker)
       drawHerdingPath(ctx, futureFrames, 'blocker', toCanvas,
-                      {color : '#ff9f0a', alpha : .14, width : 1.4, dash : [ 3, 6 ]});
+                      {color : '#ffaa00', alpha : .14, width : 1.4, dash : [ 3, 6 ]});
   }
 
   // 점선은 알고리즘이 계산한 목표, 실선은 실제로 움직인 위치다. 목표선을 먼저
   // 그려 실제 경로가 위에 보이도록 한다.
   if (herdingLayerVisibility.driver_goal)
     drawHerdingPath(ctx, frames, 'driver_goal', toCanvas,
-                    {color : '#2997ff', alpha : .64, width : 1.5, dash : [ 6, 6 ]});
+                    {color : '#2ea8ff', alpha : .64, width : 1.5, dash : [ 6, 6 ]});
   if (herdingLayerVisibility.blocker_goal)
     drawHerdingPath(ctx, frames, 'blocker_goal', toCanvas,
-                    {color : '#ff9f0a', alpha : .64, width : 1.5, dash : [ 6, 6 ]});
+                    {color : '#ffaa00', alpha : .64, width : 1.5, dash : [ 6, 6 ]});
   if (herdingLayerVisibility.target)
-    drawHerdingPath(ctx, frames, 'target', toCanvas,
-                    {color : '#ff453a', alpha : .9, width : 2.5});
+    drawHerdingTemporalPath(ctx, frames, 'target', toCanvas, '#ff4d4d');
   if (herdingLayerVisibility.driver)
-    drawHerdingPath(ctx, frames, 'driver', toCanvas,
-                    {color : '#2997ff', alpha : .95, width : 2.5});
+    drawHerdingTemporalPath(ctx, frames, 'driver', toCanvas, '#2ea8ff');
   if (herdingLayerVisibility.blocker)
-    drawHerdingPath(ctx, frames, 'blocker', toCanvas,
-                    {color : '#ff9f0a', alpha : .95, width : 2.5});
+    drawHerdingTemporalPath(ctx, frames, 'blocker', toCanvas, '#ffaa00');
 
   if (herdingLayerVisibility.traps)
     Object.entries(record.traps || {}).forEach(([ name, point ]) => {
@@ -1438,20 +1634,57 @@ function drawHerdingHistoryMap(record, frameIndex = null) {
         drawHerdingTrapMarker(ctx, name, point, toCanvas);
     });
 
-  const endpointLabel = visibleIndex === lastIndex ? '종료' : '현재';
   if (herdingLayerVisibility.target)
-    drawHerdingStartPoint(ctx, allFrames, 'target', '#ff453a', toCanvas);
+    drawHerdingStartPoint(ctx, allFrames, 'target', '#ff4d4d', toCanvas);
   if (herdingLayerVisibility.driver)
-    drawHerdingStartPoint(ctx, allFrames, 'driver', '#2997ff', toCanvas);
+    drawHerdingStartPoint(ctx, allFrames, 'driver', '#2ea8ff', toCanvas);
   if (herdingLayerVisibility.blocker)
-    drawHerdingStartPoint(ctx, allFrames, 'blocker', '#ff9f0a', toCanvas);
+    drawHerdingStartPoint(ctx, allFrames, 'blocker', '#ffaa00', toCanvas);
   // 경로 토글을 꺼도 현재 역할 위치는 항상 남겨 관제 맥락을 잃지 않게 한다.
-  drawHerdingActorMarker(ctx, frames, 'target', 'target', '#ff453a', toCanvas,
-                         endpointLabel);
-  drawHerdingActorMarker(ctx, frames, 'driver', 'driver', '#2997ff', toCanvas,
-                         endpointLabel);
-  drawHerdingActorMarker(ctx, frames, 'blocker', 'blocker', '#ff9f0a', toCanvas,
-                         endpointLabel);
+  drawHerdingActorMarker(ctx, frames, 'target', 'target', '#ff4d4d', toCanvas);
+  drawHerdingActorMarker(ctx, frames, 'driver', 'driver', '#2ea8ff', toCanvas);
+  drawHerdingActorMarker(ctx, frames, 'blocker', 'blocker', '#ffaa00', toCanvas);
+}
+
+/** Canvas 위 현재 위치·포획 지점과 포인터 사이의 가장 가까운 대상을 찾는다. */
+function herdingMapTargetAtPointer(event) {
+  const canvas = $('#herding-history-map-canvas');
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  return herdingMapHitTargets
+      .map(target => ({target, distance : Math.hypot(x - target.x, y - target.y)}))
+      .filter(item => item.distance <= item.target.radius)
+      .sort((a, b) => a.distance - b.distance)[0]?.target || null;
+}
+
+/** 기본 지도 텍스트 대신 hover/click 시점에만 작은 좌표 Tooltip을 표시한다. */
+function updateHerdingMapTooltip(event, target) {
+  const tooltip = $('#herding-map-tooltip');
+  const canvas = $('#herding-history-map-canvas');
+  canvas.style.cursor = target ? 'pointer' : 'default';
+  if (!target) {
+    tooltip.classList.add('hidden');
+    return;
+  }
+  const title = document.createElement('strong');
+  title.textContent = target.label;
+  const meta = document.createElement('span');
+  meta.textContent = Number.isFinite(target.time) ? `${target.time.toFixed(1)} sec` : '고정 지점';
+  const coordinates = document.createElement('span');
+  coordinates.textContent =
+      `x ${Number(target.point[0]).toFixed(2)} · y ${Number(target.point[1]).toFixed(2)}`;
+  tooltip.replaceChildren(title, meta, coordinates);
+  tooltip.classList.remove('hidden');
+
+  const wrap = canvas.parentElement.getBoundingClientRect();
+  const tooltipWidth = 190;
+  const left = Math.min(wrap.width - tooltipWidth - 10,
+                        Math.max(10, event.clientX - wrap.left + 14));
+  const top = Math.min(wrap.height - 88,
+                       Math.max(10, event.clientY - wrap.top + 14));
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
 }
 
 /**
@@ -1485,14 +1718,13 @@ function extractHerdingTimelineEvents(frames) {
     }
     if (index > 0 && state !== previousState) {
       const eventLabels = {
-        TRACK : '추적 시작',
-        HERD : '몰이 시작',
         CORNER : '포획 지점 접근',
         LOST : '대상 유실',
         CAPTURED : '포획 완료'
       };
-      // TRACK 전환과 최초 탐지가 같은 프레임이면 같은 뜻을 두 번 쓰지 않는다.
-      if (eventLabels[state] && !(state === 'TRACK' && newlyDiscovered))
+      // TRACK/HERD 전환은 상세 알고리즘 정보라 기본 Timeline에서 숨긴다.
+      // 사용자는 시작, 탐지·역할 배정, 포획 접근, 최종 결과에 집중한다.
+      if (eventLabels[state])
         add(index, eventLabels[state], state.toLowerCase());
     }
     previousState = state;
@@ -1505,7 +1737,28 @@ function renderHerdingEventTimeline(frames) {
   const container = $('#herding-event-timeline');
   container.replaceChildren();
   const finalTime = Math.max(.001, Number(frames[frames.length - 1]?.t || 0));
+  const groupedEvents = [];
   extractHerdingTimelineEvents(frames).forEach(eventData => {
+    const previous = groupedEvents[groupedEvents.length - 1];
+    const eventTime = Number(frames[eventData.index]?.t || 0);
+    const previousTime = previous == null
+        ? -Infinity
+        : Number(frames[previous.index]?.t || 0);
+    // 전체 시간의 4.5% 이내에 이어진 상태 변화는 같은 시각 묶음으로 표시해
+    // Timeline 텍스트가 겹치지 않게 한다. 클릭하면 묶음의 마지막 시점으로 간다.
+    if (previous && (eventTime - previousTime) / finalTime < .045) {
+      eventData.labels.forEach(label => {
+        if (!previous.labels.includes(label))
+          previous.labels.push(label);
+      });
+      previous.index = eventData.index;
+      if (eventData.kind === 'captured' || eventData.kind === 'lost')
+        previous.kind = eventData.kind;
+    } else {
+      groupedEvents.push({...eventData, labels : [...eventData.labels]});
+    }
+  });
+  groupedEvents.forEach(eventData => {
     const frame = frames[eventData.index];
     const ratio = Math.max(0, Math.min(1, Number(frame.t || 0) / finalTime));
     const button = document.createElement('button');
@@ -1517,8 +1770,13 @@ function renderHerdingEventTimeline(frames) {
       button.classList.add('edge-end');
     button.style.left = `${ratio * 100}%`;
     button.dataset.frameIndex = String(eventData.index);
-    button.textContent = eventData.labels.join(' · ');
-    button.title = `${Number(frame.t || 0).toFixed(1)}초 · ${button.textContent}`;
+    const label = document.createElement('span');
+    label.className = 'herding-event-label';
+    label.textContent = eventData.labels.join(' · ');
+    const time = document.createElement('small');
+    time.textContent = `${Number(frame.t || 0).toFixed(1)}s`;
+    button.append(label, time);
+    button.title = `${time.textContent} · ${label.textContent}`;
     button.setAttribute('aria-label', button.title + '으로 이동');
     container.appendChild(button);
   });
@@ -1561,7 +1819,7 @@ function renderHerdingPlaybackFrame(frameIndex, syncClock = true) {
   $('#herding-playback-time').textContent =
       `${n(currentTime, 1)} / ${n(duration, 1)}초`;
   const state = $('#herding-playback-state');
-  state.textContent = `${stateLabel} (${rawState})`;
+  state.textContent = rawState;
   state.className = `herding-playback-state state-${rawState.toLowerCase()}`;
   $('#herding-playback-state-description').textContent =
       HERDING_STATE_DESCRIPTIONS[rawState] || '기록된 알고리즘 상태';
@@ -1578,7 +1836,8 @@ function renderHerdingPlaybackFrame(frameIndex, syncClock = true) {
   } else {
     $('#herding-capture-distance').textContent = '포획 지점 거리 정보 없음';
   }
-  $('#herding-playback-frame').textContent = `${index + 1} / ${frames.length}`;
+  $('#herding-playback-frame').textContent =
+      `frame ${index + 1} / ${frames.length}`;
   const slider = $('#herding-playback-slider');
   slider.value = index;
   slider.setAttribute(
@@ -1592,7 +1851,9 @@ function renderHerdingPlaybackFrame(frameIndex, syncClock = true) {
 function setHerdingPlaybackPlaying(playing) {
   herdingPlaybackPlaying = Boolean(playing && herdingHistoryRecord);
   const button = $('#herding-playback-toggle');
-  button.textContent = herdingPlaybackPlaying ? '일시정지' : '재생';
+  button.firstChild.nodeValue = herdingPlaybackPlaying ? 'Ⅱ ' : '▶ ';
+  button.querySelector('span').textContent =
+      herdingPlaybackPlaying ? '일시정지' : '재생';
   button.setAttribute('aria-pressed', String(herdingPlaybackPlaying));
   button.classList.toggle('playing', herdingPlaybackPlaying);
 
@@ -1668,7 +1929,7 @@ function renderHerdingTrialSelector(record) {
       selected.goal_name || '포획 지점 없음';
   const seed = selected.seed == null ? '시드 없음' : `시드 ${selected.seed}`;
   $('#herding-trial-detail').textContent =
-      `시험 ${selected.index + 1}/${record.trial_count} · ${result} · ${goal} · ${seed}`;
+      `시험 ${selected.index + 1}/${record.trial_count} · ${selected.model || '모델 없음'} · ${result} · ${Number(selected.duration || 0).toFixed(1)}초 · ${goal} · ${seed}`;
 }
 
 /** 선택한 시험의 API 응답으로 요약 카드, 재생 제어와 지도를 초기화한다. */
@@ -1718,9 +1979,11 @@ async function loadHerdingHistory(trialIndex = selectedHerdingTrialIndex) {
         ? Number(trial.duration)
         : Number(frames[frames.length - 1].t || 0);
     const result = $('#herding-summary-result');
-    result.textContent = trial.success ? '성공' : '실패';
+    result.textContent = trial.success ? 'CAPTURED' : 'FAILED';
     result.classList.toggle('success', Boolean(trial.success));
     result.classList.toggle('failure', !trial.success);
+    $('#herding-summary-result-label').textContent =
+        trial.success ? '포획 성공' : '임무 실패';
     $('#herding-summary-duration').textContent = `${n(duration, 1)}초`;
     $('#herding-summary-model').textContent = trial.model || '—';
     $('#herding-summary-frames').textContent = `${frames.length.toLocaleString()}개`;
@@ -1782,7 +2045,133 @@ const historyRobotColor = (() => {
  * 출력: 없음. `#history-map-canvas`를 다시 그린다.
  * 사용: 필터가 바뀌거나 새로고침할 때마다 `loadHistory()`가 호출한다.
  */
+function drawHistoryHeatSpot(ctx, point, confidence = 1) {
+  const radius = 34 + Math.max(0, Math.min(1, Number(confidence) || 0)) * 22;
+  const gradient = ctx.createRadialGradient(point.x, point.y, 1, point.x, point.y, radius);
+  gradient.addColorStop(0, 'rgba(255,82,82,.48)');
+  gradient.addColorStop(.32, 'rgba(216,179,106,.24)');
+  gradient.addColorStop(1, 'rgba(255,82,82,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(point.x - radius, point.y - radius, radius * 2, radius * 2);
+}
+
+/** 분석 지도 전용 탐지 아이콘. 색뿐 아니라 실루엣으로도 종류를 구분한다. */
+function drawHistoryDetectionIcon(ctx, detection, point, alpha = 1, selected = false) {
+  const type = detection.object_type;
+  const color = {
+    LIVE_RODENT : '#ff5252',
+    ENTRY_POINT : '#c86bfa',
+    DROPPINGS : '#d8b36a'
+  }[type] || '#ff5252';
+  const haloRadius = selected ? 23 : 19;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const halo = ctx.createRadialGradient(
+      point.x, point.y, 3, point.x, point.y, haloRadius);
+  halo.addColorStop(0, `${color}55`);
+  halo.addColorStop(.45, `${color}2e`);
+  halo.addColorStop(1, `${color}00`);
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, haloRadius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.translate(point.x, point.y);
+  ctx.fillStyle = color;
+  ctx.strokeStyle = 'rgba(255,255,255,.92)';
+  ctx.lineWidth = selected ? 1.8 : 1.2;
+  ctx.shadowColor = selected ? color : 'transparent';
+  ctx.shadowBlur = selected ? 10 : 0;
+
+  if (type === 'ENTRY_POINT') {
+    // 침입구: 어두운 안쪽이 있는 아치형 입구.
+    ctx.beginPath();
+    ctx.moveTo(-7, 7);
+    ctx.lineTo(-7, -1);
+    ctx.arc(0, -1, 7, Math.PI, 0);
+    ctx.lineTo(7, 7);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#151018';
+    ctx.beginPath();
+    ctx.moveTo(-3.5, 7);
+    ctx.lineTo(-3.5, 0);
+    ctx.arc(0, 0, 3.5, Math.PI, 0);
+    ctx.lineTo(3.5, 7);
+    ctx.closePath();
+    ctx.fill();
+  } else if (type === 'DROPPINGS') {
+    // 배설물: 세 개의 작은 evidence pellet.
+    [ [-4, 2, -.45], [1, -3, .35], [5, 3, -.2] ].forEach(([x, y, angle]) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 3, 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    });
+  } else {
+    // 쥐: 귀와 꼬리가 있는 작은 실루엣.
+    ctx.beginPath();
+    ctx.ellipse(0, 1, 7.5, 5.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-4.5, -4.2, 2.4, 0, Math.PI * 2);
+    ctx.arc(1, -4.7, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(7, 2);
+    ctx.bezierCurveTo(13, 1, 13, -5, 17, -5);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(3, 0, 1.1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawHistoryPathEndpoint(ctx, point, label, color, filled) {
+  ctx.save();
+  ctx.fillStyle = filled ? color : '#0b1116';
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#dce7ef';
+  ctx.font = 'bold 8px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, point.x, point.y - 10);
+  ctx.restore();
+}
+
+function drawHistoryDirectionArrow(ctx, from, to, color) {
+  const angle = Math.atan2(to.y - from.y, to.x - from.x);
+  ctx.save();
+  ctx.translate(to.x, to.y);
+  ctx.rotate(angle);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = .85;
+  ctx.beginPath();
+  ctx.moveTo(4, 0);
+  ctx.lineTo(-4, -3);
+  ctx.lineTo(-4, 3);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawHistoryMap(detections, trail, totalEmpty = false) {
+  historyTrail = trail;
+  historyMapTotalEmpty = totalEmpty;
   const canvas = $('#history-map-canvas');
   const rect = canvas.getBoundingClientRect();
   const scale = window.devicePixelRatio || 1;
@@ -1793,19 +2182,36 @@ function drawHistoryMap(detections, trail, totalEmpty = false) {
   const w = rect.width, h = rect.height;
   const projection = createMapProjection(w, h);
   const toCanvas = projection.toCanvas;
+  historyMapMarkerHits = [];
+
+  ctx.fillStyle = '#0b1116';
+  ctx.fillRect(0, 0, w, h);
 
   if (projection.imageRect) {
     const area = projection.imageRect;
     ctx.save();
-    ctx.globalAlpha = .55;
-    ctx.filter = 'brightness(.65) contrast(1.2)';
-    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = '#20272d';
+    ctx.shadowColor = 'rgba(41,151,255,.12)';
+    ctx.shadowBlur = 24;
+    ctx.fillRect(area.x, area.y, area.width, area.height);
+    ctx.restore();
+    ctx.save();
+    ctx.globalAlpha = .22;
+    ctx.filter = 'grayscale(1) brightness(.45) contrast(1.8)';
+    ctx.imageSmoothingEnabled = true;
     ctx.drawImage(mapImage, area.x, area.y, area.width, area.height);
     ctx.restore();
-    ctx.strokeStyle = 'rgba(152,152,157,.45)';
+    ctx.strokeStyle = 'rgba(112,150,176,.32)';
     ctx.lineWidth = 1;
     ctx.strokeRect(area.x, area.y, area.width, area.height);
   }
+
+  const isInsideMap = point => !projection.imageRect ||
+      (point.x >= projection.imageRect.x &&
+       point.x <= projection.imageRect.x + projection.imageRect.width &&
+       point.y >= projection.imageRect.y &&
+       point.y <= projection.imageRect.y + projection.imageRect.height);
+  let excludedPoints = 0;
 
   const byRobot = new Map();
   trail.forEach(point => {
@@ -1815,30 +2221,114 @@ function drawHistoryMap(detections, trail, totalEmpty = false) {
       byRobot.set(point.robot_id, []);
     byRobot.get(point.robot_id).push(point);
   });
+  const selectedDetection = detections.find(
+      detection => detection.id === selectedHistoryDetectionId);
+  const selectedRobotId = selectedDetection?.robot_id || null;
+  const routes = [];
   byRobot.forEach((points, robotId) => {
-    if (points.length < 2)
-      return;
-    ctx.strokeStyle = historyRobotColor(robotId);
-    ctx.globalAlpha = .55;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    points.forEach((point, i) => {
-      const p = toCanvas(point.map_x, point.map_y);
-      i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+    const color = historyRobotColor(robotId);
+    const mapped = points.sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
+                       .map(point => toCanvas(point.map_x, point.map_y));
+    const visible = mapped.filter(point => {
+      const inside = isInsideMap(point);
+      if (!inside)
+        excludedPoints += 1;
+      return inside;
     });
-    ctx.stroke();
-    ctx.globalAlpha = 1;
+    if (visible.length)
+      routes.push({robotId, color, points : visible});
+  });
+  const drawRoute = (route, selected) => {
+    if (historyMapMode !== 'trail')
+      return;
+    const visible = route.points;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.shadowColor = selected ? route.color : 'transparent';
+    ctx.shadowBlur = selected ? 8 : 0;
+    for (let i = 1; i < visible.length; i += 1) {
+      const timeProgress = i / Math.max(1, visible.length - 1);
+      ctx.globalAlpha = selected ? .7 + .3 * timeProgress : .25 + .12 * timeProgress;
+      ctx.strokeStyle = route.color;
+      ctx.lineWidth = selected ? 3.5 : 2;
+      ctx.beginPath();
+      ctx.moveTo(visible[i - 1].x, visible[i - 1].y);
+      ctx.lineTo(visible[i].x, visible[i].y);
+      ctx.stroke();
+    }
+    ctx.restore();
+    if (!selected)
+      return;
+    const arrowEvery = Math.max(7, Math.floor(visible.length / 5));
+    for (let i = arrowEvery; i < visible.length; i += arrowEvery)
+      drawHistoryDirectionArrow(ctx, visible[i - 1], visible[i], route.color);
+    drawHistoryPathEndpoint(ctx, visible[0], 'S', route.color, false);
+    drawHistoryPathEndpoint(ctx, visible[visible.length - 1], 'E', route.color, true);
+  };
+  routes.filter(route => route.robotId !== selectedRobotId)
+      .forEach(route => drawRoute(route, false));
+  routes.filter(route => route.robotId === selectedRobotId)
+      .forEach(route => drawRoute(route, true));
+
+  let selectedMapPoint = null;
+  detections.forEach(det => {
+    if (det.map_x == null || det.map_y == null)
+      return;
+    const point = toCanvas(det.map_x, det.map_y);
+    if (!isInsideMap(point)) {
+      excludedPoints += 1;
+      return;
+    }
+    if (historyMapMode === 'density')
+      drawHistoryHeatSpot(ctx, point, det.confidence);
   });
 
   detections.forEach(det => {
     if (det.map_x == null || det.map_y == null)
       return;
     const point = toCanvas(det.map_x, det.map_y);
-    drawDetectionMarker(ctx, det.object_type, point, 5, .85);
+    if (!isInsideMap(point))
+      return;
+    const selected = det.id === selectedHistoryDetectionId;
+    const alpha = selectedHistoryDetectionId == null || selected ? 1 : .25;
+    drawHistoryDetectionIcon(ctx, det, point, alpha, selected);
     const trapPresentation = trapInstallationPresentation(det);
     if (trapPresentation)
-      drawHistoryTrapIndicator(ctx, point, trapPresentation);
+      drawHistoryTrapIndicator(ctx, point, trapPresentation, alpha);
+    historyMapMarkerHits.push({id : det.id, point, radius : 21});
+    if (selected)
+      selectedMapPoint = point;
   });
+
+  const selectionCard = $('#history-map-selection-card');
+  if (selectedDetection && selectedMapPoint) {
+    const label = objectLabels[selectedDetection.object_type] ||
+        selectedDetection.object_type || '탐지';
+    $('#history-map-selection-title').textContent = `${label} 탐지`;
+    $('#history-map-selection-summary').textContent =
+        `${formatTime(selectedDetection.timestamp)} · ${selectedDetection.robot_id || '—'}`;
+    $('#history-map-selection-confidence').textContent = selectedDetection.confidence == null
+        ? 'Confidence —'
+        : `Confidence ${Math.round(selectedDetection.confidence * 100)}%`;
+    $('#history-map-selection-coordinates').textContent =
+        `x ${n(selectedDetection.map_x, 2)} / y ${n(selectedDetection.map_y, 2)}`;
+    selectionCard.classList.remove('hidden');
+    selectionCard.style.left = `${Math.max(10, Math.min(w - 215, selectedMapPoint.x + 24))}px`;
+    selectionCard.style.top = `${Math.max(48, Math.min(h - 125, selectedMapPoint.y - 32))}px`;
+  } else {
+    selectionCard.classList.add('hidden');
+  }
+
+  const robotLegend = $('#history-map-robot-legend');
+  robotLegend.innerHTML = [...byRobot.keys()].map(robotId =>
+      `<span><i class="history-robot-line" style="border-color:${historyRobotColor(robotId)}"></i>${escapeHtml(robotId)}</span>`).join('');
+  const status = $('#history-map-status');
+  status.textContent = excludedPoints
+      ? `지도 범위 밖 ${excludedPoints}개 제외`
+      : historyMapMode === 'density' ? `탐지 ${detections.length}건 밀도 분석`
+                                     : `경로 ${byRobot.size}대 · 탐지 ${detections.length}건`;
+  status.classList.toggle('warning', excludedPoints > 0);
 
   const hasData = detections.length > 0 || trail.length > 0;
   const mapEmpty = $('#history-map-empty');
@@ -1857,6 +2347,7 @@ function drawHistoryMap(detections, trail, totalEmpty = false) {
  */
 function renderHistoryDetectionList(detections, totalEmpty = false) {
   const list = $('#history-detection-list');
+  $('#history-list-count').textContent = `${detections.length}건`;
   if (!detections.length) {
     list.innerHTML = `<div class="empty">${
         totalEmpty ? HISTORY_SEED_HINT_HTML : '이 필터 조건에 해당하는 탐지 기록이 없습니다.'
@@ -1910,6 +2401,7 @@ function selectHistoryDetection(detectionId) {
   document.querySelectorAll('.history-card').forEach(card => {
     card.classList.toggle('selected', Number(card.dataset.detectionId) === detectionId);
   });
+  drawHistoryMap(historyDetections, historyTrail, historyMapTotalEmpty);
   const label = objectLabels[detection.object_type] || detection.object_type || '대상';
   $('#history-detail-photo').innerHTML = detection.image_url
       ? `<img src="${detection.image_url}" alt="${escapeHtml(label)} 증거 이미지">`
@@ -2172,6 +2664,52 @@ $('#history-filter-trap-status').addEventListener('change', event => {
 });
 $('#history-refresh').addEventListener('click', loadHistory);
 
+const historyResetDialog = $('#history-reset-dialog');
+const historyResetAcknowledge = $('#history-reset-acknowledge');
+const historyResetConfirm = $('#history-reset-confirm');
+
+$('#history-reset-open').addEventListener('click', () => {
+  historyResetAcknowledge.checked = false;
+  historyResetConfirm.disabled = true;
+  historyResetConfirm.textContent = '기록 초기화';
+  historyResetDialog.showModal();
+});
+$('#history-reset-cancel')
+    .addEventListener('click', () => historyResetDialog.close());
+historyResetDialog.addEventListener('click', event => {
+  if (event.target === historyResetDialog)
+    historyResetDialog.close();
+});
+historyResetAcknowledge.addEventListener('change', event => {
+  historyResetConfirm.disabled = !event.currentTarget.checked;
+});
+historyResetConfirm.addEventListener('click', async () => {
+  if (!historyResetAcknowledge.checked || historyResetConfirm.disabled)
+    return;
+  historyResetConfirm.disabled = true;
+  historyResetConfirm.textContent = '초기화 중…';
+  try {
+    const result = await request('/api/history/reset', {
+      method : 'POST',
+      headers : {'Content-Type' : 'application/json'},
+      body : JSON.stringify({confirmation : 'DELETE_LOCAL_HISTORY'})
+    });
+    historyResetDialog.close();
+    historyDetections = [];
+    selectedHistoryDetectionId = null;
+    const robotSelect = $('#history-filter-robot');
+    robotSelect.replaceChildren(new Option('전체', ''));
+    await loadHistory();
+    const removed = result.removed;
+    toast(`로컬 기록을 초기화했습니다 (탐지 ${removed.detections}건 · 경로 ${
+        removed.trail_points}점 · 이미지 ${removed.images}개)`);
+  } catch (error) {
+    historyResetConfirm.disabled = false;
+    historyResetConfirm.textContent = '기록 초기화';
+    toast('기록 초기화에 실패했습니다: ' + error.message, 'error');
+  }
+});
+
 $('#herding-trial-select').addEventListener('change', event => {
   const trialIndex = Number(event.currentTarget.value);
   if (Number.isInteger(trialIndex))
@@ -2227,6 +2765,23 @@ document.querySelectorAll('[data-herding-layer]').forEach(input => {
       drawHerdingHistoryMap(herdingHistoryRecord, herdingPlaybackFrameIndex);
   });
 });
+$('#herding-map-detail-toggle').addEventListener('click', event => {
+  const details = $('#herding-map-details');
+  const expanded = details.classList.contains('hidden');
+  details.classList.toggle('hidden', !expanded);
+  event.currentTarget.setAttribute('aria-expanded', String(expanded));
+});
+const herdingMapCanvas = $('#herding-history-map-canvas');
+herdingMapCanvas.addEventListener('pointermove', event => {
+  updateHerdingMapTooltip(event, herdingMapTargetAtPointer(event));
+});
+herdingMapCanvas.addEventListener('click', event => {
+  updateHerdingMapTooltip(event, herdingMapTargetAtPointer(event));
+});
+herdingMapCanvas.addEventListener('pointerleave', () => {
+  herdingMapCanvas.style.cursor = 'default';
+  $('#herding-map-tooltip').classList.add('hidden');
+});
 
 // 목록 카드는 loadHistory()가 매번 innerHTML을 새로 채우므로 이벤트 위임으로
 // 클릭 핸들러를 한 번만 걸어 둔다.
@@ -2234,6 +2789,43 @@ $('#history-detection-list').addEventListener('click', event => {
   const card = event.target.closest('.history-card');
   if (card)
     selectHistoryDetection(Number(card.dataset.detectionId));
+});
+
+document.querySelectorAll('[data-history-map-mode]').forEach(button => {
+  button.addEventListener('click', () => {
+    historyMapMode = button.dataset.historyMapMode === 'density' ? 'density' : 'trail';
+    document.querySelectorAll('[data-history-map-mode]').forEach(item => {
+      const active = item.dataset.historyMapMode === historyMapMode;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    drawHistoryMap(historyDetections, historyTrail, historyMapTotalEmpty);
+  });
+});
+
+const historyMapCanvas = $('#history-map-canvas');
+const historyMarkerAtPointer = event => {
+  const rect = historyMapCanvas.getBoundingClientRect();
+  const point = {x : event.clientX - rect.left, y : event.clientY - rect.top};
+  return historyMapMarkerHits
+      .map(marker => ({marker, distance : Math.hypot(
+                         point.x - marker.point.x, point.y - marker.point.y)}))
+      .filter(item => item.distance <= item.marker.radius)
+      .sort((a, b) => a.distance - b.distance)[0]?.marker;
+};
+historyMapCanvas.addEventListener('mousemove', event => {
+  historyMapCanvas.classList.toggle('marker-hover', Boolean(historyMarkerAtPointer(event)));
+});
+historyMapCanvas.addEventListener('mouseleave', () => {
+  historyMapCanvas.classList.remove('marker-hover');
+});
+historyMapCanvas.addEventListener('click', event => {
+  const marker = historyMarkerAtPointer(event);
+  if (marker)
+    selectHistoryDetection(marker.id);
+});
+$('#history-map-open-evidence').addEventListener('click', () => {
+  $('.history-detail-panel').scrollIntoView({behavior : 'smooth', block : 'start'});
 });
 
 // Canvas는 CSS 크기가 바뀌어도 내부 픽셀 크기가 자동으로 맞춰지지 않는다.
@@ -2245,8 +2837,22 @@ window.addEventListener('resize', () => {
   herdingResizeTimer = setTimeout(() => {
     if (activeHistorySubview === 'herding' && herdingHistoryRecord)
       drawHerdingHistoryMap(herdingHistoryRecord, herdingPlaybackFrameIndex);
+    if (activeHistorySubview === 'activity')
+      drawHistoryMap(historyDetections, historyTrail, historyMapTotalEmpty);
   }, 120);
 });
+
+// 기록 화면을 바로 검증하거나 공유할 수 있는 가벼운 deep link다.
+// 예: /?view=history, /?view=history&history_map=density,
+//     /?view=history&history_view=herding
+const initialQuery = new URLSearchParams(window.location.search);
+if (initialQuery.get('history_map') === 'density')
+  document.querySelector('[data-history-map-mode="density"]')?.click();
+if (initialQuery.get('view') === 'history')
+  $('#view-tab-history')?.click();
+if (initialQuery.get('view') === 'history' &&
+    initialQuery.get('history_view') === 'herding')
+  switchHistorySubview('herding');
 
 loadMap();
 poll();

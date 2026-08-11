@@ -31,6 +31,9 @@ venv/
 *.sqlite3
 *.log
 Sysmon/backend/data/
+Sysmon/backend/build/
+Sysmon/backend/install/
+Sysmon/backend/log/
 .vscode/
 .idea/
 .DS_Store
