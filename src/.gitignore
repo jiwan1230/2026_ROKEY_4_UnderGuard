@@ -7,3 +7,5 @@
 # 파이썬/빌드 산출물
 __pycache__/
 *.pyc
+*.engine
+

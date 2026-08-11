@@ -42,7 +42,7 @@ class TrapCheckNode(Node):
         # install 주행 — 전부 cmd_vel open-loop. 시간(sec)이 거리/각도 튜닝 노브.
         # 로봇은 구멍 0.8m 앞에서 시작 → 0.3m 전진(0.5m) → 대기 → 0.3m 후진(0.8m).
         self.fwd_speed = self.declare_parameter('fwd_speed', 0.1).value       # 전/후진 m/s
-        self.approach_sec = self.declare_parameter('approach_sec', 3.0).value  # 0.8→0.5m 전진 (≈0.3m)
+        self.approach_sec = self.declare_parameter('approach_sec', 5.0).value  # 0.8→0.5m 전진 (≈0.3m)
         self.retreat_sec = self.declare_parameter('retreat_sec', 3.0).value    # 0.5→0.8m 후진 전진분 (≈0.3m)
         # 후진의 180° 회전 — Create3가 곧은 후진(linear.x 음수)을 못 해서 돌아서 감.
         # 두 회전을 반대 방향으로 줘 heading 오차 상쇄. turn_sec은 실측 180°에 맞출 것.

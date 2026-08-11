@@ -19,3 +19,7 @@ __pycache__/
 *.pyc
 diagrams/
 
+
+# TensorRT 엔진 — 143MB+, GitHub 100MB 한계 초과 + GPU/버전 종속이라 PC마다 다시 빌드해야 함
+src/turtle_project/resource/best.engine
+*.engine

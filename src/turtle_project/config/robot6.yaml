@@ -6,6 +6,6 @@
   ros__parameters:
     namespace: robot6
     # 도크 '앞' 접근점 (map 절대좌표). undock 자세 실측값 (room_map2 기준).
-    dock_x: 0.0
+    dock_x: -1.0
     dock_y: 0.0
-    dock_yaw_deg: 180.0    # 도크를 바라보는 방향(도) — undock 때 -x를 봄
+    dock_yaw_deg: 0.0    # 도크를 바라보는 방향(도) — undock 때 -x를 봄
