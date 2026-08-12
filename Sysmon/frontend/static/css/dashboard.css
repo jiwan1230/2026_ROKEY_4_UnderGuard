@@ -216,6 +216,19 @@ button:disabled{cursor:not-allowed;opacity:.4}
 .history-card-meta{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5}
 .dummy-badge{display:inline-block;padding:1px 6px;border-radius:999px;background:var(--warn);color:#1c1c1e;font-size:9px;font-weight:800;letter-spacing:.03em}
 
+/* 기록 조회 — 시간대 묶음 선택 (지도에 전부 겹쳐 그리지 않기 위한 것) */
+.history-group-bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+.history-group-label{flex:0 0 auto;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.history-groups{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;min-width:0}
+.history-group-chip{display:flex;flex-direction:column;gap:2px;flex:0 0 auto;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.02);color:var(--text);cursor:pointer;text-align:center}
+.history-group-chip strong{font-size:12px;font-weight:700;white-space:nowrap}
+.history-group-chip span{font-size:10px;color:var(--muted)}
+.history-group-chip:hover{border-color:var(--accent)}
+.history-group-chip.selected{border-color:var(--accent);background:rgba(41,151,255,.14)}
+.history-group-chip.selected span{color:var(--text)}
+/* 선택한 묶음 밖의 탐지 — 지도에 안 그려진 기록이라는 표시 */
+.timeline-tick.outside{opacity:.28}
+
 /* 기록 조회 — 임무 기록·트랩 현황 표 (로봇 DB 조회 결과) */
 .history-table-panel{margin-top:14px}
 .history-table-wrap{max-height:320px;overflow:auto;padding:0 4px 4px}

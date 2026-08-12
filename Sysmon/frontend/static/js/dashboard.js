@@ -1015,8 +1015,121 @@ function drawMap(snapshot) {
 // 열 때만 불러온다(실시간 탭 폴링에는 관여하지 않는다).
 // ---------------------------------------------------------------------------
 const HISTORY_TRAIL_COLORS = [ '#2997ff', '#ff9f0a', '#bf5af2', '#32d74b' ];
+// 탐지 사이가 이만큼(초) 비면 다른 시간대의 일로 보고 묶음을 나눈다. 한 번의
+// 쥐대응은 보통 몇 분 안에 끝나므로 5분이면 대응 한 건씩 깔끔하게 갈린다.
+const HISTORY_GROUP_GAP_SEC = 300;
+// 경로는 탐지 앞뒤로 이만큼 더 보여준다 — 로봇이 그 자리에 어떻게 왔는지가
+// 같이 보여야 경로가 의미를 갖는다. 간격의 절반이라 옆 묶음과 겹치지 않는다.
+const HISTORY_GROUP_TRAIL_PAD_SEC = HISTORY_GROUP_GAP_SEC / 2;
+const ALL_GROUPS = -1;      // 묶음 선택 없이 전체를 겹쳐 보는 상태
+
 let historyDetections = [];
+let historyTrail = [];
+let historyGroups = [];
+let selectedHistoryGroupIndex = ALL_GROUPS;
 let selectedHistoryDetectionId = null;
+let historyWindowStart = null;      // 타임라인 시작 시각(필터 기간)
+let historyTotalEmpty = false;      // 필터와 무관하게 기록 자체가 없는 상태
+
+/**
+ * 탐지를 "비슷한 시간대"끼리 묶는다 — 앞 탐지와 gapSec 넘게 벌어지면 새 묶음.
+ * 입력: 최신순 탐지 배열과 묶음을 가르는 간격(초)이다.
+ * 출력: 최신 묶음부터의 배열 [{start, end, items}]이며 items도 최신순이다.
+ * 사용: 조회 직후 `loadHistory()`가 한 번 계산해 두고 선택만 바꿔 쓴다.
+ */
+function groupDetectionsByGap(detections, gapSec = HISTORY_GROUP_GAP_SEC) {
+  const groups = [];
+  detections.filter(det => det.timestamp != null).forEach(det => {
+    const current = groups[groups.length - 1];
+    // 최신순으로 훑으므로 current.start가 바로 앞(더 최근) 탐지의 시각이다.
+    if (current && current.start - det.timestamp <= gapSec) {
+      current.items.push(det);
+      current.start = det.timestamp;
+    } else {
+      groups.push({start : det.timestamp, end : det.timestamp, items : [ det ]});
+    }
+  });
+  return groups;
+}
+
+/** 지금 선택된 묶음(없으면 전체)의 탐지 목록이다. */
+function visibleHistoryDetections() {
+  const group = historyGroups[selectedHistoryGroupIndex];
+  return group ? group.items : historyDetections;
+}
+
+/** 선택된 묶음의 시간대에 걸친 경로 점만 남긴다(전체 선택이면 그대로). */
+function visibleHistoryTrail() {
+  const group = historyGroups[selectedHistoryGroupIndex];
+  if (!group)
+    return historyTrail;
+  return historyTrail.filter(
+      point => point.timestamp >= group.start - HISTORY_GROUP_TRAIL_PAD_SEC &&
+          point.timestamp <= group.end + HISTORY_GROUP_TRAIL_PAD_SEC);
+}
+
+/**
+ * 시간대 묶음 선택 버튼들을 그린다.
+ * 입력: 없음. `historyGroups`와 현재 선택을 읽는다.
+ * 출력: 없음. `#history-groups`를 다시 채운다.
+ */
+function renderHistoryGroups() {
+  const container = $('#history-groups');
+  if (!container)
+    return;
+  if (!historyGroups.length) {
+    container.innerHTML = '<span class="muted">묶을 탐지 기록이 없습니다.</span>';
+    return;
+  }
+  const chip = (index, title, meta) =>
+      `<button type="button" class="history-group-chip${
+          index === selectedHistoryGroupIndex ? ' selected' : ''}"
+          data-group="${index}"><strong>${title}</strong><span>${meta}</span></button>`;
+  container.innerHTML =
+      historyGroups
+          .map((group, index) => {
+            const span = group.start === group.end
+                ? formatTime(group.end)
+                : `${formatTime(group.start)}~${formatTime(group.end)}`;
+            return chip(index, span, `${group.items.length}건`);
+          })
+          .join('') +
+      chip(ALL_GROUPS, '전체', `${historyDetections.length}건`);
+}
+
+/**
+ * 선택된 묶음 기준으로 목록·타임라인·지도를 다시 그린다.
+ * 입력: 없음. 조회해 둔 기록과 현재 선택을 읽는다.
+ * 출력: 없음. 기록 조회 화면 전체가 갱신된다.
+ * 사용: 조회 직후와 묶음을 바꿀 때 호출한다(재조회는 하지 않는다).
+ */
+function renderHistorySelection() {
+  const detections = visibleHistoryDetections();
+  // 선택해 둔 기록이 이 묶음에 없으면 묶음의 최신 기록으로 옮긴다.
+  if (!detections.some(det => det.id === selectedHistoryDetectionId))
+    selectedHistoryDetectionId = detections[0]?.id ?? null;
+
+  renderHistoryDetectionList(detections, historyTotalEmpty);
+  // 타임라인은 늘 전체를 보여준다 — 지금 보는 묶음이 하루 중 어디쯤인지
+  // 알아야 다른 묶음으로 옮겨갈 수 있다(선택 밖 점은 흐리게).
+  renderHistoryTimeline(historyDetections, historyWindowStart, historyTotalEmpty);
+  drawHistoryMap(detections, visibleHistoryTrail(), historyTotalEmpty);
+  if (selectedHistoryDetectionId != null) {
+    selectHistoryDetection(selectedHistoryDetectionId);
+  } else {
+    $('#history-detail-photo').innerHTML = `<div class="no-image large">${
+        historyTotalEmpty ? HISTORY_SEED_HINT_HTML
+                          : '이 필터 조건에 해당하는 기록이 없습니다.'}</div>`;
+    $('#history-detail-meta').innerHTML = '';
+  }
+}
+
+/** 탐지 id가 속한 묶음 번호다(없으면 전체를 뜻하는 ALL_GROUPS). */
+function historyGroupIndexOf(detectionId) {
+  const index = historyGroups.findIndex(
+      group => group.items.some(det => det.id === detectionId));
+  return index < 0 ? ALL_GROUPS : index;
+}
 
 /**
  * 기록 자체가(필터와 무관하게) 하나도 없을 때 보여줄 안내 문구다.
@@ -1188,12 +1301,15 @@ function renderHistoryTimeline(detections, windowStart, totalEmpty = false) {
       : Math.min(...dated.map(det => det.timestamp));
   const span = Math.max(1, now - start);
 
+  // 지금 보고 있는 묶음 밖의 점은 흐리게 — 지도에 안 그려진 기록이라는 표시다.
+  const visibleIds = new Set(visibleHistoryDetections().map(det => det.id));
   dated.forEach(det => {
     const ratio = Math.min(1, Math.max(0, (det.timestamp - start) / span));
     const tick = document.createElement('button');
     tick.type = 'button';
     tick.className = `timeline-tick type-${(det.object_type || '').toLowerCase()}${
-        det.id === selectedHistoryDetectionId ? ' selected' : ''}`;
+        det.id === selectedHistoryDetectionId ? ' selected' : ''}${
+        visibleIds.has(det.id) ? '' : ' outside'}`;
     tick.style.left = `${ratio * 100}%`;
     tick.dataset.detectionId = det.id;
     const label = objectLabels[det.object_type] || det.object_type || '대상';
@@ -1382,25 +1498,23 @@ async function loadHistory() {
       });
     }
 
-    const totalEmpty = summary.detections === 0 && summary.trail_points === 0;
     historyDetections = detections;
-    if (!detections.some(det => det.id === selectedHistoryDetectionId))
-      selectedHistoryDetectionId = detections[0]?.id ?? null;
-
-    renderHistoryDetectionList(detections, totalEmpty);
-    renderHistoryTimeline(detections, since, totalEmpty);
-    drawHistoryMap(detections, trail, totalEmpty);
-    if (selectedHistoryDetectionId != null) {
-      selectHistoryDetection(selectedHistoryDetectionId);
-    } else {
-      $('#history-detail-photo').innerHTML = `<div class="no-image large">${
-          totalEmpty ? HISTORY_SEED_HINT_HTML : '이 필터 조건에 해당하는 기록이 없습니다.'
-      }</div>`;
-      $('#history-detail-meta').innerHTML = '';
-    }
+    historyTrail = trail;
+    historyWindowStart = since;
+    historyTotalEmpty = summary.detections === 0 && summary.trail_points === 0;
+    // 새로 불러올 때는 가장 최근 묶음부터 본다 — 지도에 전부 겹쳐 그리면
+    // 무엇이 언제 일인지 구분이 안 된다.
+    historyGroups = groupDetectionsByGap(detections);
+    selectedHistoryGroupIndex = historyGroups.length ? 0 : ALL_GROUPS;
+    renderHistoryGroups();
+    renderHistorySelection();
   } catch (error) {
     // db_node가 없으면 여기로 온다 — 빈 화면만 남기지 말고 이유를 화면에 적는다.
     historyDetections = [];
+    historyTrail = [];
+    historyGroups = [];
+    selectedHistoryGroupIndex = ALL_GROUPS;
+    renderHistoryGroups();
     $('#history-summary').querySelector('strong').textContent =
         '기록을 불러오지 못함';
     $('#history-detection-list').innerHTML =
@@ -1587,8 +1701,29 @@ $('#history-detection-list').addEventListener('click', event => {
 });
 $('#history-timeline').addEventListener('click', event => {
   const tick = event.target.closest('.timeline-tick');
-  if (tick)
-    selectHistoryDetection(Number(tick.dataset.detectionId));
+  if (!tick)
+    return;
+  // 지금 묶음 밖의 점을 누르면 그 점이 속한 묶음으로 옮겨간다 — 안 그러면
+  // 지도에 없는 기록이 선택돼 사진과 지도가 따로 논다.
+  const detectionId = Number(tick.dataset.detectionId);
+  const groupIndex = historyGroupIndexOf(detectionId);
+  if (groupIndex !== selectedHistoryGroupIndex &&
+      selectedHistoryGroupIndex !== ALL_GROUPS) {
+    selectedHistoryGroupIndex = groupIndex;
+    selectedHistoryDetectionId = detectionId;
+    renderHistoryGroups();
+    renderHistorySelection();
+    return;
+  }
+  selectHistoryDetection(detectionId);
+});
+$('#history-groups').addEventListener('click', event => {
+  const chip = event.target.closest('.history-group-chip');
+  if (!chip)
+    return;
+  selectedHistoryGroupIndex = Number(chip.dataset.group);
+  renderHistoryGroups();
+  renderHistorySelection();       // 이미 받아 둔 기록만 다시 그린다(재조회 없음)
 });
 
 loadMap();

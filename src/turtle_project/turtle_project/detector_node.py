@@ -158,7 +158,7 @@ class DetectorNode(Node):
         self.trap_conf = self.declare_parameter('trap_conf', 0.4).value
         # rat은 오탐이 추적 출동으로 직결되니 기본(0.6)보다 높은 문턱을 쓴다.
         self.rat_conf = self.declare_parameter('rat_conf', 0.8).value
-        self.approach_dist = self.declare_parameter('approach_dist', 0.8).value
+        self.approach_dist = self.declare_parameter('approach_dist', 1.0).value
         self.arrive_tol = self.declare_parameter('arrive_tol', 0.27).value
         # 이번 순찰에 이미 확인한 구멍을 또 점검하러 가지 않게 한다(순찰 진행).
         # 이 거리(m) 안이면 "같은 구멍"으로 보고 무시. 목록은 PATROL 명령에 초기화.
