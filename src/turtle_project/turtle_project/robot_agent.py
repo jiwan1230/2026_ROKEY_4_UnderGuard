@@ -310,6 +310,16 @@ class RobotAgent(Node):
         elif self.dock_phase == 'UNDOCK':
             if not self.nav.isUndockComplete():
                 return                      # 언도킹 액션 진행 중
+            if self.nav.is_docked:
+                # 액션은 성공을 반환했는데 도크 센서상 아직 도크 위 — 이대로
+                # goal을 보내면 Create3가 도킹 중이라 cmd_vel을 무시해 로봇이
+                # 안 움직인다. 진짜로 빠져나올 때까지 언도킹을 다시 보낸다.
+                # ponytail: 무한 재시도 — 도크에 물리적으로 걸린 경우 수동 개입
+                # 필요, 횟수 제한은 필요해지면.
+                self.get_logger().warn('언도킹 액션은 완료됐지만 센서상 아직 도크 위 '
+                                       '— 언도킹 재시도')
+                self.nav.undock_send_goal()
+                return
             self.dock_phase = None
             if self.after_undock == 'PATROL':
                 self.get_logger().info('언도킹 완료 — 순찰 시작')
@@ -507,7 +517,7 @@ def _self_check():
     a._dock_tick()
     assert a.dock_phase == 'DOCK' and a.state == 'RETURNING'
     # 언도킹 완료(after=PATROL, UNDOCK 명령) → 순찰 시작
-    a = _FakeAgent(_FakeNav(True, None, False, True), 'UNDOCK')
+    a = _FakeAgent(_FakeNav(True, None, False, True, docked=False), 'UNDOCK')
     a.after_undock = 'PATROL'
     a._dock_tick()
     assert a.dock_phase is None and a.patrol_started
@@ -516,12 +526,19 @@ def _self_check():
     a.after_undock = 'PATROL'
     a._dock_tick()
     assert a.dock_phase == 'UNDOCK' and not a.patrol_started
+    # 언도킹 액션은 '성공'인데 도크 센서상 아직 도크 위 → goal/순찰 대신 재시도
+    # (도킹 상태에선 Create3가 cmd_vel을 무시하므로 goal을 보내봤자 안 움직인다)
+    a = _FakeAgent(_FakeNav(True, None, False, True), 'UNDOCK')  # docked=True
+    a.after_undock = 'PATROL'
+    a._dock_tick()
+    assert a.dock_phase == 'UNDOCK' and a.nav.undock_sent \
+        and not a.patrol_started
     # 언도킹 완료(after=None, TRACK/HERD) → 순찰 없이 target_pose 대기
-    a = _FakeAgent(_FakeNav(True, None, False, True), 'UNDOCK')
+    a = _FakeAgent(_FakeNav(True, None, False, True, docked=False), 'UNDOCK')
     a._dock_tick()
     assert a.dock_phase is None and not a.patrol_started
     # 언도킹 완료(after=DOCK) → 바로 복귀 도킹
-    a = _FakeAgent(_FakeNav(True, None, False, True), 'UNDOCK')
+    a = _FakeAgent(_FakeNav(True, None, False, True, docked=False), 'UNDOCK')
     a.after_undock = 'DOCK'
     a._dock_tick()
     assert a.dock_phase is None and a.docking_started
@@ -619,13 +636,13 @@ def _self_check():
     a.target_cb(msg)
     assert a.nav.goto_pose is None and a.pending_target is None
     # 언도킹 중 받은 goal은 버리지 않고 보류 → 언도킹 완료 시 주행 (문제 1)
-    a = _FakeAgent(_FakeNav(True, None, False, True), 'UNDOCK')
+    a = _FakeAgent(_FakeNav(True, None, False, True, docked=False), 'UNDOCK')
     a.target_cb(msg)
     assert a.nav.goto_pose is None and a.pending_target is msg
     a._dock_tick()                          # 언도킹 완료 폴링
     assert a.nav.goto_pose is msg and a.pending_target is None and a.driving
     # 보류 goal 없이 언도킹 완료(after=None) → 기존대로 target_pose 대기
-    a = _FakeAgent(_FakeNav(True, None, False, True), 'UNDOCK')
+    a = _FakeAgent(_FakeNav(True, None, False, True, docked=False), 'UNDOCK')
     a._dock_tick()
     assert a.nav.goto_pose is None and not a.patrol_started
 
