@@ -16,6 +16,8 @@ _ALIASES = {
     "entry_point": ENTRY_POINT,
     "rat_hole": ENTRY_POINT,
     "hole": ENTRY_POINT,
+    "opening": ENTRY_POINT,     # 로봇 DB(detection_event.object_type)의 표기
+
     "droppings": DROPPINGS,
     "dropping": DROPPINGS,
 }

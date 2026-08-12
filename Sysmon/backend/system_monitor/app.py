@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import atexit
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 from flask import Flask, jsonify, render_template, request, send_file
 
@@ -14,6 +16,7 @@ from .history_store import HistoryStore
 from .map_service import MapService
 from .mock_manager import MockManager
 from .replay_manager import DEFAULT_FRAMES_PATH, ReplayManager
+from .risk_signals import normalize_risk_signal
 from .ros_bridge import RosBridge
 from .runtime_service import RuntimeService
 from .state_manager import StateManager
@@ -22,6 +25,76 @@ from .state_manager import StateManager
 # 있어 Flask의 기본 자동탐색(모듈과 같은 폴더의 templates/static)을 못 쓴다.
 # app.py 위치(system_monitor/) 기준 3단계 위가 Sysmon/이다.
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent.parent / "frontend"
+
+# db_node의 조회 상한과 같은 값 — 탐지 기록은 한 번에 이만큼만 가져온다.
+# 종류·로봇·기간 필터는 db_node가 받지 않아 여기서 거는데, 그러려면 필터 전
+# 원본을 충분히 받아와야 한다. 상한에 걸리면 응답에 capped로 알린다.
+_DB_MAX_ROWS = 500
+
+
+def _to_epoch(value: Any) -> float | None:
+    """db_node가 문자열로 준 DATETIME을 epoch 초로 바꾼다.
+
+    입력: ``"2026-08-12 09:07:11"`` 형태의 문자열이다(db_node의 jsonable()).
+    출력: 화면(타임라인·시각 표시)이 쓰는 epoch 초다. 못 읽으면 None이다.
+    MySQL NOW()는 서버 지역시각이라 지역시각으로 해석한다.
+    """
+
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S").timestamp()
+    except ValueError:
+        return None
+
+
+def history_detections_from_db(
+    rows: list[dict[str, Any]],
+    *,
+    object_type: str | None = None,
+    robot_id: str | None = None,
+    since: float | None = None,
+    until: float | None = None,
+) -> list[dict[str, Any]]:
+    """로봇 DB(detection_event) 행을 기록 조회 화면이 쓰는 모양으로 바꾼다.
+
+    입력: db_node ``detections`` 조회 결과 행들과 화면이 건 필터다.
+    출력: 화면이 기대하는 키(id/timestamp/map_x/…)로 맞춘 최신순 목록이다.
+    db_node 조회는 limit만 받으므로 종류·로봇·기간 필터는 여기서 건다.
+    object_type은 DB 표기(RAT/OPENING)를 화면 표기(LIVE_RODENT/ENTRY_POINT)로
+    정규화해 실시간 화면과 같은 어휘를 쓰게 한다.
+    """
+
+    items = []
+    for row in rows:
+        timestamp = _to_epoch(row.get("detected_at"))
+        kind = normalize_risk_signal(row.get("object_type"))
+        if object_type and kind != object_type:
+            continue
+        if robot_id and row.get("robot_id") != robot_id:
+            continue
+        if (since is not None or until is not None) and timestamp is None:
+            continue        # 기간 필터가 걸렸는데 시각을 모르는 행 — 판단 불가
+        if since is not None and timestamp < since:
+            continue
+        if until is not None and timestamp > until:
+            continue
+        items.append(
+            {
+                "id": row.get("detection_id"),
+                "timestamp": timestamp,
+                "robot_id": row.get("robot_id"),
+                "object_type": kind,
+                "map_x": row.get("x"),
+                "map_y": row.get("y"),
+                "confidence": row.get("confidence"),
+                # 로봇 DB는 사진을 저장하지 않는다(detection_event.image_path가
+                # 늘 비어 있다) — 사진 없는 기록으로 표시된다.
+                "image_url": None,
+                "is_dummy": False,
+            }
+        )
+    return items
 
 
 # settings의 값을 참고하여 새로운 Flask 객체를 만들고, 그 Flask 객체에 설정을 적용한다.
@@ -93,6 +166,9 @@ def create_app(settings: Settings | None = None) -> Flask:
         low_battery_threshold=settings.low_battery_threshold,
         interface=settings.ros_interface,
         camera_frame_store=camera_frame_store,
+        # 로봇 위치 이력은 로봇 DB에 없다 — 기록 조회의 이동 경로는 여기서
+        # amcl_pose를 받아 직접 쌓는다(HistoryStore.trail_points).
+        history_store=history_store,
     )
     # replay 모드 — herding_controller_dual 검증 시뮬레이션이 남긴 궤적을
     # 재생한다. Mock/ROS와 마찬가지로 항상 만들어 두되(app.extensions로
@@ -223,29 +299,58 @@ def create_app(settings: Settings | None = None) -> Flask:
     # 기록 조회 탭 전용 — 전부 조회(GET)만 있고 쓰기/삭제 라우트는 없다.
     # "기록을 남기고 볼 수는 있지만 지우거나 고칠 수는 없다"는 read-only
     # 원칙을 이 저장소에도 그대로 유지한다.
+    #
+    # 탐지 기록은 로봇 DB(db_node/MySQL)가 원본이다 — 관제 서버를 껐다 켜도,
+    # 이 서버가 꺼져 있던 사이의 탐지도 남는다. 이동 경로만 아래 SQLite에
+    # 쌓는다: 로봇 위치 이력은 로봇 DB에 없어서 여기서 직접 기록한다.
+    def _db_detection_rows() -> tuple[list[dict[str, Any]] | None, str | None]:
+        result, error = ros.query_db("detections", {"limit": _DB_MAX_ROWS})
+        if error is not None:
+            return None, error
+        return (result or {}).get("rows", []), None
+
+    def _db_error_response(error: str):
+        # DB가 없어도 실시간 화면은 그대로 돈다 — 이 요청만 실패한다.
+        status = 503 if error in {"ros_unavailable", "db_node_unavailable"} else 502
+        return jsonify({"error": error}), status
+
     @app.get("/api/history/summary")
     def history_summary():
-        return jsonify(history_store.summary())
+        rows, error = _db_detection_rows()
+        if error is not None:
+            return _db_error_response(error)
+        return jsonify(
+            {
+                "detections": len(rows),
+                "trail_points": history_store.summary()["trail_points"],
+                # 상한에 걸렸으면 화면이 "N건+"로 표시한다 — 잘린 걸 숨기지 않는다.
+                "capped": len(rows) >= _DB_MAX_ROWS,
+            }
+        )
 
     @app.get("/api/history/detections")
     def history_detections():
         args = request.args
         try:
-            limit = min(int(args.get("limit", 200)), 1000)
             since = float(args["since"]) if "since" in args else None
             until = float(args["until"]) if "until" in args else None
         except (TypeError, ValueError):
-            return jsonify({"error": "limit/since/until은 숫자여야 합니다."}), 400
+            return jsonify({"error": "since/until은 숫자여야 합니다."}), 400
+        rows, error = _db_detection_rows()
+        if error is not None:
+            return _db_error_response(error)
         return jsonify(
-            history_store.list_detections(
-                limit=limit,
-                since=since,
-                until=until,
+            history_detections_from_db(
+                rows,
                 object_type=args.get("object_type") or None,
                 robot_id=args.get("robot_id") or None,
+                since=since,
+                until=until,
             )
         )
 
+    # 로컬 SQLite에 사진까지 저장된 기록(더미 시드)만 여기로 이어진다 — 로봇 DB
+    # 기록은 사진이 없어 image_url이 비고, 화면도 이 주소를 걸지 않는다.
     @app.get("/api/history/detections/<int:detection_id>/image")
     def history_detection_image(detection_id: int):
         path = history_store.image_path_for(detection_id)

@@ -1009,9 +1009,10 @@ function drawMap(snapshot) {
 }
 
 // ---------------------------------------------------------------------------
-// 기록 조회 탭 — 실시간 폴링과 분리된 별도 화면이다. /api/history/*는
-// StateManager가 아니라 history_store.py(SQLite)에서 조회하며, 사용자가
-// "기록 조회" 탭을 열 때만 불러온다(실시간 탭 폴링에는 관여하지 않는다).
+// 기록 조회 탭 — 실시간 폴링과 분리된 별도 화면이다. 탐지·임무·트랩 기록은
+// 로봇 DB(db_node/MySQL)가 원본이고, 이동 경로만 관제 서버가 amcl_pose를 받아
+// 직접 쌓는다(로봇 DB에 위치 이력 테이블이 없다). 사용자가 "기록 조회" 탭을
+// 열 때만 불러온다(실시간 탭 폴링에는 관여하지 않는다).
 // ---------------------------------------------------------------------------
 const HISTORY_TRAIL_COLORS = [ '#2997ff', '#ff9f0a', '#bf5af2', '#32d74b' ];
 let historyDetections = [];
@@ -1019,13 +1020,17 @@ let selectedHistoryDetectionId = null;
 
 /**
  * 기록 자체가(필터와 무관하게) 하나도 없을 때 보여줄 안내 문구다.
- * 필터 때문에 잠깐 안 보이는 것과 구분해서, 이 경우에만 더미 데이터를
- * 채우는 명령어를 알려준다.
+ * 필터 때문에 잠깐 안 보이는 것과 구분해서, 이 경우에만 어디를 봐야 하는지
+ * 알려준다 — 기록은 로봇 DB에 쌓이므로 db_node가 떠 있어야 남는다.
  */
 const HISTORY_SEED_HINT_HTML =
     '아직 저장된 기록이 없습니다.<br>' +
-    '터미널에서 아래 명령으로 더미 데이터를 채워보세요:<br>' +
-    '<code>cd Sysmon/backend &amp;&amp; python3 seed_dummy_history.py</code>';
+    '로봇 DB(db_node)가 실행 중이어야 탐지 기록이 쌓입니다.';
+
+/** db_node에 못 붙었을 때 각 영역에 공통으로 보여줄 문구다. */
+const HISTORY_DB_ERROR_HTML =
+    '로봇 DB에 연결하지 못했습니다.<br>' +
+    'db_node가 실행 중인지, 관제 서버가 ROS 모드인지 확인해 주세요.';
 
 /**
  * 로봇 id를 일관된 색으로 매핑한다(트레일 선·범례가 매번 같은 색을 쓰도록).
@@ -1174,13 +1179,16 @@ function renderHistoryTimeline(detections, windowStart, totalEmpty = false) {
     return;
   }
 
+  // 시각을 못 읽은 기록은 어디에 찍을지 정할 수 없다 — 빼지 않으면 start가
+  // NaN이 되어 타임라인 전체가 깨진다.
+  const dated = detections.filter(det => det.timestamp != null);
   const now = Date.now() / 1000;
   const start = windowStart != null
       ? windowStart
-      : Math.min(...detections.map(det => det.timestamp));
+      : Math.min(...dated.map(det => det.timestamp));
   const span = Math.max(1, now - start);
 
-  detections.forEach(det => {
+  dated.forEach(det => {
     const ratio = Math.min(1, Math.max(0, (det.timestamp - start) / span));
     const tick = document.createElement('button');
     tick.type = 'button';
@@ -1235,6 +1243,103 @@ function selectHistoryDetection(detectionId) {
 }
 
 /**
+ * 로봇 DB 조회 결과(행 배열)를 표 하나로 그린다.
+ * 입력: 대상 요소 선택자, 컬럼 정의 [{key, label, format}], 행 배열이다.
+ * 출력: 없음. 해당 영역을 표로 다시 채운다.
+ * 사용: 임무 기록·트랩 현황 패널이 공유한다(모양이 같아 함수 하나로 충분).
+ */
+function renderHistoryTable(selector, columns, rows) {
+  const container = $(selector);
+  if (!container)
+    return;
+  if (!rows.length) {
+    container.innerHTML = '<div class="empty">기록이 없습니다.</div>';
+    return;
+  }
+  const head = columns.map(col => `<th>${escapeHtml(col.label)}</th>`).join('');
+  const body =
+      rows.map(row => `<tr>${
+                   columns
+                       .map(col => {
+                         const value = col.format ? col.format(row[col.key], row)
+                                                  : row[col.key];
+                         return `<td>${value == null || value === ''
+                                           ? '—'
+                                           : escapeHtml(value)}</td>`;
+                       })
+                       .join('')}</tr>`)
+          .join('');
+  container.innerHTML =
+      `<table class="history-table"><thead><tr>${head}</tr></thead><tbody>${
+          body}</tbody></table>`;
+}
+
+/** DB의 DATETIME 문자열("2026-08-12 09:07:11")에서 시각 부분만 짧게 보여준다. */
+const dbTime = value => value ? String(value).replace(/^\d{4}-/, '') : null;
+
+const MISSION_COLUMNS = [
+  {key : 'robot_id', label : '로봇'},
+  {key : 'role', label : '역할'},
+  {key : 'started_at', label : '시작', format : dbTime},
+  {key : 'ended_at', label : '종료', format : dbTime},
+  {
+    key : 'duration_sec',
+    label : '소요',
+    format : value => value == null ? null : `${value}초`
+  },
+  {key : 'result', label : '결과'},
+  {key : 'failure_reason', label : '비고'}
+];
+
+const TRAP_COLUMNS = [
+  {key : 'trap_id', label : '트랩'},
+  {
+    key : 'opening_id',
+    label : '구멍',
+    format : (value, row) => value == null
+        ? null
+        : `#${value} (${n(row.opening_x, 2)}, ${n(row.opening_y, 2)})`
+  },
+  {key : 'status', label : '상태'},
+  {key : 'installed_at', label : '설치', format : dbTime},
+  {key : 'last_checked_at', label : '최근 점검', format : dbTime},
+  {
+    key : 'inspections',
+    label : '점검',
+    format : (value, row) => `${value ?? 0}회${
+        row.moved_count ? ` · 이탈 ${row.moved_count}` : ''}`
+  },
+  {
+    key : 'avg_drift_m',
+    label : '평균 이탈',
+    format : value => value == null ? null : `${n(value, 2)}m`
+  }
+];
+
+/**
+ * 임무 기록·트랩 현황 표를 로봇 DB에서 불러와 그린다.
+ * 입력: 없음. `/api/db/missions`, `/api/db/traps`를 사용한다.
+ * 출력: 완료 시 두 표가 갱신되는 Promise다(실패해도 예외를 던지지 않는다).
+ * 사용: `loadHistory()`가 탐지 기록과 함께 호출한다.
+ */
+async function loadHistoryTables() {
+  const panels = [
+    {selector : '#history-missions', url : '/api/db/missions', columns : MISSION_COLUMNS},
+    {selector : '#history-traps', url : '/api/db/traps', columns : TRAP_COLUMNS}
+  ];
+  await Promise.all(panels.map(async panel => {
+    try {
+      const data = await request(`${panel.url}?limit=100`);
+      renderHistoryTable(panel.selector, panel.columns, data.rows || []);
+    } catch (error) {
+      // 표만 비고 나머지 기록 화면은 그대로 둔다 — DB 장애를 여기서 격리한다.
+      $(panel.selector).innerHTML =
+          `<div class="empty">${HISTORY_DB_ERROR_HTML}</div>`;
+    }
+  }));
+}
+
+/**
  * 필터 값(종류·로봇·기간)을 읽어 기록을 다시 조회하고 지도·목록을 갱신한다.
  * 입력: 없음. `#history-filter-*` select 값을 직접 읽는다.
  * 출력: 완료 시 화면이 갱신되는 Promise다.
@@ -1255,6 +1360,7 @@ async function loadHistory() {
     params.set('since', String(since));
 
   const trailParams = new URLSearchParams(params);
+  loadHistoryTables();      // 표는 탐지 기록과 독립 — 서로 기다리지 않는다
   try {
     const [ summary, detections, trail ] = await Promise.all([
       request('/api/history/summary'),
@@ -1262,7 +1368,8 @@ async function loadHistory() {
       request(`/api/history/trail?${trailParams.toString()}`)
     ]);
     $('#history-summary').querySelector('strong').textContent =
-        `탐지 ${summary.detections}건 · 경로 ${summary.trail_points}개 기록됨`;
+        `탐지 ${summary.detections}${summary.capped ? '건+' : '건'} · 경로 ${
+            summary.trail_points}개 기록됨`;
 
     const robotSelect = $('#history-filter-robot');
     if (robotSelect.options.length <= 1) {
@@ -1292,6 +1399,19 @@ async function loadHistory() {
       $('#history-detail-meta').innerHTML = '';
     }
   } catch (error) {
+    // db_node가 없으면 여기로 온다 — 빈 화면만 남기지 말고 이유를 화면에 적는다.
+    historyDetections = [];
+    $('#history-summary').querySelector('strong').textContent =
+        '기록을 불러오지 못함';
+    $('#history-detection-list').innerHTML =
+        `<div class="empty">${HISTORY_DB_ERROR_HTML}</div>`;
+    $('#history-detail-photo').innerHTML =
+        `<div class="no-image large">${HISTORY_DB_ERROR_HTML}</div>`;
+    $('#history-detail-meta').innerHTML = '';
+    renderHistoryTimeline([], since, false);
+    $('#history-timeline-empty').innerHTML = HISTORY_DB_ERROR_HTML;
+    drawHistoryMap([], []);
+    $('#history-map-empty').innerHTML = HISTORY_DB_ERROR_HTML;
     toast('기록을 불러오지 못했습니다: ' + error.message, 'error');
   }
 }

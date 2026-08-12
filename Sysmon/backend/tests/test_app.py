@@ -140,30 +140,43 @@ class AppTest(unittest.TestCase):
         self.assertEqual(found.data, b"raw-jpeg-bytes")
 
     def test_history_routes_are_read_only_and_query_stored_records(self):
+        """탐지 기록은 로봇 DB에서, 이동 경로는 관제 서버가 쌓은 것에서 나온다."""
+
         client = self.app.test_client()
         store = self.app.extensions["history_store"]
+        rows = []
+        self.app.extensions["ros_bridge"].query_db = (
+            lambda name, params=None: ({"rows": rows}, None)
+        )
 
         # 기록이 없을 때
         self.assertEqual(client.get("/api/history/summary").get_json(),
-                          {"detections": 0, "trail_points": 0})
+                          {"detections": 0, "trail_points": 0, "capped": False})
         self.assertEqual(client.get("/api/history/detections").get_json(), [])
         self.assertEqual(client.get("/api/history/trail").get_json(), [])
 
-        detection_id = store.record_detection(
-            robot_id="robot4", object_type="LIVE_RODENT", map_x=1.0, map_y=2.0,
-            confidence=0.9, image_bytes=b"jpeg-bytes", image_ext="jpg",
+        rows.append(
+            {
+                "detection_id": 7,
+                "detected_at": "2026-08-12 09:07:11",
+                "object_type": "RAT",          # DB 표기 → 화면 표기로 정규화된다
+                "x": 1.0,
+                "y": 2.0,
+                "confidence": 0.9,
+                "robot_id": "robot4",
+                "image_path": None,
+            }
         )
         store.record_trail_point(robot_id="robot4", map_x=1.0, map_y=2.0)
 
         detections = client.get("/api/history/detections").get_json()
         self.assertEqual(len(detections), 1)
-        self.assertEqual(detections[0]["id"], detection_id)
-        self.assertEqual(detections[0]["image_url"],
-                          f"/api/history/detections/{detection_id}/image")
-
-        image = client.get(detections[0]["image_url"])
-        self.assertEqual(image.status_code, 200)
-        self.assertEqual(image.data, b"jpeg-bytes")
+        self.assertEqual(detections[0]["id"], 7)
+        self.assertEqual(detections[0]["object_type"], "LIVE_RODENT")
+        self.assertEqual(detections[0]["map_x"], 1.0)
+        # 로봇 DB는 사진을 저장하지 않는다 — 사진 없는 기록으로 표시된다.
+        self.assertIsNone(detections[0]["image_url"])
+        self.assertEqual(client.get("/api/history/summary").get_json()["detections"], 1)
 
         self.assertEqual(client.get("/api/history/detections/9999/image").status_code, 404)
 
@@ -174,7 +187,7 @@ class AppTest(unittest.TestCase):
         # 있으므로 다른 메서드는 404가 아니라 405(Method Not Allowed)다.
         self.assertEqual(client.post("/api/history/detections", json={}).status_code, 405)
         self.assertEqual(
-            client.delete(f"/api/history/detections/{detection_id}/image").status_code, 405
+            client.delete("/api/history/detections/7/image").status_code, 405
         )
 
     def test_history_query_params_reject_non_numeric_values(self):

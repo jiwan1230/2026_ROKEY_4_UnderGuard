@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import threading
 import time
@@ -27,6 +28,7 @@ from .state_manager import StateManager
 # 안전하게 빠진다.
 if TYPE_CHECKING:
     import rclpy
+    from geometry_msgs.msg import PoseWithCovarianceStamped
     from nav_msgs.msg import Odometry
     from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import BatteryState, CompressedImage
@@ -48,6 +50,11 @@ else:
         from nav_msgs.msg import Odometry
     except ImportError:
         Odometry = None
+
+    try:  # AMCL의 map 프레임 추정 위치 — 지도 표시·이동 경로 기록용.
+        from geometry_msgs.msg import PoseWithCovarianceStamped
+    except ImportError:
+        PoseWithCovarianceStamped = None
 
     try:
         from sensor_msgs.msg import BatteryState, CompressedImage
@@ -104,6 +111,8 @@ class RosBridge:
         low_battery_threshold: float = 15.0,
         interface: RosInterfaceConfig | None = None,
         camera_frame_store: CameraFrameStore | None = None,
+        history_store: Any | None = None,
+        trail_min_step_m: float = 0.15,
     ) -> None:
         self.state = state
         self.robots = robots
@@ -111,6 +120,16 @@ class RosBridge:
         self.low_battery_threshold = low_battery_threshold
         self.interface = interface or RosInterfaceConfig()
         self.camera_frame_store = camera_frame_store or CameraFrameStore()
+        # 이동 경로 기록 대상(HistoryStore). 없으면 기록만 안 하고 나머지는 그대로
+        # 돈다 — 관제 화면이 기록 저장소에 묶이지 않게 하려는 것이다.
+        self.history_store = history_store
+        # 같은 자리에서 떠는 추정치까지 전부 남기면 경로가 지저분해지고 DB만
+        # 커진다. 직전 기록점에서 이만큼(m) 움직였을 때만 새 점을 남긴다.
+        self.trail_min_step_m = trail_min_step_m
+        self._last_trail_xy: dict[str, tuple[float, float]] = {}
+        # amcl_pose를 한 번이라도 받은 로봇 — 그 뒤로는 odom 위치를 무시한다
+        # (프레임이 달라 두 값이 번갈아 들어오면 지도에서 로봇이 튄다).
+        self._map_pose_robots: set[str] = set()
         self._thread: threading.Thread | None = None
         self._node = None
         # db_node의 기록 조회 서비스 클라이언트 — spin 스레드에서 만들고
@@ -229,6 +248,15 @@ class RosBridge:
                             Odometry,
                             robot.topic(bridge.interface.odometry_topic),
                             lambda msg, robot_id=rid: bridge._on_odom(robot_id, msg),
+                            10,
+                        )
+                    if PoseWithCovarianceStamped is not None:
+                        self.create_subscription(
+                            PoseWithCovarianceStamped,
+                            robot.topic(bridge.interface.amcl_pose_topic),
+                            lambda msg, robot_id=rid: bridge._on_amcl_pose(
+                                robot_id, msg
+                            ),
                             10,
                         )
                     if BatteryState is not None:
@@ -489,8 +517,9 @@ class RosBridge:
 
     def _on_odom(self, robot_id: str, msg: Any) -> None:
 
-        # 현재 위치는 Odometry header 좌표계 기준이다. 실제 지도 표시는 후속 TF
-        # 연동에서 map -> base_link 위치로 교체해야 한다.
+        # 위치는 Odometry header 좌표계(보통 odom) 기준이라 맵 위에 그리면
+        # 어긋난다 — amcl_pose(map 프레임)를 받은 로봇은 그쪽을 쓰고, 여기서는
+        # 속도만 반영한다. AMCL이 안 떠 있는 로봇은 지금까지처럼 odom 위치를 쓴다.
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
         header = getattr(msg, "header", None)
@@ -498,14 +527,55 @@ class RosBridge:
         yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
         v = msg.twist.twist.linear
         speed = math.hypot(v.x, v.y)
+        changes: dict[str, Any] = {
+            "speed": speed,
+            "nav_status": "MOVING" if speed > 0.02 else "STOPPED",
+            "slam_status": "NORMAL",
+        }
+        if robot_id not in self._map_pose_robots:
+            changes["position"] = {"x": p.x, "y": p.y, "yaw": yaw}
+            changes["position_frame"] = position_frame
+        self.state.update_robot(robot_id, **changes)
+
+    def _on_amcl_pose(self, robot_id: str, msg: Any) -> None:
+        """AMCL 추정 위치(map 프레임) — 지도 표시를 갱신하고 이동 경로로 남긴다.
+
+        입력: ``/<robot>/amcl_pose``의 PoseWithCovarianceStamped다.
+        출력: 없다. 실시간 상태와 기록 조회의 이동 경로가 갱신된다.
+        AMCL은 로봇이 일정 거리 이상 움직였을 때만 발행해서(update_min_d) 이
+        콜백 자체가 이미 드문드문 온다 — 여기서 거리 문턱을 한 번 더 건다.
+        """
+
+        try:
+            p = msg.pose.pose.position
+            q = msg.pose.pose.orientation
+            frame = str(
+                getattr(getattr(msg, "header", None), "frame_id", "") or ""
+            ).strip("/")
+        except AttributeError:
+            return                      # 형태가 다른 메시지 — 조용히 무시
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        self._map_pose_robots.add(robot_id)
         self.state.update_robot(
             robot_id,
             position={"x": p.x, "y": p.y, "yaw": yaw},
-            position_frame=position_frame,
-            speed=speed,
-            nav_status="MOVING" if speed > 0.02 else "STOPPED",
-            slam_status="NORMAL",
+            position_frame=frame or self.interface.map_frame,
         )
+        self._record_trail_point(robot_id, p.x, p.y)
+
+    def _record_trail_point(self, robot_id: str, x: float, y: float) -> None:
+        """직전 기록점에서 충분히 움직였을 때만 이동 경로에 한 점을 남긴다."""
+
+        if self.history_store is None:
+            return
+        last = self._last_trail_xy.get(robot_id)
+        if last is not None and math.hypot(x - last[0], y - last[1]) < self.trail_min_step_m:
+            return
+        self._last_trail_xy[robot_id] = (x, y)
+        try:
+            self.history_store.record_trail_point(robot_id=robot_id, map_x=x, map_y=y)
+        except Exception:       # 기록 실패가 실시간 화면을 멈추면 안 된다
+            logging.getLogger(__name__).exception("이동 경로 기록 실패")
 
     def _on_battery(self, robot_id: str, msg: Any) -> None:
 

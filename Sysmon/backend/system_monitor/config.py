@@ -55,6 +55,10 @@ class RosInterfaceConfig:
     webcam_detections_topic: str = "webcam/detections"
     oakd_detections_topic: str = "oakd/detections"
     odometry_topic: str = "odom"
+    # AMCL이 map 프레임으로 내는 추정 위치. odom은 로봇마다 원점이 달라 맵 위에
+    # 그리면 어긋나므로, 지도 표시와 기록 조회의 이동 경로는 이쪽을 쓴다.
+    # (nav2 localization이 안 떠 있으면 안 나오고, 그땐 odom 위치로 되돌아간다)
+    amcl_pose_topic: str = "amcl_pose"
     battery_topic: str = "battery_state"
     # OAK-D 원본 압축 RGB 토픽(로봇 namespace 하위). 예전에는 camera_node가
     # synced/rgb로 재발행했지만 detector_node에 통합·삭제되어 그 토픽은 더 이상
@@ -155,6 +159,7 @@ def load_settings() -> Settings:
                 "ROS_OAKD_DETECTIONS_TOPIC", "oakd/detections"
             ),
             odometry_topic=os.getenv("ROS_ODOMETRY_TOPIC", "odom"),
+            amcl_pose_topic=os.getenv("ROS_AMCL_POSE_TOPIC", "amcl_pose"),
             battery_topic=os.getenv("ROS_BATTERY_TOPIC", "battery_state"),
             camera_frame_topic=os.getenv(
                 "ROS_CAMERA_FRAME_TOPIC", "oakd/rgb/image_raw/compressed"

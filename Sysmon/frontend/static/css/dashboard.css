@@ -216,6 +216,14 @@ button:disabled{cursor:not-allowed;opacity:.4}
 .history-card-meta{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5}
 .dummy-badge{display:inline-block;padding:1px 6px;border-radius:999px;background:var(--warn);color:#1c1c1e;font-size:9px;font-weight:800;letter-spacing:.03em}
 
+/* 기록 조회 — 임무 기록·트랩 현황 표 (로봇 DB 조회 결과) */
+.history-table-panel{margin-top:14px}
+.history-table-wrap{max-height:320px;overflow:auto;padding:0 4px 4px}
+.history-table{width:100%;border-collapse:collapse;font-size:12px}
+.history-table th,.history-table td{padding:7px 10px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--line)}
+.history-table th{position:sticky;top:0;background:var(--surface);color:var(--muted);font-size:10px;letter-spacing:.06em;text-transform:uppercase;z-index:1}
+.history-table tbody tr:hover{background:rgba(255,255,255,.03)}
+
 @media(max-width:1150px){
   .history-grid{grid-template-columns:1fr;height:auto}
   .history-map-panel{height:420px}
