@@ -3,6 +3,10 @@
 !.gitignore
 !/turtle_project/
 !/turtle_interfaces/
+# herding_controller(_dual)는 ../intelligence1_algorithm/의 대응 패키지를 가리키는
+# 심볼릭 링크 -- colcon이 src/ 밑만 스캔하므로 빌드 대상에 넣기 위해 추가.
+!/herding_controller
+!/herding_controller_dual
 
 # 파이썬/빌드 산출물
 __pycache__/

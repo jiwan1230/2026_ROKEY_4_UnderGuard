@@ -1,8 +1,8 @@
-"""쥐몰이 배관 — fleet 프로토콜 ↔ HerdingNode(turtle_project.herding)를 잇는다.
+"""쥐몰이 배관 — fleet 프로토콜 ↔ herding_controller 패키지의 HerdingNode를 잇는다.
 
-몰이 알고리즘 자체(HerdingCore)는 여기 없다 — 같은 패키지의 `herding_node`
-실행파일(turtle_project.herding.herding_node, 별도 프로세스로 실행)이
-담당한다. 이 노드는 그 노드가 원하는 입력(PoseStamped 3종:
+몰이 알고리즘 자체(HerdingCore)는 여기 없다 — `herding_controller`(플랜 A)
+또는 `herding_controller_dual`(플랜 B) 패키지의 `herding_node`(별도 프로세스로
+실행)가 담당한다. 이 노드는 그 노드가 원하는 입력(PoseStamped 3종:
 target_pose/robot1_pose/robot2_pose)을 fleet 쪽 데이터(String 프로토콜 + TF)
 로부터 만들어 공급하고, 출력(robot1_goal/robot2_goal)을 fleet가 이해하는
 `{robot}/target_pose`로 relay하는 순수 배관 역할만 한다.

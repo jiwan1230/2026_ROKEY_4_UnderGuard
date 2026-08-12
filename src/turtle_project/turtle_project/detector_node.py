@@ -185,6 +185,12 @@ class DetectorNode(Node):
         # 감지 정지 시한 — PATROL은 patrol_mute_secs만큼, DOCK은 무기한
         # (다음 임무 명령까지). 0이면 정지 아님. synced_cb가 참조.
         self.mute_until = 0.0
+        # 플랜 A: robot B만 알고리즘이 몰이(HERD), robot A(추적)는 detector가
+        # target_pose로 직접 쫓는다. 플랜 B: robot A도 알고리즘(herding_controller_dual)이
+        # 몰기 때문에 detector가 동시에 target_pose를 쏘면 방향이 반대라 로봇이
+        # 진동한다 — plan=='b'면 추적 중 target_pose 발행을 끄고 쥐 위치(rat_detected)만
+        # 계속 흘려 알고리즘 입력으로 쓰게 한다. central_pc.launch.py의 plan:=a/b와 맞춘다.
+        self.herd_dual = self.declare_parameter('plan', 'a').value == 'b'
         # 디버그 창 (show:=true). headless/SSH에선 imshow가 터지므로 기본 off.
         self.show = self.declare_parameter('show', False).value
 
@@ -357,16 +363,19 @@ class DetectorNode(Node):
             return
         # 추적 중 — 포획 판정은 항상, goal/이벤트는 rat_goal_period마다 한 번만
         # (매 프레임 쏘면 goal 폭주·이벤트 스팸). robot_agent가 target_pose를 받아
-        # 실제로 몬다.
+        # 실제로 몬다 — 단, 플랜 B는 알고리즘이 몰기 때문에 여기서 goal을 쏘지 않는다.
         if self.spin_until is not None:     # 탐색 회전 중 재발견 — 즉시 회전 정지
             self._stop_spin('탐색 회전 중 쥐 재발견 — 추적 재개')
         if due:
-            # 몰이 알고리즘의 쥐 위치 입력 — 추적 시작 후에도 끊기면 안 된다.
+            # 알고리즘의 쥐 위치 입력 — 추적 시작 후에도 끊기면 안 된다(플랜 A/B 공통).
             self.event_pub.publish(String(data=fleet_msg.event(
                 'rat_detected', *xy)))
-            self.pose_pub.publish(make_pose(FRAME, xy[0], xy[1], 0.0))
+            if not self.herd_dual:          # 플랜 A만 — 플랜 B는 알고리즘이 A도 몬다
+                self.pose_pub.publish(make_pose(FRAME, xy[0], xy[1], 0.0))
             self.get_logger().info(
-                f'쥐 ({xy[0]:.2f}, {xy[1]:.2f}) 위치 갱신 — 추적 goal 발행',
+                f'쥐 ({xy[0]:.2f}, {xy[1]:.2f}) 위치 갱신'
+                + ('' if self.herd_dual else ' — 추적 goal 발행'),
+
                 throttle_duration_sec=1.0)
         if self.rat.seen(xy[0], xy[1], now):
             self.get_logger().info(f'쥐 포획 판정 ({xy[0]:.2f}, {xy[1]:.2f})')

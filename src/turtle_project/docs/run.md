@@ -40,8 +40,11 @@ ros2 launch turtle_project robot_bringup.launch.py
 
 # 1) 감지 (best.pt 자동, TF 씀 → /tf remap 필수).
 #    oakd rgb·depth 카메라 sync도 여기 포함 — 별도 camera_node는 없다(통합·삭제됨).
+#    플랜 B(herding_controller_dual, 로봇 2대 모두 알고리즘이 몬다)면 robot A(추적) 쪽에
+#    -p plan:=b 를 추가 — detector가 추적 goal(target_pose) 발행을 끄고 쥐 위치만 계속
+#    흘린다(알고리즘이 대신 몬다). 중앙 PC의 central_pc.launch.py plan:= 인자와 맞출 것.
 ros2 run turtle_project detector_node --ros-args \
-  -r __ns:=/robot4 -r /tf:=tf -r /tf_static:=tf_static
+  -r __ns:=/robot4 -r /tf:=tf -r /tf_static:=tf_static -p plan:=a
 
 # 2) trap 점검 (TF 씀 → /tf remap 필수)
 ros2 run turtle_project trap_check_node --ros-args \
@@ -62,8 +65,8 @@ mysql -u root -p < src/turtle_project/config/mysql_init.sql   # 최초 1회, DB/
 
 export MYSQL_PASSWORD='...'   # underguard 계정 비밀번호
 # central_node, db_node, webcam_node, rat_herding_node(배관), herding_node(몰이 알고리즘)를 한 번에.
-# herding_node는 turtle_project.herding 내장 (플랜 A 단일 blocker).
-ros2 launch turtle_project central_pc.launch.py
+ros2 launch turtle_project central_pc.launch.py plan:=a   # herding_controller (기본)
+ros2 launch turtle_project central_pc.launch.py plan:=b   # herding_controller_dual
 ```
 
 central을 띄우면 전원 도킹 상태에서 **자동으로 한 대를 UNDOCK시켜 순찰을 시작**한다

@@ -1,0 +1,593 @@
+<title>몰이 알고리즘 재생 — 로봇 1대 실험 (우리 맵)</title>
+<style>
+  :root {
+    --bg: #EDEFEC;
+    --surface: #FFFFFF;
+    --surface-2: #E3E6DF;
+    --ink: #1A1D1B;
+    --muted: #5C635F;
+    --line: #CDD2C9;
+    --accent: #1F7A76;
+    --accent-ink: #0B3F3D;
+    --target: #C1432B;
+    --driver: #2F6FB0;
+    --blocker: #8A8F5C;
+    --capture: #C77A1F;
+    --wall: #3B4C9E;
+    --warn: #C1432B;
+
+    --state-idle: #7A8078;
+    --state-search: #B9832A;
+    --state-track: #2F6FB0;
+    --state-herd: #5A57B0;
+    --state-corner: #C77A1F;
+    --state-captured: #2F8C55;
+    --state-lost: #C1432B;
+
+    --font-ui: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", -apple-system,
+      "Segoe UI", Pretendard, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas,
+      "Noto Sans Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171A; --surface: #1B1F22; --surface-2: #20262A; --ink: #E8EAE6;
+      --muted: #99A09B; --line: #333A3D; --accent: #4FC2BB; --accent-ink: #CFF3EF;
+      --target: #FF6B52; --driver: #6FA8DC; --blocker: #C9CE93; --capture: #F2A33D;
+      --wall: #7C8CE0; --warn: #FF6B52;
+      --state-idle: #8A9088; --state-search: #E0A93F; --state-track: #6FA8DC;
+      --state-herd: #9C97E8; --state-corner: #F2A33D; --state-captured: #6FCF87; --state-lost: #FF6B52;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171A; --surface: #1B1F22; --surface-2: #20262A; --ink: #E8EAE6;
+    --muted: #99A09B; --line: #333A3D; --accent: #4FC2BB; --accent-ink: #CFF3EF;
+    --target: #FF6B52; --driver: #6FA8DC; --blocker: #C9CE93; --capture: #F2A33D;
+    --wall: #7C8CE0; --warn: #FF6B52;
+    --state-idle: #8A9088; --state-search: #E0A93F; --state-track: #6FA8DC;
+    --state-herd: #9C97E8; --state-corner: #F2A33D; --state-captured: #6FCF87; --state-lost: #FF6B52;
+  }
+  :root[data-theme="light"] {
+    --bg: #EDEFEC; --surface: #FFFFFF; --surface-2: #E3E6DF; --ink: #1A1D1B;
+    --muted: #5C635F; --line: #CDD2C9; --accent: #1F7A76; --accent-ink: #0B3F3D;
+    --target: #C1432B; --driver: #2F6FB0; --blocker: #8A8F5C; --capture: #C77A1F;
+    --wall: #3B4C9E; --warn: #C1432B;
+    --state-idle: #7A8078; --state-search: #B9832A; --state-track: #2F6FB0;
+    --state-herd: #5A57B0; --state-corner: #C77A1F; --state-captured: #2F8C55; --state-lost: #C1432B;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; overflow-x: hidden; }
+  body {
+    background: var(--bg); color: var(--ink); font-family: var(--font-ui);
+    line-height: 1.5; -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 1180px; margin: 0 auto; padding: 28px 20px 56px;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+
+  .masthead { display: flex; flex-direction: column; gap: 6px; }
+  .eyebrow {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent); font-weight: 600;
+  }
+  h1 { font-size: clamp(22px, 3.2vw, 30px); font-weight: 700; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 14.5px; max-width: 70ch; }
+
+  .note {
+    display: flex; gap: 10px; align-items: flex-start;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; font-size: 13.5px; color: var(--ink);
+  }
+  .note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: 6px; flex: none; }
+  .note b { color: var(--accent-ink); }
+
+  .formula {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .formula .head { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .formula-row {
+    font-family: var(--font-mono); font-size: 13px;
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  }
+  .chip {
+    padding: 3px 9px; border-radius: 7px; font-size: 12px; font-weight: 600;
+    background: var(--surface-2); border: 1px solid var(--line);
+  }
+  .chip.plus { color: var(--state-captured); border-color: color-mix(in srgb, var(--state-captured) 45%, var(--line)); }
+  .chip.minus5 { color: var(--capture); border-color: color-mix(in srgb, var(--capture) 45%, var(--line)); }
+  .chip.minus10 { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+
+  .tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .tab {
+    text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 14px; cursor: pointer; color: var(--ink); font-family: var(--font-ui);
+    display: flex; flex-direction: column; gap: 4px; transition: border-color .15s ease;
+  }
+  .tab:hover { border-color: var(--accent); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tab.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .tab-title { font-weight: 700; font-size: 14px; }
+  .tab-meta { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+  .pill {
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em;
+    padding: 2px 7px; border-radius: 999px; text-transform: uppercase;
+  }
+  .pill.success { background: color-mix(in srgb, var(--state-captured) 22%, transparent); color: var(--state-captured); }
+  .pill.fail { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+
+  .console { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(240px, 0.85fr); gap: 16px; align-items: start; }
+  @media (max-width: 780px) { .console { grid-template-columns: 1fr; } .tabs { grid-template-columns: 1fr; } }
+
+  .scope { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+  .scope-canvas-wrap {
+    position: relative; width: 100%; aspect-ratio: 900 / 649; border-radius: 10px; overflow: hidden;
+    background: var(--surface-2); border: 1px solid var(--line);
+  }
+  canvas { width: 100%; height: 100%; display: block; }
+
+  .transport { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+  button.playbtn {
+    width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line);
+    background: var(--accent); color: var(--surface); display: flex; align-items: center; justify-content: center;
+    cursor: pointer; flex: none;
+  }
+  button.playbtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input[type="range"] { flex: 1; accent-color: var(--accent); }
+  .time-readout {
+    font-family: var(--font-mono); font-size: 12.5px; color: var(--muted);
+    min-width: 84px; text-align: right; font-variant-numeric: tabular-nums;
+  }
+  .speeds { display: flex; gap: 6px; margin-top: 10px; }
+  .speed-btn {
+    font-family: var(--font-mono); font-size: 11.5px; padding: 5px 9px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer;
+  }
+  .speed-btn.active { border-color: var(--accent); color: var(--accent-ink); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .swatch { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .swatch.sq { border-radius: 2px; }
+
+  .telemetry {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+    display: flex; flex-direction: column; gap: 14px; position: sticky; top: 16px;
+  }
+  .tele-row { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+  .tele-row:last-child { border-bottom: none; padding-bottom: 0; }
+  .tele-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .tele-value { font-family: var(--font-mono); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .state-pill {
+    font-family: var(--font-mono); font-size: 13px; font-weight: 700; letter-spacing: 0.03em;
+    padding: 4px 10px; border-radius: 999px; color: var(--surface);
+  }
+  .role-line { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .role-chip { display: flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 12.5px; }
+  .role-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .dist-warn { color: var(--warn); }
+  .panic-flag { font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; color: var(--warn); letter-spacing: 0.05em; }
+
+  .progress-track {
+    width: 100%; height: 6px; border-radius: 999px; background: var(--surface-2);
+    overflow: hidden; margin-top: 6px;
+  }
+  .progress-fill { height: 100%; background: var(--state-captured); border-radius: 999px; transition: width .1s linear; }
+
+  .fail-note {
+    display: none;
+    gap: 10px; align-items: flex-start;
+    background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+    border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--line));
+    border-radius: 10px; padding: 12px 14px; font-size: 13.5px; color: var(--ink);
+  }
+  .fail-note.show { display: flex; }
+  .fail-note .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); margin-top: 6px; flex: none; }
+  .fail-note b { color: var(--warn); }
+</style>
+
+<div class="page">
+  <header class="masthead">
+    <div class="eyebrow">HERDING CONTROLLER · REAL ROOM MAP</div>
+    <h1>실제 room_map 위에서 몰이 재생 — 순찰 → 발견 → Driver/Blocker</h1>
+    <p class="sub">
+      손그림이 아니라 <b>실제 SLAM 맵(room_map.pgm)을 픽셀 단위로 그대로</b> 장애물 맵으로 썼습니다.
+      처음부터 쥐 위치를 아는 게 아니라, <b>로봇 A가 경유점을 순회하며 순찰</b>하다가 센서
+      반경(점선 원) 안에 쥐가 들어오면 그 순간 <b>Driver(미는 역할)</b>로 전환되고, 그제서야
+      대기하던 <b>로봇 B가 출발해 Blocker(도주로 차단)</b>를 시작합니다 — 기존에 검증된 2로봇
+      알고리즘(<code>compute_driving_point</code>/<code>compute_blocking_point</code>)을 그대로
+      재사용했습니다. 쥐 스폰은 매 시행 무작위이며, 발견 시점의 위치 기준으로 가장 가까운
+      쥐구멍이 그 시행의 목표가 됩니다.
+    </p>
+  </header>
+
+  <div class="note">
+    <span class="dot"></span>
+    <span><b>순찰/센서 반경(1.5m)은 스펙에 없는 실험 가정</b>입니다 — 실제 로봇의 인식 범위가
+    정해지면 그 값으로 바꿔야 합니다. 발견 전까지 로봇 B는 스폰 지점에서 대기하고,
+    표적 위치도 estimator에 넣지 않습니다(실제로 관측이 없으니까요) — 발견되는 순간부터
+    칼만 필터가 시작되고, 그 시점 위치 기준으로 가장 가까운 쥐구멍이 목표로 정해집니다.
+    <b>임시 벽 회피도 추가</b>했습니다: 벽에서 0.4m 이내로 들어오면 목표 방향에 "가장 가까운
+    벽에서 멀어지는 방향"을 섞어 미리 커브를 틉니다. A* 같은 진짜 경로 계획은 아니지만,
+    실제 로봇 연동 전 최소한의 완충 역할은 합니다.</span>
+  </div>
+
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+  <div class="fail-note" id="failNote">
+    <span class="dot"></span>
+    <span><b>이 시행은 실패했습니다.</b> <span id="failNoteText"></span></span>
+  </div>
+
+  <div class="console">
+    <section class="scope">
+      <div class="scope-canvas-wrap">
+        <canvas id="scope" width="900" height="649"></canvas>
+      </div>
+      <div class="transport">
+        <button class="playbtn" id="playBtn" aria-label="재생">▶</button>
+        <input type="range" id="scrubber" min="0" max="0" value="0" step="1" />
+        <span class="time-readout" id="timeReadout">0.0 / 0.0 s</span>
+      </div>
+      <div class="speeds" id="speeds"></div>
+      <div class="legend">
+        <span class="legend-item"><span class="swatch" style="background:var(--target)"></span>표적(쥐)</span>
+        <span class="legend-item"><span class="swatch" style="background:var(--driver)"></span>로봇A · Driver(미는 역할)</span>
+        <span class="legend-item"><span class="swatch" style="background:var(--blocker)"></span>로봇B · Blocker(경로 차단)</span>
+        <span class="legend-item"><span class="swatch sq" style="background:var(--capture)"></span>목표 쥐구멍</span>
+        <span class="legend-item"><span class="swatch sq" style="background:var(--muted); opacity:.5"></span>다른 쥐구멍</span>
+        <span class="legend-item">✕ 다음 목표 좌표(점선)</span>
+        <span class="legend-item">◌ 센서 반경(발견 전)</span>
+      </div>
+    </section>
+
+    <aside class="telemetry">
+      <div class="tele-row">
+        <span class="tele-label">상태</span>
+        <span class="state-pill" id="statePill">—</span>
+      </div>
+      <div class="tele-row">
+        <span class="tele-label">경과 시간</span>
+        <span class="tele-value" id="elapsedVal">0.0 s</span>
+      </div>
+      <div class="tele-row">
+        <span class="tele-label">발견 상태</span>
+        <span class="tele-value" id="discoverVal" style="font-size:12.5px">—</span>
+      </div>
+      <div class="tele-row">
+        <span class="tele-label">역할</span>
+        <div class="role-line">
+          <span class="role-chip"><span class="dot" style="background:var(--driver)"></span>로봇 A — Driver(미는 역할)</span>
+          <span class="role-chip"><span class="dot" style="background:var(--blocker)"></span>로봇 B — Blocker(경로 차단)</span>
+        </div>
+      </div>
+      <div class="tele-row">
+        <span class="tele-label">Driver(로봇A) 다음 목표 좌표 <span style="color:var(--driver)">■</span></span>
+        <span class="tele-value" id="r1GoalVal">— , — m</span>
+      </div>
+      <div class="tele-row">
+        <span class="tele-label">Blocker(로봇B) 다음 목표 좌표 <span style="color:var(--blocker)">■</span></span>
+        <span class="tele-value" id="r2GoalVal">— , — m</span>
+      </div>
+      <div class="tele-row">
+        <span class="tele-label">표적 최근접 거리</span>
+        <span class="tele-value" id="distVal">— m</span>
+      </div>
+      <div class="tele-row">
+        <span class="tele-label">패닉(과근접)</span>
+        <span class="tele-value" id="panicVal">—</span>
+      </div>
+      <div class="tele-row" style="flex-direction:column; align-items:stretch; gap:6px;">
+        <div style="display:flex; justify-content:space-between;">
+          <span class="tele-label">포획 유지 진행도</span>
+          <span class="tele-value" id="captureVal" style="font-size:12.5px">0%</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" id="captureBar" style="width:0%"></div></div>
+      </div>
+      <div class="tele-row">
+        <span class="tele-label">이 시행</span>
+        <span class="tele-value" id="trialVal" style="font-size:12.5px">—</span>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+const DATA = /*__TRIAL_DATA__*/;
+
+const STATE_KO = { SEARCH: "순찰", TRACK: "접근", HERD: "몰이", CORNER: "구석 압박", CAPTURED: "포획 완료" };
+const TRAP_KO = { top: "상단 쥐구멍", left: "좌측 쥐구멍", bottom: "하단 쥐구멍" };
+
+let activeTrial = 0;
+let frameIdx = 0;
+let playing = false;
+let speed = 4;
+let lastTs = null;
+let dt = 0.1;
+
+const tabsEl = document.getElementById("tabs");
+const canvas = document.getElementById("scope");
+const ctx = canvas.getContext("2d");
+const scrubber = document.getElementById("scrubber");
+const playBtn = document.getElementById("playBtn");
+const timeReadout = document.getElementById("timeReadout");
+const speedsEl = document.getElementById("speeds");
+
+const statePill = document.getElementById("statePill");
+const elapsedVal = document.getElementById("elapsedVal");
+const discoverVal = document.getElementById("discoverVal");
+const r1GoalVal = document.getElementById("r1GoalVal");
+const r2GoalVal = document.getElementById("r2GoalVal");
+const distVal = document.getElementById("distVal");
+const panicVal = document.getElementById("panicVal");
+const captureVal = document.getElementById("captureVal");
+const captureBar = document.getElementById("captureBar");
+const trialVal = document.getElementById("trialVal");
+const failNote = document.getElementById("failNote");
+const failNoteText = document.getElementById("failNoteText");
+
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function buildTabs() {
+  DATA.trials.forEach((trial, i) => {
+    const title = trial.goal_name ? (TRAP_KO[trial.goal_name] || trial.goal_name) : "미발견";
+    const discover = trial.discovery_time != null ? `발견 t=${trial.discovery_time.toFixed(1)}s · ` : "";
+    const btn = document.createElement("button");
+    btn.className = "tab" + (i === 0 ? " active" : "");
+    btn.setAttribute("role", "tab");
+    btn.innerHTML = `
+      <span class="tab-title">목표: ${title}</span>
+      <span class="tab-meta">
+        <span class="pill ${trial.success ? "success" : "fail"}">${trial.success ? "PASS" : "FAIL"}</span>
+        <span>${discover}${trial.model} · ${trial.duration.toFixed(1)}s</span>
+      </span>`;
+    btn.addEventListener("click", () => selectTrial(i));
+    tabsEl.appendChild(btn);
+  });
+}
+
+function buildSpeeds() {
+  [1, 4, 10].forEach((s) => {
+    const btn = document.createElement("button");
+    btn.className = "speed-btn" + (s === speed ? " active" : "");
+    btn.textContent = s + "×";
+    btn.addEventListener("click", () => {
+      speed = s;
+      [...speedsEl.children].forEach((c) => c.classList.remove("active"));
+      btn.classList.add("active");
+    });
+    speedsEl.appendChild(btn);
+  });
+}
+
+function selectTrial(i) {
+  activeTrial = i;
+  frameIdx = 0;
+  playing = false;
+  playBtn.textContent = "▶";
+  [...tabsEl.children].forEach((c, idx) => c.classList.toggle("active", idx === i));
+  const trial = DATA.trials[activeTrial];
+  scrubber.max = trial.frames.length - 1;
+  scrubber.value = 0;
+  const goalLabel = trial.goal_name ? (TRAP_KO[trial.goal_name] || trial.goal_name) : "미발견";
+  trialVal.textContent = `${trial.model} · 목표: ${goalLabel}`;
+  failNote.classList.toggle("show", !trial.success);
+  failNoteText.textContent = trial.note || "";
+  render();
+}
+
+function worldToCanvas(x, y) {
+  // 사용자 사진과 같은 방향으로 90도 회전한 좌표계: 캔버스 가로축 = 월드 y(뒤집힘),
+  // 캔버스 세로축 = 월드 x(뒤집힘). 시뮬레이션 자체는 room_map.yaml의 진짜 월드
+  // 좌표(m)로 동작하고, 여기서만 사진과 같은 방향으로 그리기 위해 변환한다.
+  const { x_low, x_high, y_low, y_high } = DATA.photo_frame;
+  const w = canvas.width, h = canvas.height;
+  const sx = w / (y_high - y_low);
+  const sy = h / (x_high - x_low);
+  const s = Math.min(sx, sy);
+  const cx = (y_high - y) * s;
+  const cy = (x_high - x) * s;
+  return [cx, cy, s];
+}
+
+const mapImage = new Image();
+let mapImageReady = false;
+mapImage.onload = () => { mapImageReady = true; render(); };
+mapImage.src = DATA.map_image;
+
+function drawArena() {
+  const trial = DATA.trials[activeTrial];
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  if (mapImageReady) {
+    ctx.drawImage(mapImage, 0, 0, w, h);
+  }
+  ctx.strokeStyle = css("--ink");
+  ctx.globalAlpha = 0.25;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(0, 0, w, h);
+  ctx.globalAlpha = 1;
+
+  // 쥐구멍 3곳: 목표는 강조, 나머지는 흐리게
+  for (const [name, pos] of Object.entries(DATA.traps)) {
+    const isGoal = name === trial.goal_name;
+    const [gx, gy, s] = worldToCanvas(pos[0], pos[1]);
+    const r = DATA.capture_radius * s;
+    ctx.beginPath();
+    ctx.arc(gx, gy, r, 0, Math.PI * 2);
+    ctx.fillStyle = isGoal ? css("--capture") : css("--muted");
+    ctx.globalAlpha = isGoal ? 0.18 : 0.10;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.setLineDash(isGoal ? [4, 4] : [2, 3]);
+    ctx.strokeStyle = isGoal ? css("--capture") : css("--muted");
+    ctx.lineWidth = isGoal ? 1.5 : 1;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 트랩 표시 사각형
+    const sqSize = 10;
+    ctx.fillStyle = isGoal ? css("--capture") : css("--muted");
+    ctx.globalAlpha = isGoal ? 1 : 0.6;
+    ctx.fillRect(gx - sqSize / 2, gy - sqSize / 2, sqSize, sqSize);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawTrail(frames, idx, key, color) {
+  const start = Math.max(0, idx - 60);
+  ctx.beginPath();
+  for (let i = start; i <= idx; i++) {
+    const [x, y] = frames[i][key];
+    const [cx, cy] = worldToCanvas(x, y);
+    if (i === start) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+  }
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawDot(x, y, color, radius) {
+  const [cx, cy] = worldToCanvas(x, y);
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function drawGoalLink(fromXY, toXY, color) {
+  const [fx, fy] = worldToCanvas(fromXY[0], fromXY[1]);
+  const [tx, ty] = worldToCanvas(toXY[0], toXY[1]);
+  ctx.setLineDash([3, 4]);
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.6;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(fx, fy);
+  ctx.lineTo(tx, ty);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+
+  // 목표 좌표: X 모양 마커
+  const size = 7;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(tx - size, ty - size); ctx.lineTo(tx + size, ty + size);
+  ctx.moveTo(tx + size, ty - size); ctx.lineTo(tx - size, ty + size);
+  ctx.stroke();
+}
+
+function render() {
+  const trial = DATA.trials[activeTrial];
+  const frames = trial.frames;
+  frameIdx = Math.min(frameIdx, frames.length - 1);
+  const f = frames[frameIdx];
+
+  drawArena();
+  drawTrail(frames, frameIdx, "target", css("--target"));
+  drawTrail(frames, frameIdx, "driver", css("--driver"));
+  drawTrail(frames, frameIdx, "blocker", css("--blocker"));
+
+  if (f.panic) {
+    const [cx, cy] = worldToCanvas(f.target[0], f.target[1]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 22, 0, Math.PI * 2);
+    ctx.strokeStyle = css("--warn");
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  if (!f.discovered) {
+    const [cx, cy, s] = worldToCanvas(f.driver[0], f.driver[1]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, DATA.sensor_range * s, 0, Math.PI * 2);
+    ctx.setLineDash([5, 5]);
+    ctx.strokeStyle = css("--accent");
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  }
+
+  if (f.state !== "CAPTURED") {
+    drawGoalLink(f.driver, f.driver_goal, css("--driver"));
+    if (f.discovered) drawGoalLink(f.blocker, f.blocker_goal, css("--blocker"));
+  }
+  drawDot(f.target[0], f.target[1], css("--target"), 6);
+  drawDot(f.driver[0], f.driver[1], css("--driver"), 6);
+  drawDot(f.blocker[0], f.blocker[1], css("--blocker"), 6);
+
+  scrubber.value = frameIdx;
+  timeReadout.textContent = `${f.t.toFixed(1)} / ${trial.duration.toFixed(1)} s`;
+
+  statePill.textContent = `${f.state} · ${STATE_KO[f.state] || f.state}`;
+  statePill.style.background = css(`--state-${f.state.toLowerCase()}`);
+  elapsedVal.textContent = `${f.t.toFixed(1)} s`;
+  if (f.discovered) {
+    discoverVal.textContent = trial.discovery_time != null ? `발견됨 (t=${trial.discovery_time.toFixed(1)}s)` : "발견됨";
+  } else {
+    discoverVal.textContent = "순찰 중 — 아직 못 찾음";
+  }
+  r1GoalVal.textContent = `(${f.driver_goal[0].toFixed(2)}, ${f.driver_goal[1].toFixed(2)})` + (f.driver_panic ? " · 후퇴" : "");
+  r2GoalVal.textContent = `(${f.blocker_goal[0].toFixed(2)}, ${f.blocker_goal[1].toFixed(2)})`;
+
+  distVal.textContent = `${f.dist.toFixed(2)} m`;
+  distVal.className = "tele-value" + (f.panic ? " dist-warn" : "");
+  panicVal.innerHTML = f.panic ? `<span class="panic-flag">PANIC</span>` : "정상";
+
+  const pct = Math.round(f.capture_progress * 100);
+  captureVal.textContent = `${pct}%`;
+  captureBar.style.width = `${pct}%`;
+}
+
+function tick(ts) {
+  if (!playing) { lastTs = null; return; }
+  if (lastTs === null) lastTs = ts;
+  const elapsed = (ts - lastTs) / 1000;
+  const trial = DATA.trials[activeTrial];
+  const framesToAdvance = elapsed * speed / dt;
+  if (framesToAdvance >= 1) {
+    frameIdx += Math.floor(framesToAdvance);
+    lastTs = ts;
+    if (frameIdx >= trial.frames.length - 1) {
+      frameIdx = trial.frames.length - 1;
+      playing = false;
+      playBtn.textContent = "▶";
+    }
+    render();
+  }
+  if (playing) requestAnimationFrame(tick);
+}
+
+playBtn.addEventListener("click", () => {
+  playing = !playing;
+  playBtn.textContent = playing ? "❚❚" : "▶";
+  if (playing) {
+    if (frameIdx >= DATA.trials[activeTrial].frames.length - 1) frameIdx = 0;
+    lastTs = null;
+    requestAnimationFrame(tick);
+  }
+});
+
+scrubber.addEventListener("input", () => {
+  playing = false;
+  playBtn.textContent = "▶";
+  frameIdx = parseInt(scrubber.value, 10);
+  render();
+});
+
+window.addEventListener("resize", render);
+
+buildTabs();
+buildSpeeds();
+selectTrial(0);
+</script>

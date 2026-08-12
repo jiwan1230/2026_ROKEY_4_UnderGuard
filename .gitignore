@@ -23,3 +23,8 @@ diagrams/
 # TensorRT 엔진 — 143MB+, GitHub 100MB 한계 초과 + GPU/버전 종속이라 PC마다 다시 빌드해야 함
 src/turtle_project/resource/best.engine
 *.engine
+
+# 실험 렌더링 산출물 — 시뮬레이터 물리 모델이 바뀌면 즉시 낡아서, 커밋해두면
+# 나중에 잘못된 결과를 발표에 쓰게 된다. 필요할 때 experiments/pincer_demo.py로
+# 다시 뽑는다.
+intelligence1_algorithm/herding_controller_dual/experiments/media/
